@@ -82,11 +82,24 @@ jobs:
       - name: Server starts, answers health, refuses logged-out requests, runs the test job
         run: |
           docker run -d --name api --network host -e DATABASE_URL \
-            -e SUPABASE_URL=https://example.supabase.co outfitly-api
+            -e SUPABASE_URL=https://example.supabase.co \
+            -e R2_ACCOUNT_ID=ci -e R2_ACCESS_KEY_ID=ci -e R2_SECRET_ACCESS_KEY=ci \
+            -e R2_ORIGINALS_BUCKET=ci-originals -e R2_PUBLIC_BUCKET=ci-public \
+            -e MEDIA_PUBLIC_BASE_URL=https://img.example.com outfitly-api
           for i in $(seq 1 30); do curl -sf localhost:8080/v1/health && break; sleep 1; done
           curl -sf localhost:8080/v1/health | grep -q '"status":"ok"'
           test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/v1/me)" = 401
           for i in $(seq 1 20); do docker logs api 2>&1 | grep -q 'ping job ran' && break; sleep 1; done
           docker logs api 2>&1 | grep -q 'ping job ran'
+      - name: The image turns the 12 MP iPhone HEIC into 3 sizes (sharp + libheif in a worker)
+        run: |
+          docker run --rm -v "$PWD/apps/api/test/fixtures:/fixtures:ro" -w /app/apps/api outfitly-api \
+            node --input-type=module -e "
+              import { readFileSync } from 'node:fs';
+              import { processImageIsolated } from './src/media/process-isolated.ts';
+              const t = performance.now();
+              const r = await processImageIsolated(readFileSync('/fixtures/iphone-12mp-gps.heic'));
+              console.log('sizes', r.variants.map((v) => v.width).join('/'), 'in', Math.round(performance.now() - t), 'ms');
+              if (r.variants.length !== 3) process.exit(1);"
       - if: failure()
         run: docker logs api || true

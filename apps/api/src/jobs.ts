@@ -1,32 +1,50 @@
 import { type Db, idempotencyKeys, lt, sql } from '@outfitly/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { PgBoss } from 'pg-boss';
+import { ImageRejectedError } from './media/image.ts';
+import { markMediaFailed, processUploadedMedia } from './media/pipeline.ts';
+import type { PhotoStorage } from './storage.ts';
 
 export const QUEUES = {
   /** Does nothing but log; proves the job system works end to end. */
   ping: 'system-ping',
   idempotencyCleanup: 'idempotency-cleanup',
+  /** Makes the public sizes of one uploaded photo. */
+  mediaProcess: 'media-process',
+  /** Photos whose processing ran out of retries (or crashed); marks them failed. */
+  mediaProcessFailed: 'media-process-failed',
 } as const;
 
-export interface JobsOptions {
-  /** Supabase direct or session connection: pg-boss breaks behind the transaction pooler. */
-  databaseUrl: string;
-  caCert?: string | undefined;
-  db: Db;
-  log: FastifyBaseLogger;
-  pollingIntervalSeconds?: number;
-}
+/** What routes need to enqueue work. */
+export type JobQueue = Pick<PgBoss, 'send'>;
 
-/** Starts pg-boss (job queue inside Postgres, schema `pgboss`) and its workers. */
-export async function startJobs(options: JobsOptions): Promise<PgBoss> {
-  const { db, log } = options;
-  const boss = new PgBoss({
-    connectionString: options.databaseUrl,
-    ssl: options.caCert ? { ca: options.caCert } : undefined,
+/**
+ * The job queue (pg-boss: jobs live in Postgres, schema `pgboss`). Use
+ * Supabase's direct or session connection: pg-boss breaks behind the
+ * transaction pooler.
+ */
+export function createJobQueue(databaseUrl: string, caCert?: string): PgBoss {
+  return new PgBoss({
+    connectionString: databaseUrl,
+    ssl: caCert ? { ca: caCert } : undefined,
     schema: 'pgboss',
     application_name: 'outfitly-api-jobs',
     max: 3,
   });
+}
+
+export interface WorkerDeps {
+  db: Db;
+  storage: PhotoStorage;
+  log: FastifyBaseLogger;
+  pollingIntervalSeconds?: number;
+  /** Seconds between photo-processing retries (tests use 0). */
+  mediaRetryDelaySeconds?: number;
+}
+
+/** Starts the queue and every worker. */
+export async function startJobs(boss: PgBoss, options: WorkerDeps): Promise<void> {
+  const { db, storage, log } = options;
   boss.on('error', (err) => {
     log.error({ err }, 'job system error');
   });
@@ -51,5 +69,32 @@ export async function startJobs(options: JobsOptions): Promise<PgBoss> {
   });
   await boss.schedule(QUEUES.idempotencyCleanup, '17 3 * * *');
 
-  return boss;
+  await boss.createQueue(QUEUES.mediaProcessFailed);
+  await boss.work<{ mediaId: string }>(QUEUES.mediaProcessFailed, workOptions, async (jobs) => {
+    for (const { data } of jobs) {
+      await markMediaFailed(db, data.mediaId, 'Processing failed after retries.');
+    }
+  });
+  await boss.createQueue(QUEUES.mediaProcess, {
+    // One job per photo at a time: sends with the photo id as singletonKey are deduplicated.
+    policy: 'exclusive',
+    retryLimit: 2,
+    retryDelay: options.mediaRetryDelaySeconds ?? 10,
+    // A job that crashed its worker is retried after this; then it goes to the failed queue.
+    expireInSeconds: 300,
+    deadLetter: QUEUES.mediaProcessFailed,
+  });
+  await boss.work<{ mediaId: string }>(QUEUES.mediaProcess, workOptions, async (jobs) => {
+    for (const { data } of jobs) {
+      try {
+        await processUploadedMedia(db, storage, data.mediaId);
+        log.info({ mediaId: data.mediaId }, 'photo processed');
+      } catch (error) {
+        log.error({ err: error, mediaId: data.mediaId }, 'photo failed');
+        // A photo we can't use won't get better with retries; anything else is retried.
+        if (!(error instanceof ImageRejectedError)) throw error;
+        await markMediaFailed(db, data.mediaId, error.message);
+      }
+    }
+  });
 }

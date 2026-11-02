@@ -15,6 +15,7 @@ export const API_ERROR_CODES = [
   'unauthorized',
   'forbidden',
   'not_found',
+  'conflict',
   'idempotency_key_required',
   'idempotency_key_reused',
   'idempotency_in_progress',

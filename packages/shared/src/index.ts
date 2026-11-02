@@ -1,4 +1,5 @@
 export * from './api.ts';
+export * from './media.ts';
 
 /** Feeds use cursor pagination with this many items per page. */
 export const FEED_PAGE_SIZE = 20;

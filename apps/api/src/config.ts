@@ -16,11 +16,29 @@ const envSchema = z.object({
   // Login tokens are checked against this project's public signing keys.
   SUPABASE_URL: z.url(),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
+  // Cloudflare R2: private bucket for originals, public bucket served on the image CDN.
+  R2_ACCOUNT_ID: z.string().min(1),
+  R2_ACCESS_KEY_ID: z.string().min(1),
+  R2_SECRET_ACCESS_KEY: z.string().min(1),
+  R2_ORIGINALS_BUCKET: z.string().min(1),
+  R2_PUBLIC_BUCKET: z.string().min(1),
+  MEDIA_PUBLIC_BASE_URL: z.url(),
   // Set automatically on Fly.io machines; tells us to trust the Fly-Client-IP header.
   FLY_APP_NAME: optional,
 });
 
 export type Config = z.infer<typeof envSchema>;
+
+export function r2Config(config: Config) {
+  return {
+    accountId: config.R2_ACCOUNT_ID,
+    accessKeyId: config.R2_ACCESS_KEY_ID,
+    secretAccessKey: config.R2_SECRET_ACCESS_KEY,
+    originalsBucket: config.R2_ORIGINALS_BUCKET,
+    publicBucket: config.R2_PUBLIC_BUCKET,
+    publicBaseUrl: config.MEDIA_PUBLIC_BASE_URL,
+  };
+}
 
 /** Reads and checks settings from the environment; stops with a clear message if any are wrong. */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
