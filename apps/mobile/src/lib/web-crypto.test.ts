@@ -1,5 +1,6 @@
 import { createHash, webcrypto } from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { createClient } from '@supabase/supabase-js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { installWebCrypto, type WebCryptoSubset } from './web-crypto';
 
 // expo-crypto is native; Node's crypto stands in for it.
@@ -47,5 +48,68 @@ describe('installWebCrypto (for Supabase PKCE on Hermes)', () => {
     const target = { crypto: complete };
     installWebCrypto(target);
     expect(target.crypto).toBe(complete);
+  });
+});
+
+/** Every string inside stored JSON values (the verifier's storage format is internal to auth-js). */
+function storedStrings(values: Iterable<string>): string[] {
+  const found: string[] = [];
+  const walk = (value: unknown): void => {
+    if (typeof value === 'string') found.push(value, ...value.split('/'));
+    else if (value && typeof value === 'object') Object.values(value).forEach(walk);
+  };
+  for (const raw of values) {
+    try {
+      walk(JSON.parse(raw));
+    } catch {
+      walk(raw);
+    }
+  }
+  return found;
+}
+
+describe('Supabase login with the shim and no runtime crypto (as on Hermes)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('uses the S256 PKCE challenge, derived from the stored verifier', async () => {
+    vi.stubGlobal('crypto', undefined);
+    installWebCrypto(globalThis);
+    const warn = vi.spyOn(console, 'warn');
+    const stored = new Map<string, string>();
+    const client = createClient('https://project.supabase.co', 'sb_publishable_test', {
+      auth: {
+        storage: {
+          getItem: (key) => stored.get(key) ?? null,
+          setItem: (key, value) => {
+            stored.set(key, value);
+          },
+          removeItem: (key) => {
+            stored.delete(key);
+          },
+        },
+        persistSession: true,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+        flowType: 'pkce',
+      },
+    });
+
+    const { data, error } = await client.auth.signInWithOAuth({
+      provider: 'google',
+      options: { skipBrowserRedirect: true, redirectTo: 'outfitly://auth-callback' },
+    });
+
+    expect(error).toBeNull();
+    const url = new URL(data.url ?? '');
+    expect(url.searchParams.get('code_challenge_method')).toBe('s256');
+    const challenge = url.searchParams.get('code_challenge');
+    const matches = storedStrings(stored.values()).filter(
+      (s) => createHash('sha256').update(s).digest('base64url') === challenge,
+    );
+    expect(matches.length).toBeGreaterThan(0);
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('WebCrypto');
   });
 });

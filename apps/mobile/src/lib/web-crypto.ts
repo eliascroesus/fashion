@@ -21,19 +21,34 @@ function sha256Digest(algorithm: string | { name: string }, data: BufferSource) 
  * `crypto.subtle` it falls back to the weaker "plain" code challenge, and
  * without `crypto` it makes the secret verifier with Math.random. This fills
  * in the two pieces it needs from expo-crypto and keeps anything that exists.
+ *
+ * `subtle` only has `digest`, so don't call `supabase.auth.getClaims()` in the
+ * app: it now expects full WebCrypto and throws (lint blocks it). The API
+ * checks login tokens instead.
  */
 export function installWebCrypto(target: object): void {
   const existing = (target as { crypto?: Partial<WebCryptoSubset> }).crypto;
   if (existing?.subtle && existing.getRandomValues) return;
-  // A runtime-provided `crypto` may be frozen, so build a new object that
-  // still inherits its other methods (e.g. randomUUID). Own properties are
-  // defined, not assigned: assigning over a frozen parent's property throws.
-  const crypto = Object.create(existing ?? null, {
+  // A partial `crypto` (e.g. a frozen plain-object polyfill) stays the
+  // prototype, so its other methods remain. Own properties are defined, not
+  // assigned: assigning over a frozen parent's property throws.
+  const crypto = Object.create(existing ?? Object.prototype, {
     getRandomValues: {
       value: existing?.getRandomValues?.bind(existing) ?? getRandomValues,
       enumerable: true,
+      writable: true,
+      configurable: true,
     },
-    subtle: { value: existing?.subtle ?? { digest: sha256Digest }, enumerable: true },
+    subtle: {
+      value: existing?.subtle ?? { digest: sha256Digest },
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    },
   }) as WebCryptoSubset;
-  Object.defineProperty(target, 'crypto', { value: crypto, configurable: true, writable: true });
+  try {
+    Object.defineProperty(target, 'crypto', { value: crypto, configurable: true, writable: true });
+  } catch {
+    // A locked-down runtime `crypto`: leave it. Login still works, with plain PKCE.
+  }
 }
