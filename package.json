@@ -13,7 +13,8 @@
     "format": "prettier --write .",
     "db:generate": "pnpm --filter @outfitly/db generate",
     "db:migrate": "pnpm --filter @outfitly/db migrate",
-    "db:seed": "pnpm --filter @outfitly/db seed"
+    "db:seed": "pnpm --filter @outfitly/db seed",
+    "dev:api": "pnpm --filter @outfitly/api dev"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

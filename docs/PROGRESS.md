@@ -3,11 +3,12 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-Phase 1, Step 1.3 — Backend skeleton, live on a server
+Phase 1, Step 1.4 — Photo pipeline
 
 ## Done
 - Step 1.1 — Project skeleton and safety net (PR #1). Monorepo (pnpm + Turborepo), strict TypeScript, ESLint + Prettier, Vitest, GitHub Actions CI on every pull request. CI green.
 - Step 1.2 — Database (PR #2) — **done locally; live Supabase part waiting on Elias.** Drizzle schema + migrations for `profiles`, `profile_members`, `media`, `feature_flags`; pgvector + pg_trgm; RLS on every table with no policies, and Supabase's API roles (anon / authenticated / service_role) have their access revoked for existing and future tables and functions. Seed script. Tests run on a real Postgres 17 + pgvector locally and in CI. Still to do once the Supabase project exists: see "Waiting on Elias".
+- Step 1.3 — Backend skeleton (PR #3) — **done locally and in CI; Fly staging deploy waiting on Elias.** Fastify API under `/v1`: `/v1/health`, `/v1/me` (login required), zod on every route (startup fails without response/body/params schemas), one error format, request ids + logs, Sentry (5xx only, no personal data), Supabase login check incl. guest tokens (503 if Supabase's keys can't be fetched), idempotency keys on every logged-in write (new `idempotency_keys` table), rate limiting per phone, pg-boss with a test job and a daily cleanup job. Dockerfile + `fly.toml` for `outfitly-api-staging` in Stockholm; CI builds the image, runs migrations in it, starts it and checks health / 401 / test job.
 
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
@@ -18,10 +19,20 @@ Phase 1, Step 1.3 — Backend skeleton, live on a server
 - 2026-11-02 — `profile_members` rows are hard-deleted (a permission link, not user content); profiles and media are soft-deleted.
 - 2026-11-02 — Scripts run with Node's built-in TypeScript support (Node ≥ 22.18), so no extra runner (tsx) is needed.
 - 2026-11-02 — Database TLS uses Supabase's CA certificate (`DATABASE_CA_CERT`), not `sslmode` in the URL (pg 8 treats `require` as full verification and lets URL params override).
+- 2026-11-02 — API: own small zod "type provider" instead of `fastify-type-provider-zod` (that one forces unused Swagger packages in).
+- 2026-11-02 — drizzle-orm query helpers are re-exported from `@outfitly/db` so every package uses one copy (two copies broke types).
+- 2026-11-02 — Idempotency keys are scoped per login (a dedupe record, not user content); 4xx answers are replayed like Stripe does; 5xx frees the key; write handlers must finish well under 60 s (slow work goes to jobs).
+- 2026-11-02 — Login-only by default: a route must opt out with `config: { public: true }`. An invalid/expired token gets 401 even on public routes (the app refreshes and retries).
+- 2026-11-02 — pg-boss v12, schema `pgboss`; API pool 5 + jobs pool 3 connections per machine.
 - 2026-11-02 — Elias asked Claude to work through Phase 1 and Phase 2 overnight without stopping. Each step still gets its own branch + PR, stacked on the previous step's branch; nothing is merged into `main` without Elias.
 
 ## Waiting on Elias
 - **Supabase dev project (Step 1.2):** create project `outfitly-dev`, region **Stockholm (eu-north-1)**, and turn on "Enforce SSL". Then give Claude (or put in `.env`): the Session pooler connection string (port 5432), the SSL certificate (Database settings → SSL → Download), the Project URL and the publishable key. Claude then runs `pnpm db:migrate`, `pnpm db:seed` and the live test (`SUPABASE_URL` + key set), and checks `pg_default_acl` on the real project.
+
+- **Fly.io staging API (Step 1.3)** — needs the Supabase project above first. Install flyctl and log in (`brew install flyctl && fly auth login`), or give Claude a Fly deploy token. Then: `fly apps create outfitly-api-staging`, `fly secrets set DATABASE_URL=… DATABASE_CA_CERT=… SUPABASE_URL=… SENTRY_DSN=… -a outfitly-api-staging`, and from the repo root `fly deploy . --config apps/api/fly.toml --dockerfile apps/api/Dockerfile`. Check: open `https://outfitly-api-staging.fly.dev/v1/health` → `{"status":"ok"}`.
+- **Supabase JWT signing keys** — in Supabase → Project Settings → JWT Keys, make sure the project uses the new asymmetric signing keys (ECC/RSA; default for new projects). The API does not accept the old shared-secret (HS256) tokens.
+- **Sentry** — create a free Sentry account/project "outfitly-api" (EU region) and share the DSN.
+- **OK for two small free libraries (Step 1.3)** — `jose` (checks Supabase login tokens) and `@fastify/rate-limit` (rate limiting). Both are free, open source, widely used. Say no and Claude will replace them.
 
 ## Open decisions for Elias
 - Domain name (outfitly.com or other)
@@ -50,5 +61,7 @@ Phase 1, Step 1.3 — Backend skeleton, live on a server
 - Relax `globals` back to `^17` once 17.14 is a few days old.
 - Handles: release a soft-deleted profile's handle after a while; block `..` / leading/trailing dots; reserved-handle list (Step 4.x).
 - Consider turning off Supabase's Data API (REST) entirely as a third lock (then adjust the live test).
-- Run migrations once per deploy (Fly `release_command`) — Step 1.3.
+- Web shop clicks from logged-out visitors (Step 3.7) need a session-scoped idempotency key; include the active profile in the request fingerprint once Step 1.6 adds it.
+- Replayed idempotent responses don't restore headers such as `Location`.
+- Production (Phase 5): keep at least one API machine always on so the 03:17 cleanup and other jobs run (staging sleeps when idle).
 - Pin GitHub Actions to commit SHAs (with Dependabot to keep them current); consider moving to `pnpm/setup` and pnpm 12.

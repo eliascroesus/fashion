@@ -5,7 +5,13 @@ import { migrationsFolder, runMigrations } from '../src/migrate.ts';
 import { seed } from '../src/seed.ts';
 import { createTestDatabase, type TestDatabase, withDb } from './test-database.ts';
 
-const EXPECTED_TABLES = ['feature_flags', 'media', 'profile_members', 'profiles'];
+const EXPECTED_TABLES = [
+  'feature_flags',
+  'idempotency_keys',
+  'media',
+  'profile_members',
+  'profiles',
+];
 /** Supabase's API roles: public app key, logged-in users, secret key. */
 const API_ROLES = ['anon', 'authenticated', 'service_role'];
 

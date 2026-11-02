@@ -8,6 +8,8 @@ export interface DbOptions {
    * URL parameters override this setting.
    */
   caCert?: string | undefined;
+  /** Most connections this client opens (keep within the Supabase pooler's size). */
+  max?: number;
 }
 
 /**
@@ -17,7 +19,7 @@ export interface DbOptions {
  */
 export function createDb(connectionString: string, options: DbOptions = {}) {
   const ssl = options.caCert ? { ca: options.caCert } : undefined;
-  return drizzle({ connection: { connectionString, ssl }, schema });
+  return drizzle({ connection: { connectionString, ssl, max: options.max ?? 5 }, schema });
 }
 
 export type Db = ReturnType<typeof createDb>;

@@ -39,6 +39,14 @@ pnpm db:seed       # load local test data (refuses when NODE_ENV=production)
 
 Every table has Row Level Security on and no client access: the app and web talk only to the API.
 
+### API
+
+```sh
+pnpm dev:api       # http://localhost:8080/v1/health (needs DATABASE_URL and SUPABASE_URL in .env)
+```
+
+Staging runs on Fly.io in Stockholm; see `apps/api/README.md` and `apps/api/fly.toml`.
+
 Layout: `apps/` (mobile, api, web), `packages/` (shared, db, ui-tokens), `services/embedder` (Python). Each folder's README says which step sets it up.
 
 ## Key files
