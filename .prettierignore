@@ -1,0 +1,3 @@
+pnpm-lock.yaml
+# Hand-written docs are never reformatted.
+**/*.md

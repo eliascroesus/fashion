@@ -12,6 +12,23 @@ This repository is built step by step with Claude Code.
 4. If something breaks, type `/stuck`.
 5. Test it the way Claude Code explains, merge the pull request, and start the next step in a fresh session.
 
+## How to run (developers)
+
+Needs Node 22 or newer and pnpm 11 (`npm install -g pnpm@11`).
+
+```sh
+cp .env.example .env   # then fill in real values; never commit .env
+pnpm install
+pnpm typecheck         # TypeScript, every workspace
+pnpm lint              # ESLint + Prettier check
+pnpm test              # Vitest, every workspace
+pnpm format            # fix formatting
+```
+
+GitHub Actions runs `typecheck`, `lint` and `test` on every pull request.
+
+Layout: `apps/` (mobile, api, web), `packages/` (shared, db, ui-tokens), `services/embedder` (Python). Each folder's README says which step sets it up.
+
 ## Key files
 
 | File | What it is |
