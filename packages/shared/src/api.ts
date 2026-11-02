@@ -37,3 +37,9 @@ export const apiErrorSchema = z.object({
   }),
 });
 export type ApiErrorBody = z.infer<typeof apiErrorSchema>;
+
+export const healthSchema = z.object({ status: z.literal('ok') });
+
+/** The login behind a request (`GET /v1/me`). */
+export const meSchema = z.object({ userId: z.uuid(), isAnonymous: z.boolean() });
+export type Me = z.infer<typeof meSchema>;

@@ -1,0 +1,16 @@
+# Tabs navigate and stay put. Run on a phone or simulator with the dev build installed:
+#   maestro test apps/mobile/.maestro/tabs.yaml
+appId: com.outfitly.app.dev
+---
+- launchApp
+- assertVisible: 'Your outfit feed will appear here.'
+- tapOn: 'Search'
+- assertVisible: 'Search for looks, pieces and people.'
+- tapOn: 'Create'
+- assertVisible: 'Post a look and tag what you wear.'
+- tapOn: 'Saved'
+- assertVisible: 'Looks you save end up here.'
+- tapOn: 'Profile'
+- assertVisible: 'Your profile and settings.'
+- tapOn: 'Home'
+- assertVisible: 'Your outfit feed will appear here.'
