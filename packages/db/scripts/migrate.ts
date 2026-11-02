@@ -6,5 +6,5 @@ if (!url) {
   process.exit(1);
 }
 
-await runMigrations(url);
+await runMigrations(url, { caCert: process.env['DATABASE_CA_CERT'] });
 console.log('Migrations applied.');

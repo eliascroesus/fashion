@@ -11,7 +11,7 @@ if (process.env['NODE_ENV'] === 'production') {
   process.exit(1);
 }
 
-const db = createDb(url);
+const db = createDb(url, { caCert: process.env['DATABASE_CA_CERT'] });
 try {
   await seed(db);
   console.log('Seed data loaded.');

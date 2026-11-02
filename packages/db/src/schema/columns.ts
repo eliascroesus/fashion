@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { timestamp, uuid } from 'drizzle-orm/pg-core';
 
 /** Every table has a UUID id and created/updated timestamps. */
@@ -8,7 +9,8 @@ export function baseColumns() {
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .defaultNow()
-      .$onUpdate(() => new Date()),
+      // Database clock, same as created_at.
+      .$onUpdate(() => sql`now()`),
   };
 }
 

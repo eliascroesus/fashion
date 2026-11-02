@@ -1,7 +1,8 @@
 /**
  * The parts of a Supabase database our migrations rely on, recreated on plain
  * Postgres so migrations and tests run locally and in CI. Includes Supabase's
- * risky default: client roles get full access to every new table in public.
+ * risky default (API roles get full access to every new object), granted both
+ * per schema and globally so the tests cover either shape.
  */
 
 /** Roles are shared by the whole server, so these run once (global setup). */
@@ -21,8 +22,10 @@ END
 $$;
 `;
 
-/** Per database: auth schema stub and Supabase's default grants. */
-export const SUPABASE_DATABASE_SQL = `
+/** Per database: auth schema stub, Supabase's search_path and default grants. */
+export function supabaseDatabaseSql(database: string): string {
+  return `
+ALTER DATABASE "${database}" SET search_path TO "$user", public, extensions;
 CREATE SCHEMA auth;
 CREATE TABLE auth.users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -34,4 +37,8 @@ GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
 `;
+}

@@ -209,8 +209,8 @@ This is the full list of tables the MVP needs, so Claude Code designs Phase 1 wi
 | --- | --- | --- | --- |
 | `profiles` | One row per profile: handle, name, avatar, **account type (personal / creator / business)**, creator category, brand name, logo and website (business), verified flag | Instagram-style accounts on one system; switch type anytime | 1 |
 | `profile_members` | Which login owns or can act for which profile (owner / editor), and which profile is active | One login can run up to 5 profiles (personal + brand); brand teams later | 1 |
-| `media` | Each uploaded photo: storage keys for original + 3 sizes, width, height, thumbhash, dominant colour, status | Grid never jumps; originals never shown | 1 |
-| `feature_flags` | On/off switches per feature | Turn features on for testers first | 1 |
+| `media` | Each uploaded photo: storage keys for original + 3 sizes, width, height, thumbhash, dominant colour, status, content type, size, error | Grid never jumps; originals never shown | 1 |
+| `feature_flags` | On/off switches per feature, optionally on only for listed tester profiles | Turn features on for testers first | 1 |
 | `looks` | A posted outfit: author profile, caption, status (draft / pending / published / hidden), slug, occasion and season tags, AI description, popularity score, **is\_sponsored** | The core content unit; sponsored flag ready for ads later | 2 |
 | `look_media` | Which photos belong to a look, in what order (up to 10) | Multi-photo looks | 2 |
 | `taste_profiles` | Styles and brands picked in onboarding | Tunes the first feed | 2 |

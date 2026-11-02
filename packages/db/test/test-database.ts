@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { createDb, type Db } from '../src/client.ts';
-import { SUPABASE_DATABASE_SQL } from './supabase-shim.ts';
+import { supabaseDatabaseSql } from './supabase-shim.ts';
 
 export function adminUrl(): string {
   const url = process.env['TEST_DATABASE_URL'];
@@ -10,6 +10,11 @@ export function adminUrl(): string {
       'TEST_DATABASE_URL is not set. Point it at a Postgres 17 server with pgvector ' +
         '(see README "How to run"); tests create and drop their own databases there.',
     );
+  }
+  // Tests create roles and drop databases: never point them at a shared server.
+  const host = new URL(url).hostname;
+  if (!process.env['CI'] && !['localhost', '127.0.0.1', '::1', '[::1]'].includes(host)) {
+    throw new Error(`TEST_DATABASE_URL must point at localhost, not ${host}.`);
   }
   return url;
 }
@@ -36,7 +41,7 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   const client = new pg.Client({ connectionString: url.toString() });
   await client.connect();
   try {
-    await client.query(SUPABASE_DATABASE_SQL);
+    await client.query(supabaseDatabaseSql(name));
   } finally {
     await client.end();
   }

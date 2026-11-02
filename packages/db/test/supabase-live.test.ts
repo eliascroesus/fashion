@@ -12,11 +12,15 @@ const tables = Object.values(schema)
 
 // Runs only when a real Supabase project is configured in .env.
 describe.skipIf(!supabaseUrl || !publishableKey)('live Supabase project', () => {
-  it.each(tables)('the public app key cannot read %s', async (table) => {
+  it.each(tables)('the public app key gets "permission denied" on %s', async (table) => {
     const res = await fetch(`${String(supabaseUrl)}/rest/v1/${table}?select=*&limit=1`, {
       headers: { apikey: String(publishableKey) },
       signal: AbortSignal.timeout(10_000),
     });
-    expect(res.ok, `${table}: HTTP ${String(res.status)} ${await res.text()}`).toBe(false);
+    const body = await res.text();
+    // 401 + 42501 means: key accepted, table exists, access refused. Anything
+    // else (bad key, table missing, API off) proves nothing, so it fails.
+    expect({ status: res.status, body }).toMatchObject({ status: 401 });
+    expect(JSON.parse(body)).toMatchObject({ code: '42501' });
   });
 });

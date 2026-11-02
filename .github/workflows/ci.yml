@@ -44,7 +44,10 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
       - name: Schema and migrations are in sync
+        # drizzle-kit exits 0 even when it needs an interactive answer (renames),
+        # so require its explicit "nothing to migrate" message as well.
         run: |
-          pnpm db:generate
+          pnpm db:generate 2>&1 | tee "$RUNNER_TEMP/generate.log"
+          grep -q "No schema changes, nothing to migrate" "$RUNNER_TEMP/generate.log"
           git add --intent-to-add packages/db/migrations
           git diff --exit-code packages/db/migrations
