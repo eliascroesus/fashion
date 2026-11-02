@@ -14,7 +14,7 @@ This repository is built step by step with Claude Code.
 
 ## How to run (developers)
 
-Needs Node 22.13 or newer and pnpm 11 (`npm install -g pnpm@11`).
+Needs Node 22.18 or newer (runs TypeScript scripts natively) and pnpm 11 (`npm install -g pnpm@11`).
 
 ```sh
 cp .env.example .env   # then fill in real values; never commit .env
@@ -26,6 +26,18 @@ pnpm format            # fix formatting
 ```
 
 GitHub Actions runs `typecheck`, `lint` and `test` on every pull request.
+
+### Database
+
+Tests need a local Postgres 17 with pgvector; set `TEST_DATABASE_URL` in `.env` (each test file creates and drops its own database). On a Mac: `brew install postgresql@17 pgvector && brew services start postgresql@17`.
+
+```sh
+pnpm db:generate   # after editing packages/db/src/schema: write a new migration
+pnpm db:migrate    # apply migrations to DATABASE_URL (Supabase dev project)
+pnpm db:seed       # load local test data (refuses when NODE_ENV=production)
+```
+
+Every table has Row Level Security on and no client access: the app and web talk only to the API.
 
 Layout: `apps/` (mobile, api, web), `packages/` (shared, db, ui-tokens), `services/embedder` (Python). Each folder's README says which step sets it up.
 

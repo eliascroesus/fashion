@@ -9,7 +9,8 @@
       "dependsOn": ["transit"]
     },
     "test": {
-      "dependsOn": ["transit"]
+      "dependsOn": ["transit"],
+      "env": ["TEST_DATABASE_URL", "SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY"]
     }
   }
 }

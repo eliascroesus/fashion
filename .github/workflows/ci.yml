@@ -18,6 +18,18 @@ jobs:
     name: Typecheck, lint, test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      # Same major version and extensions as Supabase. Tests create their own databases here.
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v7
         with:
@@ -31,3 +43,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      - name: Schema and migrations are in sync
+        run: |
+          pnpm db:generate
+          git add --intent-to-add packages/db/migrations
+          git diff --exit-code packages/db/migrations
