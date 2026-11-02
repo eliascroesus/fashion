@@ -103,3 +103,21 @@ jobs:
               if (r.variants.length !== 3) process.exit(1);"
       - if: failure()
         run: docker logs api || true
+
+  mobile-bundle:
+    name: App bundles build (iOS + Android)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @outfitly/mobile bundle
+        env:
+          CI: '1'

@@ -15,12 +15,14 @@
     "db:migrate": "pnpm --filter @outfitly/db migrate",
     "db:seed": "pnpm --filter @outfitly/db seed",
     "dev:api": "pnpm --filter @outfitly/api dev",
-    "media:try": "pnpm --filter @outfitly/api try-upload"
+    "media:try": "pnpm --filter @outfitly/api try-upload",
+    "dev:app": "pnpm --filter @outfitly/mobile start"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.14.0",
     "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "~17.13.0",
     "prettier": "^3.9.10",
     "turbo": "^2.11.10",

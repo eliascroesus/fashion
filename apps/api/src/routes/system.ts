@@ -1,5 +1,5 @@
+import { healthSchema, meSchema } from '@outfitly/shared';
 import type { FastifyInstance } from 'fastify';
-import { z } from 'zod';
 import { requireAuth } from '../auth.ts';
 import type { ZodTypeProvider } from '../zod.ts';
 
@@ -10,7 +10,7 @@ export function systemRoutes(app: FastifyInstance): void {
     '/health',
     {
       config: { public: true, rateLimit: false },
-      schema: { response: { 200: z.object({ status: z.literal('ok') }) } },
+      schema: { response: { 200: healthSchema } },
     },
     () => ({ status: 'ok' as const }),
   );
@@ -18,9 +18,7 @@ export function systemRoutes(app: FastifyInstance): void {
   routes.get(
     '/me',
     {
-      schema: {
-        response: { 200: z.object({ userId: z.uuid(), isAnonymous: z.boolean() }) },
-      },
+      schema: { response: { 200: meSchema } },
     },
     (request) => requireAuth(request),
   );

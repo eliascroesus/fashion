@@ -4,6 +4,8 @@ packages:
 
 # Dependency install scripts are off unless listed here.
 allowBuilds:
+  # Downloads the sentry-cli binary that uploads app source maps during EAS builds.
+  '@sentry/cli': true
   # Ships prebuilt binaries as optional deps; its postinstall check isn't needed.
   esbuild: false
 

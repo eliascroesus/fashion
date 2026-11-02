@@ -1,0 +1,29 @@
+# Every tab opens its screen, and Home comes back. Uses ids, so any phone language works.
+# Install a preview build (`eas build --profile preview`), then:
+#   maestro test apps/mobile/.maestro/tabs.yaml
+# (For a development build, set appId to com.outfitly.app.dev and open the dev server first.)
+appId: com.outfitly.app
+---
+- launchApp
+- assertVisible:
+    id: screen-home
+- tapOn:
+    id: tab-search
+- assertVisible:
+    id: screen-search
+- tapOn:
+    id: tab-create
+- assertVisible:
+    id: screen-create
+- tapOn:
+    id: tab-saved
+- assertVisible:
+    id: screen-saved
+- tapOn:
+    id: tab-profile
+- assertVisible:
+    id: screen-profile
+- tapOn:
+    id: tab-home
+- assertVisible:
+    id: screen-home
