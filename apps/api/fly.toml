@@ -1,0 +1,39 @@
+# Staging API in Stockholm. Deploy from the repo root:
+#   fly deploy . --config apps/api/fly.toml --dockerfile apps/api/Dockerfile
+# Secrets (set once with `fly secrets set ... -a outfitly-api-staging`):
+#   DATABASE_URL, DATABASE_CA_CERT, SUPABASE_URL, SENTRY_DSN
+app = "outfitly-api-staging"
+primary_region = "arn"
+
+[deploy]
+  # Applies database migrations once per deploy, before new machines start.
+  release_command = "node /app/packages/db/scripts/migrate.ts"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+  SENTRY_ENVIRONMENT = "staging"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Staging sleeps when idle to keep costs near zero (background jobs pause too).
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/v1/health"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

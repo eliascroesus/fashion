@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { createDb, type Db } from '../src/client.ts';
-import { supabaseDatabaseSql } from './supabase-shim.ts';
+import { runMigrations } from '../src/migrate.ts';
+import { SUPABASE_ROLES_SQL, supabaseDatabaseSql } from './supabase-shim.ts';
 
 export function adminUrl(): string {
   const url = process.env['TEST_DATABASE_URL'];
@@ -17,6 +18,17 @@ export function adminUrl(): string {
     throw new Error(`TEST_DATABASE_URL must point at localhost, not ${host}.`);
   }
   return url;
+}
+
+/** Creates Supabase's API roles on the test server. Run once, from Vitest global setup. */
+export async function ensureSupabaseRoles(): Promise<void> {
+  const client = new pg.Client({ connectionString: adminUrl() });
+  await client.connect();
+  try {
+    await client.query(SUPABASE_ROLES_SQL);
+  } finally {
+    await client.end();
+  }
 }
 
 export interface TestDatabase {
@@ -58,6 +70,13 @@ export async function createTestDatabase(): Promise<TestDatabase> {
       }
     },
   };
+}
+
+/** A fresh Supabase-shaped database with every migration applied. */
+export async function createMigratedTestDatabase(): Promise<TestDatabase> {
+  const testDb = await createTestDatabase();
+  await runMigrations(testDb.url);
+  return testDb;
 }
 
 /** Opens a Drizzle client for the duration of `fn`. */

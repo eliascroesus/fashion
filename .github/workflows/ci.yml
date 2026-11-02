@@ -51,3 +51,42 @@ jobs:
           grep -q "No schema changes, nothing to migrate" "$RUNNER_TEMP/generate.log"
           git add --intent-to-add packages/db/migrations
           git diff --exit-code packages/db/migrations
+
+  api-image:
+    name: API image builds and starts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: docker build -f apps/api/Dockerfile -t outfitly-api .
+      - name: Give the database the Supabase parts our migrations expect
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "
+            CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;
+            CREATE SCHEMA auth; CREATE TABLE auth.users (id uuid PRIMARY KEY);"
+      - name: Release command (migrations) runs inside the image
+        run: docker run --rm --network host -e DATABASE_URL outfitly-api node /app/packages/db/scripts/migrate.ts
+      - name: Server starts, answers health, refuses logged-out requests, runs the test job
+        run: |
+          docker run -d --name api --network host -e DATABASE_URL \
+            -e SUPABASE_URL=https://example.supabase.co outfitly-api
+          for i in $(seq 1 30); do curl -sf localhost:8080/v1/health && break; sleep 1; done
+          curl -sf localhost:8080/v1/health | grep -q '"status":"ok"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/v1/me)" = 401
+          for i in $(seq 1 20); do docker logs api 2>&1 | grep -q 'ping job ran' && break; sleep 1; done
+          docker logs api 2>&1 | grep -q 'ping job ran'
+      - if: failure()
+        run: docker logs api || true

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      // Tests use a live local Postgres, which turbo can't hash.
+      "cache": false
+    }
+  }
+}
