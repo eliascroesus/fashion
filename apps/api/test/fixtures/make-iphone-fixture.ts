@@ -1,5 +1,7 @@
-// Recreates iphone-12mp-gps.heic: a 4032×3024 photo-like image with GPS and
-// camera EXIF, encoded as HEIC (HEVC) like an iPhone does. Needs macOS (sips).
+// Recreates the HEIC fixtures. Needs macOS (sips).
+// - iphone-12mp-gps.heic: a 4032×3024 photo-like image with GPS and camera
+//   EXIF, encoded as HEIC (HEVC) like an iPhone does.
+// - p3-red.heic: pure red converted to Display P3 (the iPhone colour space).
 //   node test/fixtures/make-iphone-fixture.ts
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
@@ -52,3 +54,19 @@ await sharp(base)
 const out = new URL('./iphone-12mp-gps.heic', import.meta.url).pathname;
 execFileSync('sips', ['-s', 'format', 'heic', '-s', 'formatOptions', '70', jpeg, '--out', out]);
 console.log(`Wrote ${out}`);
+
+const redSrgb = join(mkdtempSync(join(tmpdir(), 'fixture-')), 'red.jpg');
+const redP3 = redSrgb.replace('red.jpg', 'red-p3.jpg');
+await sharp({ create: { width: 64, height: 48, channels: 3, background: { r: 255, g: 0, b: 0 } } })
+  .jpeg({ quality: 100 })
+  .toFile(redSrgb);
+execFileSync('sips', [
+  '--matchTo',
+  '/System/Library/ColorSync/Profiles/Display P3.icc',
+  redSrgb,
+  '--out',
+  redP3,
+]);
+const p3Out = new URL('./p3-red.heic', import.meta.url).pathname;
+execFileSync('sips', ['-s', 'format', 'heic', redP3, '--out', p3Out]);
+console.log(`Wrote ${p3Out}`);

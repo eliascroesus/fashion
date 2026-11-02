@@ -5,8 +5,16 @@ import type { FastifyInstance } from 'fastify';
 import type { PgBoss } from 'pg-boss';
 import sharp from 'sharp';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { buildApp } from '../src/app.ts';
 import { createJobQueue, QUEUES, startJobs } from '../src/jobs.ts';
-import { buildTestApp, createTestContext, signToken, type TestContext } from './helpers.ts';
+import {
+  buildTestApp,
+  createTestContext,
+  signToken,
+  testConfig,
+  testJwks,
+  type TestContext,
+} from './helpers.ts';
 
 const IPHONE_HEIC = readFileSync(new URL('./fixtures/iphone-12mp-gps.heic', import.meta.url));
 
@@ -102,7 +110,7 @@ describe('completing an upload', () => {
     expect(res.statusCode).toBe(409);
   });
 
-  it('starts processing exactly once', async () => {
+  it('starts processing, and asking again re-queues under the same photo key', async () => {
     const ticket = await requestUpload(alice.token);
     ctx.storage.simulateUpload(`originals/${ticket.mediaId}`, IPHONE_HEIC);
     const before = ctx.queued.length;
@@ -111,9 +119,9 @@ describe('completing an upload', () => {
     expect(first.statusCode).toBe(202);
     expect(mediaSchema.parse(first.json())).toMatchObject({ status: 'processing', urls: null });
     expect(again.statusCode).toBe(202);
-    expect(ctx.queued.slice(before)).toEqual([
-      { name: QUEUES.mediaProcess, data: { mediaId: ticket.mediaId } },
-    ]);
+    // The real queue keeps one job per singletonKey (tested end to end below).
+    const job = { name: QUEUES.mediaProcess, data: { mediaId: ticket.mediaId } };
+    expect(ctx.queued.slice(before)).toEqual([job, job]);
   });
 
   it("keeps other people's photos private", async () => {
@@ -129,8 +137,9 @@ describe('completing an upload', () => {
   });
 });
 
-describe('end to end with the background job', () => {
+describe('end to end with the real job queue', () => {
   let boss: PgBoss;
+  let live: FastifyInstance;
 
   beforeAll(async () => {
     boss = createJobQueue(ctx.testDb.url);
@@ -139,20 +148,45 @@ describe('end to end with the background job', () => {
       storage: ctx.storage,
       log: app.log,
       pollingIntervalSeconds: 0.5,
+      mediaRetryDelaySeconds: 0,
     });
+    live = await buildApp({
+      config: testConfig(ctx.testDb.url),
+      db: ctx.db,
+      jwks: testJwks,
+      storage: ctx.storage,
+      queue: boss,
+      logger: false,
+    });
+    await live.ready();
   });
 
   afterAll(async () => {
+    await live.close();
     await boss.stop({ graceful: false, close: true });
   });
 
-  async function completeWith(body: Buffer) {
-    const ticket = await requestUpload(alice.token, body.length);
+  async function liveCall(method: 'GET' | 'POST', url: string, payload?: object) {
+    return live.inject({
+      method,
+      url,
+      headers: {
+        authorization: `Bearer ${alice.token}`,
+        ...(method === 'POST' ? { 'idempotency-key': crypto.randomUUID() } : {}),
+      },
+      ...(payload ? { payload } : {}),
+    });
+  }
+
+  async function uploadAndComplete(body: Buffer) {
+    const res = await liveCall('POST', '/v1/media/uploads', {
+      contentType: 'image/heic',
+      byteSize: body.length,
+    });
+    const ticket = uploadTicketSchema.parse(res.json());
     ctx.storage.simulateUpload(`originals/${ticket.mediaId}`, body);
-    const res = await call(alice.token, 'POST', `/v1/media/${ticket.mediaId}/complete`, {});
-    expect(res.statusCode).toBe(202);
-    // The fake queue only records; hand the job to the real worker.
-    await boss.send(QUEUES.mediaProcess, { mediaId: ticket.mediaId });
+    const done = await liveCall('POST', `/v1/media/${ticket.mediaId}/complete`, {});
+    expect(done.statusCode).toBe(202);
     return ticket.mediaId;
   }
 
@@ -160,16 +194,16 @@ describe('end to end with the background job', () => {
     await expect
       .poll(
         async () =>
-          mediaSchema.parse((await call(alice.token, 'GET', `/v1/media/${mediaId}`)).json()).status,
+          mediaSchema.parse((await liveCall('GET', `/v1/media/${mediaId}`)).json()).status,
         { timeout: 20_000, interval: 250 },
       )
       .toBe(status);
-    return mediaSchema.parse((await call(alice.token, 'GET', `/v1/media/${mediaId}`)).json());
+    return mediaSchema.parse((await liveCall('GET', `/v1/media/${mediaId}`)).json());
   }
 
   it('turns an iPhone photo into 3 public sizes with size, thumbhash and colour', async () => {
     const started = performance.now();
-    const mediaId = await completeWith(IPHONE_HEIC);
+    const mediaId = await uploadAndComplete(IPHONE_HEIC);
     const ready = await waitFor(mediaId, 'ready');
     console.log(`upload → ready in ${((performance.now() - started) / 1000).toFixed(2)} s`);
 
@@ -188,9 +222,40 @@ describe('end to end with the background job', () => {
     }
   });
 
-  it('marks a file it cannot read as failed, without retrying', async () => {
-    const mediaId = await completeWith(Buffer.from('this is not a photo at all'));
+  it('keeps one job per photo even when the app says "done" again mid-processing', async () => {
+    let release: () => void = () => undefined;
+    ctx.storage.downloadGate = new Promise<void>((resolve) => (release = resolve));
+    try {
+      const mediaId = await uploadAndComplete(IPHONE_HEIC);
+      await expect
+        .poll(async () => (await boss.findJobs(QUEUES.mediaProcess, { key: mediaId }))[0]?.state)
+        .toBe('active');
+      await liveCall('POST', `/v1/media/${mediaId}/complete`, {});
+      expect(await boss.findJobs(QUEUES.mediaProcess, { key: mediaId })).toHaveLength(1);
+      ctx.storage.downloadGate = null;
+      release();
+      await waitFor(mediaId, 'ready');
+    } finally {
+      ctx.storage.downloadGate = null;
+      release();
+    }
+  });
+
+  it('marks a file it cannot use as failed, without retrying', async () => {
+    const mediaId = await uploadAndComplete(Buffer.from('this is not a photo at all'));
     const failed = await waitFor(mediaId, 'failed');
     expect(failed.urls).toBeNull();
+  });
+
+  it('marks a photo failed once retries run out (e.g. storage down)', async () => {
+    ctx.storage.failDownloads = true;
+    try {
+      const mediaId = await uploadAndComplete(IPHONE_HEIC);
+      await waitFor(mediaId, 'failed');
+      const [row] = await ctx.db.select().from(media).where(eq(media.id, mediaId));
+      expect(row?.error).toMatch(/after retries/);
+    } finally {
+      ctx.storage.failDownloads = false;
+    }
   });
 });

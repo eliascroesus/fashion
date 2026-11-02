@@ -91,5 +91,15 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/v1/me)" = 401
           for i in $(seq 1 20); do docker logs api 2>&1 | grep -q 'ping job ran' && break; sleep 1; done
           docker logs api 2>&1 | grep -q 'ping job ran'
+      - name: The image turns the 12 MP iPhone HEIC into 3 sizes (sharp + libheif in a worker)
+        run: |
+          docker run --rm -v "$PWD/apps/api/test/fixtures:/fixtures:ro" -w /app/apps/api outfitly-api \
+            node --input-type=module -e "
+              import { readFileSync } from 'node:fs';
+              import { processImageIsolated } from './src/media/process-isolated.ts';
+              const t = performance.now();
+              const r = await processImageIsolated(readFileSync('/fixtures/iphone-12mp-gps.heic'));
+              console.log('sizes', r.variants.map((v) => v.width).join('/'), 'in', Math.round(performance.now() - t), 'ms');
+              if (r.variants.length !== 3) process.exit(1);"
       - if: failure()
         run: docker logs api || true

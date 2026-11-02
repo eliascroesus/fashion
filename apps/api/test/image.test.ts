@@ -1,10 +1,29 @@
 import { readFileSync } from 'node:fs';
+import { crc32 } from 'node:zlib';
 import sharp from 'sharp';
 import { thumbHashToRGBA } from 'thumbhash';
 import { describe, expect, it } from 'vitest';
-import { processImage, UnreadableImageError } from '../src/media/image.ts';
+import { processImage, ImageRejectedError } from '../src/media/image.ts';
 
 const IPHONE_HEIC = readFileSync(new URL('./fixtures/iphone-12mp-gps.heic', import.meta.url));
+/** Pure red saved by macOS in Display P3, the colour space every iPhone photo uses. */
+const P3_RED_HEIC = readFileSync(new URL('./fixtures/p3-red.heic', import.meta.url));
+
+/** A tiny PNG whose header claims a huge size: a decompression bomb. */
+async function pngClaiming(width: number, height: number): Promise<Buffer> {
+  const png = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#000' } })
+    .png()
+    .toBuffer();
+  png.writeUInt32BE(width, 16);
+  png.writeUInt32BE(height, 20);
+  png.writeUInt32BE(crc32(png.subarray(12, 29)), 29); // IHDR checksum
+  return png;
+}
+
+async function firstPixel(webp: Buffer | undefined): Promise<number[]> {
+  const raw = await sharp(webp).raw().toBuffer();
+  return [raw[0] ?? -1, raw[1] ?? -1, raw[2] ?? -1];
+}
 
 /** True if an EXIF block contains a GPS section (tag 0x8825), in either byte order. */
 function hasGps(exif: Buffer | undefined): boolean {
@@ -75,9 +94,47 @@ describe('processImage', () => {
     expect(result.variants.map((v) => v.width)).toEqual([400, 400, 300]);
   });
 
+  it('converts iPhone Display P3 colours to sRGB instead of dulling them', async () => {
+    const result = await processImage(P3_RED_HEIC);
+    const [r = 0, g = 0, b = 0] = await firstPixel(result.variants[0]?.body);
+    // Unconverted P3 red reads as (233, 52, 35): dull and orange.
+    expect(r).toBeGreaterThan(245);
+    expect(g).toBeLessThan(20);
+    expect(b).toBeLessThan(20);
+  });
+
+  it('refuses decompression bombs from the header, before decoding', async () => {
+    const started = performance.now();
+    await expect(processImage(await pngClaiming(8_000, 7_000))).rejects.toThrow(/too many pixels/);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it('refuses very long and thin images', async () => {
+    const strip = await sharp({
+      create: { width: 2000, height: 400, channels: 3, background: '#888' },
+    })
+      .jpeg()
+      .toBuffer();
+    await expect(processImage(strip)).rejects.toThrow(/long and thin/);
+  });
+
+  it.each(['gif', 'tiff'] as const)('refuses %s files even if they decode', async (format) => {
+    const image = await sharp({
+      create: { width: 50, height: 50, channels: 3, background: '#888' },
+    })
+      .toFormat(format)
+      .toBuffer();
+    await expect(processImage(image)).rejects.toBeInstanceOf(ImageRejectedError);
+  });
+
+  it('refuses SVG (it is code, not a photo)', async () => {
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');
+    await expect(processImage(svg)).rejects.toBeInstanceOf(ImageRejectedError);
+  });
+
   it('rejects files that are not photos', async () => {
     await expect(processImage(Buffer.from('definitely not an image'))).rejects.toBeInstanceOf(
-      UnreadableImageError,
+      ImageRejectedError,
     );
   });
 });

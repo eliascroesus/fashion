@@ -1,7 +1,7 @@
 import { type Db, idempotencyKeys, lt, sql } from '@outfitly/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { PgBoss } from 'pg-boss';
-import { UnreadableImageError } from './media/image.ts';
+import { ImageRejectedError } from './media/image.ts';
 import { markMediaFailed, processUploadedMedia } from './media/pipeline.ts';
 import type { PhotoStorage } from './storage.ts';
 
@@ -11,9 +11,9 @@ export const QUEUES = {
   idempotencyCleanup: 'idempotency-cleanup',
   /** Makes the public sizes of one uploaded photo. */
   mediaProcess: 'media-process',
+  /** Photos whose processing ran out of retries (or crashed); marks them failed. */
+  mediaProcessFailed: 'media-process-failed',
 } as const;
-
-const MEDIA_RETRY_LIMIT = 2;
 
 /** What routes need to enqueue work. */
 export type JobQueue = Pick<PgBoss, 'send'>;
@@ -38,6 +38,8 @@ export interface WorkerDeps {
   storage: PhotoStorage;
   log: FastifyBaseLogger;
   pollingIntervalSeconds?: number;
+  /** Seconds between photo-processing retries (tests use 0). */
+  mediaRetryDelaySeconds?: number;
 }
 
 /** Starts the queue and every worker. */
@@ -67,18 +69,31 @@ export async function startJobs(boss: PgBoss, options: WorkerDeps): Promise<void
   });
   await boss.schedule(QUEUES.idempotencyCleanup, '17 3 * * *');
 
-  await boss.createQueue(QUEUES.mediaProcess, { retryLimit: MEDIA_RETRY_LIMIT, retryDelay: 10 });
+  await boss.createQueue(QUEUES.mediaProcessFailed);
+  await boss.work<{ mediaId: string }>(QUEUES.mediaProcessFailed, workOptions, async (jobs) => {
+    for (const { data } of jobs) {
+      await markMediaFailed(db, data.mediaId, 'Processing failed after retries.');
+    }
+  });
+  await boss.createQueue(QUEUES.mediaProcess, {
+    // One job per photo at a time: sends with the photo id as singletonKey are deduplicated.
+    policy: 'exclusive',
+    retryLimit: 2,
+    retryDelay: options.mediaRetryDelaySeconds ?? 10,
+    // A job that crashed its worker is retried after this; then it goes to the failed queue.
+    expireInSeconds: 300,
+    deadLetter: QUEUES.mediaProcessFailed,
+  });
   await boss.work<{ mediaId: string }>(QUEUES.mediaProcess, workOptions, async (jobs) => {
-    for (const { data, retryCount } of jobs) {
+    for (const { data } of jobs) {
       try {
         await processUploadedMedia(db, storage, data.mediaId);
         log.info({ mediaId: data.mediaId }, 'photo processed');
       } catch (error) {
-        // A photo we can't read won't get better with retries.
-        const lastTry = error instanceof UnreadableImageError || retryCount >= MEDIA_RETRY_LIMIT;
-        log.error({ err: error, mediaId: data.mediaId, retryCount, lastTry }, 'photo failed');
-        if (!lastTry) throw error;
-        await markMediaFailed(db, data.mediaId, String(error));
+        log.error({ err: error, mediaId: data.mediaId }, 'photo failed');
+        // A photo we can't use won't get better with retries; anything else is retried.
+        if (!(error instanceof ImageRejectedError)) throw error;
+        await markMediaFailed(db, data.mediaId, error.message);
       }
     }
   });

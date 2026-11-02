@@ -1,7 +1,8 @@
 import { type Db, eq, media } from '@outfitly/db';
 import { MAX_UPLOAD_BYTES, type Media, MEDIA_SIZES, type MediaSize } from '@outfitly/shared';
-import type { PhotoStorage } from '../storage.ts';
-import { type ProcessedImage, processImage } from './image.ts';
+import { OriginalTooLargeError, type PhotoStorage } from '../storage.ts';
+import { ImageRejectedError, type ProcessedImage } from './image.ts';
+import { processImageIsolated } from './process-isolated.ts';
 
 export function originalKey(mediaId: string): string {
   return `originals/${mediaId}`;
@@ -22,9 +23,14 @@ export async function makePublicSizes(
   storage: PhotoStorage,
   mediaId: string,
 ): Promise<StoredSizes> {
-  const original = await storage.getOriginal(originalKey(mediaId));
-  if (original.length > MAX_UPLOAD_BYTES) throw new Error('Original is larger than allowed.');
-  const image = await processImage(original);
+  let original: Buffer;
+  try {
+    original = await storage.getOriginal(originalKey(mediaId), MAX_UPLOAD_BYTES);
+  } catch (error) {
+    if (error instanceof OriginalTooLargeError) throw new ImageRejectedError(error.message);
+    throw error;
+  }
+  const image = await processImageIsolated(original);
   for (const variant of image.variants) {
     await storage.putPublic(sizeKey(mediaId, variant.size), variant.body, 'image/webp');
   }

@@ -7,6 +7,13 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
+export class OriginalTooLargeError extends Error {
+  constructor() {
+    super('The uploaded photo is larger than allowed.');
+    this.name = 'OriginalTooLargeError';
+  }
+}
+
 /** Public sizes never change once written, so browsers and the CDN may keep them forever. */
 export const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
@@ -24,7 +31,8 @@ export interface PhotoStorage {
   ): Promise<PresignedUpload>;
   /** Size of an uploaded original, or null if nothing has been uploaded. */
   originalSize(key: string): Promise<number | null>;
-  getOriginal(key: string): Promise<Buffer>;
+  /** Downloads an original, refusing (before downloading) anything over `maxBytes`. */
+  getOriginal(key: string, maxBytes: number): Promise<Buffer>;
   putPublic(key: string, body: Buffer, contentType: string): Promise<void>;
   publicUrl(key: string): string;
 }
@@ -95,11 +103,17 @@ export class R2Storage implements PhotoStorage {
     }
   }
 
-  async getOriginal(key: string): Promise<Buffer> {
+  async getOriginal(key: string, maxBytes: number): Promise<Buffer> {
     const object = await this.#s3.send(
       new GetObjectCommand({ Bucket: this.#config.originalsBucket, Key: key }),
     );
     if (!object.Body) throw new Error(`Original ${key} has no body.`);
+    if (object.ContentLength === undefined || object.ContentLength > maxBytes) {
+      object.Body.transformToWebStream()
+        .cancel()
+        .catch(() => undefined);
+      throw new OriginalTooLargeError();
+    }
     return Buffer.from(await object.Body.transformToByteArray());
   }
 

@@ -1,4 +1,4 @@
-import type { PhotoStorage, PresignedUpload } from '../src/storage.ts';
+import { OriginalTooLargeError, type PhotoStorage, type PresignedUpload } from '../src/storage.ts';
 
 /** In-memory stand-in for R2, so the upload flow can be tested without Cloudflare. */
 export class MemoryStorage implements PhotoStorage {
@@ -25,9 +25,18 @@ export class MemoryStorage implements PhotoStorage {
     return Promise.resolve(this.originals.get(key)?.length ?? null);
   }
 
-  getOriginal(key: string): Promise<Buffer> {
+  /** Set to make downloads fail, like a storage outage. */
+  failDownloads = false;
+  /** Set to make downloads wait until it resolves, like a slow network. */
+  downloadGate: Promise<void> | null = null;
+
+  async getOriginal(key: string, maxBytes: number): Promise<Buffer> {
+    if (this.downloadGate) await this.downloadGate;
     const body = this.originals.get(key);
-    return body ? Promise.resolve(body) : Promise.reject(new Error(`No original ${key}`));
+    if (this.failDownloads) return Promise.reject(new Error('storage unavailable'));
+    if (!body) return Promise.reject(new Error(`No original ${key}`));
+    if (body.length > maxBytes) return Promise.reject(new OriginalTooLargeError());
+    return Promise.resolve(body);
   }
 
   putPublic(key: string, body: Buffer, contentType: string): Promise<void> {

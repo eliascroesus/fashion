@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { IMMUTABLE_CACHE_CONTROL, R2Storage } from '../src/storage.ts';
+import { IMMUTABLE_CACHE_CONTROL, OriginalTooLargeError, R2Storage } from '../src/storage.ts';
 
 /** A tiny fake of R2's S3 API that records what the client sends. */
 interface Recorded {
@@ -76,7 +76,13 @@ describe('R2 storage', () => {
     const res = await fetch(upload.url, { method: 'PUT', headers: upload.headers, body });
     expect(res.status).toBe(200);
     expect(await storage.originalSize('originals/def')).toBe(body.length);
-    expect(await storage.getOriginal('originals/def')).toEqual(body);
+    expect(await storage.getOriginal('originals/def', 1000)).toEqual(body);
+  });
+
+  it('refuses to download an original bigger than allowed', async () => {
+    await expect(storage.getOriginal('originals/def', 5)).rejects.toBeInstanceOf(
+      OriginalTooLargeError,
+    );
   });
 
   it('reports a missing original as not uploaded', async () => {

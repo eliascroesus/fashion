@@ -3,12 +3,13 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-Phase 1, Step 1.4 — Photo pipeline
+Phase 1, Step 1.5 — App shell
 
 ## Done
 - Step 1.1 — Project skeleton and safety net (PR #1). Monorepo (pnpm + Turborepo), strict TypeScript, ESLint + Prettier, Vitest, GitHub Actions CI on every pull request. CI green.
 - Step 1.2 — Database (PR #2) — **done locally; live Supabase part waiting on Elias.** Drizzle schema + migrations for `profiles`, `profile_members`, `media`, `feature_flags`; pgvector + pg_trgm; RLS on every table with no policies, and Supabase's API roles (anon / authenticated / service_role) have their access revoked for existing and future tables and functions. Seed script. Tests run on a real Postgres 17 + pgvector locally and in CI. Still to do once the Supabase project exists: see "Waiting on Elias".
 - Step 1.3 — Backend skeleton (PR #3) — **done locally and in CI; Fly staging deploy waiting on Elias.** Fastify API under `/v1`: `/v1/health`, `/v1/me` (login required), zod on every route (startup fails without response/body/params schemas), one error format, request ids + logs, Sentry (5xx only, no personal data), Supabase login check incl. guest tokens (503 if Supabase's keys can't be fetched), idempotency keys on every logged-in write (new `idempotency_keys` table), rate limiting per phone, pg-boss with a test job and a daily cleanup job. Dockerfile + `fly.toml` for `outfitly-api-staging` in Stockholm; CI builds the image, runs migrations in it, starts it and checks health / 401 / test job.
+- Step 1.4 — Photo pipeline (PR #4) — **done locally and in CI; real Cloudflare R2 waiting on Elias.** Upload flow: ask for a link → upload the original straight to R2 → say done → a background job makes 1080/600/300 WebP (location/camera data removed, iPhone Display P3 colours converted to sRGB, HEIC supported) plus size, blurry preview (thumbhash) and main colour. Unsafe files (decompression bombs, SVG/GIF/TIFF, strips) are refused from the header; processing runs in a worker thread; failed jobs are marked failed after retries. `pnpm media:try photo.heic` prints the 3 links once R2 exists.
 
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
@@ -24,6 +25,9 @@ Phase 1, Step 1.4 — Photo pipeline
 - 2026-11-02 — Idempotency keys are scoped per login (a dedupe record, not user content); 4xx answers are replayed like Stripe does; 5xx frees the key; write handlers must finish well under 60 s (slow work goes to jobs).
 - 2026-11-02 — Login-only by default: a route must opt out with `config: { public: true }`. An invalid/expired token gets 401 even on public routes (the app refreshes and retries).
 - 2026-11-02 — pg-boss v12, schema `pgboss`; API pool 5 + jobs pool 3 connections per machine.
+- 2026-11-02 — Photos: sizes are widths (1080/600/300), never enlarged; WebP quality 80; keys `m/<media id>/<size>.webp` (never reused) with `Cache-Control: public, max-age=31536000, immutable`; originals stay private in a separate bucket. Limits: 25 MB upload, 50 MP (25 MP for HEIC), aspect ratio ≤ 4:1; formats JPEG/PNG/WebP/HEIC/AVIF only.
+- 2026-11-02 — Media must belong to the active profile; `requireActiveProfile` looks it up server-side from `profile_members` (Step 1.6 adds automatic profile creation).
+- 2026-11-02 — App rule for later (Steps 1.5/4.2): use a fresh Idempotency-Key per user action; a retry of the *same* action reuses its key (4xx answers like "not uploaded yet" are replayed for 24 h).
 - 2026-11-02 — Elias asked Claude to work through Phase 1 and Phase 2 overnight without stopping. Each step still gets its own branch + PR, stacked on the previous step's branch; nothing is merged into `main` without Elias.
 
 ## Waiting on Elias
@@ -32,6 +36,11 @@ Phase 1, Step 1.4 — Photo pipeline
 - **Fly.io staging API (Step 1.3)** — needs the Supabase project above first. Install flyctl and log in (`brew install flyctl && fly auth login`), or give Claude a Fly deploy token. Then: `fly apps create outfitly-api-staging`, `fly secrets set DATABASE_URL=… DATABASE_CA_CERT=… SUPABASE_URL=… SENTRY_DSN=… -a outfitly-api-staging`, and from the repo root `fly deploy . --config apps/api/fly.toml --dockerfile apps/api/Dockerfile`. Check: open `https://outfitly-api-staging.fly.dev/v1/health` → `{"status":"ok"}`.
 - **Supabase JWT signing keys** — in Supabase → Project Settings → JWT Keys, make sure the project uses the new asymmetric signing keys (ECC/RSA; default for new projects). The API does not accept the old shared-secret (HS256) tokens.
 - **Sentry** — create a free Sentry account/project "outfitly-api" (EU region) and share the DSN.
+- **Cloudflare R2 + image domain (Step 1.4):** in Cloudflare, create two R2 buckets in the EU jurisdiction: `outfitly-originals-dev` (private) and `outfitly-public-dev` (connect the custom domain `img.<your domain>` to it; needs the domain on Cloudflare). Create an R2 API token with Object Read & Write on both. Share Account ID, Access Key ID and Secret. Claude then runs `pnpm media:try` with a real iPhone photo (prints 3 links to open in the browser) and also checks that R2 refuses an upload whose size/type doesn't match the link.
+- **A real iPhone photo** (taken somewhere neutral, location on) to add as a test file, so tests use a true iPhone capture.
+- **OK for photo libraries (Step 1.4):** `heic-decode` (reads iPhone HEIC; bundles the libde265 HEVC decoder — HEVC is patent-licensed, which is why the standard image library leaves it out) and the AWS S3 client (`@aws-sdk/client-s3` + presigner; talks to R2). Alternative to HEVC on the server: the app converts photos to JPEG on the phone before upload (planned anyway in Step 4.2).
+- **API machine size:** decoding a 12 MP HEIC peaks ~550 MB, so the API machine is set to 1 GB (staging sleeps when idle, so ~free; always-on would be ~$5.70/month instead of ~$3.20).
+- **Photo originals keep location data** (only the public sizes are stripped). Decide how long to keep originals (GDPR): e.g. delete after 30 days, or strip on arrival.
 - **OK for two small free libraries (Step 1.3)** — `jose` (checks Supabase login tokens) and `@fastify/rate-limit` (rate limiting). Both are free, open source, widely used. Say no and Claude will replace them.
 
 ## Open decisions for Elias
@@ -63,5 +72,7 @@ Phase 1, Step 1.4 — Photo pipeline
 - Consider turning off Supabase's Data API (REST) entirely as a third lock (then adjust the live test).
 - Web shop clicks from logged-out visitors (Step 3.7) need a session-scoped idempotency key; include the active profile in the request fingerprint once Step 1.6 adds it.
 - Replayed idempotent responses don't restore headers such as `Location`.
+- Clean up abandoned uploads: `pending` media rows and originals older than a day.
+- Measure photo processing on the real Fly machine (target < 10 s; 1.7 s on GitHub's runner, 0.6 s on a Mac).
 - Production (Phase 5): keep at least one API machine always on so the 03:17 cleanup and other jobs run (staging sleeps when idle).
 - Pin GitHub Actions to commit SHAs (with Dependabot to keep them current); consider moving to `pnpm/setup` and pnpm 12.

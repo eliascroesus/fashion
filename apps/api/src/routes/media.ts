@@ -24,6 +24,11 @@ const idParams = z.object({ id: z.uuid() });
 export function mediaRoutes(app: FastifyInstance, { db, storage, queue }: MediaRouteDeps): void {
   const routes = app.withTypeProvider<ZodTypeProvider>();
 
+  /** At most one processing job per photo: the queue drops duplicates of a queued job. */
+  async function enqueue(mediaId: string) {
+    await queue.send(QUEUES.mediaProcess, { mediaId }, { singletonKey: mediaId });
+  }
+
   async function ownMedia(id: string, profileId: string) {
     const [row] = await db
       .select()
@@ -63,6 +68,10 @@ export function mediaRoutes(app: FastifyInstance, { db, storage, queue }: MediaR
     async (request, reply) => {
       const profileId = await requireActiveProfile(db, request);
       const row = await ownMedia(request.params.id, profileId);
+      if (row.status === 'processing') {
+        // Asking again re-queues it, in case the first enqueue was lost (no-op if still queued).
+        await enqueue(row.id);
+      }
       if (row.status !== 'pending') return reply.status(202).send(toMediaResponse(row, storage));
 
       const size = await storage.originalSize(row.originalKey);
@@ -78,9 +87,7 @@ export function mediaRoutes(app: FastifyInstance, { db, storage, queue }: MediaR
         .set({ status: 'processing' })
         .where(and(eq(media.id, row.id), eq(media.status, 'pending')))
         .returning();
-      if (updated) {
-        await queue.send(QUEUES.mediaProcess, { mediaId: row.id }, { singletonKey: row.id });
-      }
+      await enqueue(row.id);
       return reply.status(202).send(toMediaResponse(updated ?? row, storage));
     },
   );
