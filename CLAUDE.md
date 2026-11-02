@@ -10,7 +10,7 @@ Goal right now: user growth with a Pinterest-grade UX at minimal running cost. M
 - Version 1 = Phases 1–5. Phases 6–9 are expansion and must NOT be built before V1 ships.
 
 ## How every session works
-Elias (the founder) is not an engineer. He starts each session with `/start-step X.Y`.
+Elias (the founder) is not an engineer. He starts each session with `/start-phase N` (works through a phase step by step, pausing after each step) or `/start-step X.Y` (one step). If he just writes something like "start phase 2" or "continue", treat it as `/start-phase` for that phase and pick up from `docs/PROGRESS.md`. Every step follows the ritual below, one step at a time, never several steps at once.
 1. Read this file, ONLY the current step in `docs/BUILD_PLAN.md` (plus anything it references), and `docs/PROGRESS.md`.
 2. Plan mode first: list files to create/change, migrations, new packages, and the test plan. Wait for approval.
 3. Build ONLY the current step. Ideas for later go to `docs/PROGRESS.md` under "Later".
