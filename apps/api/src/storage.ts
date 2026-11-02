@@ -37,8 +37,17 @@ export interface PhotoStorage {
   publicUrl(key: string): string;
 }
 
+/** Where the buckets live. EU-jurisdiction buckets are only reachable on their own endpoint. */
+export type R2Jurisdiction = 'eu' | 'default';
+
+export function r2Endpoint(accountId: string, jurisdiction: R2Jurisdiction): string {
+  const region = jurisdiction === 'eu' ? '.eu' : '';
+  return `https://${accountId}${region}.r2.cloudflarestorage.com`;
+}
+
 export interface R2Config {
   accountId: string;
+  jurisdiction: R2Jurisdiction;
   accessKeyId: string;
   secretAccessKey: string;
   originalsBucket: string;
@@ -60,7 +69,7 @@ export class R2Storage implements PhotoStorage {
     this.#config = config;
     this.#s3 = new S3Client({
       region: 'auto',
-      endpoint: config.endpoint ?? `https://${config.accountId}.r2.cloudflarestorage.com`,
+      endpoint: config.endpoint ?? r2Endpoint(config.accountId, config.jurisdiction),
       forcePathStyle: true,
       credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
       // R2 doesn't support every checksum the AWS SDK adds by default (Cloudflare's advice).

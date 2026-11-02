@@ -1,0 +1,14 @@
+# The hidden "Test save" button makes a guest session and opens the sign-up sheet.
+# Needs a build with the Supabase settings (EXPO_PUBLIC_SUPABASE_*).
+appId: com.outfitly.app
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: tab-profile
+- longPressOn:
+    id: profile-title
+- tapOn:
+    id: dev-test-save
+- assertVisible:
+    id: sign-up-sheet

@@ -71,7 +71,12 @@ describe('login check', () => {
       headers: { authorization: `Bearer ${await signToken({ sub })}` },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ userId: sub, isAnonymous: false });
+    expect(res.json()).toEqual({
+      userId: sub,
+      isAnonymous: false,
+      activeProfileId: null,
+      profiles: [],
+    });
   });
 
   it('accepts an anonymous (guest) Supabase token', async () => {

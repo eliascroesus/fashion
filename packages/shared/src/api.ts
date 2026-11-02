@@ -40,6 +40,30 @@ export type ApiErrorBody = z.infer<typeof apiErrorSchema>;
 
 export const healthSchema = z.object({ status: z.literal('ok') });
 
-/** The login behind a request (`GET /v1/me`). */
-export const meSchema = z.object({ userId: z.uuid(), isAnonymous: z.boolean() });
+/** Which of the login's profiles a request acts as. The server checks the login may use it. */
+export const ACTIVE_PROFILE_HEADER = 'x-profile-id';
+
+export const profileSummarySchema = z.object({
+  id: z.uuid(),
+  handle: z.string(),
+  displayName: z.string().nullable(),
+  accountType: z.enum(['personal', 'creator', 'business']),
+  role: z.enum(['owner', 'editor']),
+});
+export type ProfileSummary = z.infer<typeof profileSummarySchema>;
+
+/** The login behind a request and its profiles (`GET /v1/me`, `POST /v1/session`). */
+export const meSchema = z.object({
+  userId: z.uuid(),
+  isAnonymous: z.boolean(),
+  activeProfileId: z.uuid().nullable(),
+  profiles: z.array(profileSummarySchema),
+});
 export type Me = z.infer<typeof meSchema>;
+
+/**
+ * After signing in to an existing account from a guest session, the app hands
+ * over the guest's token so the guest's saves and photos move to this account.
+ */
+export const mergeGuestBodySchema = z.object({ guestAccessToken: z.string().min(1) });
+export const mergeGuestResultSchema = z.object({ merged: z.boolean() });

@@ -1,7 +1,12 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { IMMUTABLE_CACHE_CONTROL, OriginalTooLargeError, R2Storage } from '../src/storage.ts';
+import {
+  IMMUTABLE_CACHE_CONTROL,
+  OriginalTooLargeError,
+  R2Storage,
+  r2Endpoint,
+} from '../src/storage.ts';
 
 /** A tiny fake of R2's S3 API that records what the client sends. */
 interface Recorded {
@@ -38,6 +43,7 @@ beforeAll(async () => {
   const { port } = server.address() as AddressInfo;
   storage = new R2Storage({
     accountId: 'acc',
+    jurisdiction: 'eu',
     accessKeyId: 'key',
     secretAccessKey: 'secret',
     originalsBucket: 'outfitly-originals',
@@ -52,6 +58,11 @@ afterAll(async () => {
 });
 
 describe('R2 storage', () => {
+  it('uses the EU endpoint for EU-jurisdiction buckets', () => {
+    expect(r2Endpoint('acc', 'eu')).toBe('https://acc.eu.r2.cloudflarestorage.com');
+    expect(r2Endpoint('acc', 'default')).toBe('https://acc.r2.cloudflarestorage.com');
+  });
+
   it('makes a 15-minute upload link to the private bucket, locked to type and size', async () => {
     const upload = await storage.presignOriginalUpload('originals/abc', {
       contentType: 'image/heic',

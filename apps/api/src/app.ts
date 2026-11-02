@@ -10,6 +10,7 @@ import { ApiError, notFoundHandler, registerErrorHandler } from './errors.ts';
 import { registerIdempotency } from './idempotency.ts';
 import type { JobQueue } from './jobs.ts';
 import { mediaRoutes } from './routes/media.ts';
+import { sessionRoutes } from './routes/session.ts';
 import { systemRoutes } from './routes/system.ts';
 import type { PhotoStorage } from './storage.ts';
 import { registerZod } from './zod.ts';
@@ -57,12 +58,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       new ApiError(429, 'rate_limited', `Too many requests. Try again in ${context.after}.`),
   });
   app.setNotFoundHandler({ preHandler: app.rateLimit() }, notFoundHandler);
-  registerAuth(app, { supabaseUrl: config.SUPABASE_URL, jwks });
+  const auth = { supabaseUrl: config.SUPABASE_URL, jwks };
+  registerAuth(app, auth);
   registerIdempotency(app, { db });
 
   await app.register(
     (v1, _opts, done) => {
       systemRoutes(v1);
+      sessionRoutes(v1, { db, auth });
       mediaRoutes(v1, deps);
       done();
     },

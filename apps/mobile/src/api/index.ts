@@ -1,4 +1,6 @@
 import { randomUUID } from 'expo-crypto';
+import { getActiveProfileId } from '../auth/store';
+import { getAccessToken } from '../auth/supabase';
 import { createApiClient } from './client';
 
 /** Set per build (eas.json env, or apps/mobile/.env in development). */
@@ -11,8 +13,8 @@ function apiBaseUrl(): string {
 
 export const api = createApiClient({
   baseUrl: apiBaseUrl(),
-  // Logins arrive in Step 1.6.
-  getAccessToken: () => Promise.resolve(null),
+  getAccessToken,
+  getActiveProfileId,
   newIdempotencyKey: randomUUID,
 });
 

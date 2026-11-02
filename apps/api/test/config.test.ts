@@ -19,7 +19,12 @@ describe('settings', () => {
 
   it('fill in defaults and treat empty optional values as unset', () => {
     const config = loadConfig({ ...REQUIRED, DATABASE_CA_CERT: '' });
-    expect(config).toMatchObject({ PORT: 8080, HOST: '0.0.0.0', RATE_LIMIT_PER_MINUTE: 300 });
+    expect(config).toMatchObject({
+      PORT: 8080,
+      HOST: '0.0.0.0',
+      RATE_LIMIT_PER_MINUTE: 300,
+      R2_JURISDICTION: 'eu',
+    });
     expect(config.DATABASE_CA_CERT).toBeUndefined();
   });
 });

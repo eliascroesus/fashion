@@ -7,6 +7,8 @@ import { ApiError } from './errors.ts';
 export interface AuthContext {
   userId: string;
   isAnonymous: boolean;
+  /** Present once the login has an email (never for guests). */
+  email: string | undefined;
 }
 
 declare module 'fastify' {
@@ -23,6 +25,7 @@ const claimsSchema = z.object({
   sub: z.uuid(),
   role: z.literal('authenticated'),
   is_anonymous: z.boolean().optional(),
+  email: z.string().optional(),
 });
 
 /** Supabase's public signing keys for this project (cached by jose). */
@@ -42,15 +45,27 @@ async function verify(request: FastifyRequest, options: AuthOptions): Promise<Au
   if (!header) return null;
   const match = /^Bearer (\S+)$/i.exec(header);
   if (!match?.[1]) throw new ApiError(401, 'unauthorized', 'Malformed Authorization header.');
+  return verifyAccessToken(match[1], options, request.log);
+}
 
+/** Checks one Supabase access token (also used for a guest's token when merging). */
+export async function verifyAccessToken(
+  token: string,
+  options: AuthOptions,
+  log: FastifyRequest['log'],
+): Promise<AuthContext> {
   try {
-    const { payload } = await jwtVerify(match[1], options.jwks, {
+    const { payload } = await jwtVerify(token, options.jwks, {
       issuer: new URL('/auth/v1', options.supabaseUrl).toString(),
       audience: 'authenticated',
       algorithms: ['ES256', 'RS256'],
     });
     const claims = claimsSchema.parse(payload);
-    return { userId: claims.sub, isAnonymous: claims.is_anonymous ?? false };
+    return {
+      userId: claims.sub,
+      isAnonymous: claims.is_anonymous ?? false,
+      email: claims.email || undefined,
+    };
   } catch (error) {
     // Couldn't fetch Supabase's keys: our problem, not a logged-out user.
     const keysUnavailable =
@@ -58,7 +73,7 @@ async function verify(request: FastifyRequest, options: AuthOptions): Promise<Au
       error instanceof joseErrors.JWKSInvalid ||
       !(error instanceof joseErrors.JOSEError || error instanceof z.ZodError);
     if (keysUnavailable) {
-      request.log.error({ err: error }, 'could not load Supabase signing keys');
+      log.error({ err: error }, 'could not load Supabase signing keys');
       throw new ApiError(503, 'service_unavailable', 'Login check is unavailable. Try again.');
     }
     throw new ApiError(401, 'unauthorized', 'Invalid or expired login.');

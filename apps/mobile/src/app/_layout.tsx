@@ -5,6 +5,8 @@ import { type ErrorBoundaryProps, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet } from 'react-native';
+import { AuthProvider } from '../auth/AuthProvider';
+import { CaptchaProvider } from '../auth/captcha';
 import { PERSIST_MAX_AGE, queryClient, queryPersister } from '../lib/query';
 import { initSentry, Sentry } from '../lib/sentry';
 import { radii, Screen, spacing, ThemedText, useColors, useThemeName } from '../theme';
@@ -28,15 +30,21 @@ function RootLayout() {
           buster: CACHE_VERSION,
         }}
       >
-        <StatusBar style={themeName === 'dark' ? 'light' : 'dark'} />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: colors.background },
-          }}
-        >
-          <Stack.Screen name="(tabs)" />
-        </Stack>
+        <CaptchaProvider>
+          <AuthProvider>
+            <StatusBar style={themeName === 'dark' ? 'light' : 'dark'} />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: colors.background },
+              }}
+            >
+              <Stack.Screen name="(tabs)" />
+              <Stack.Screen name="sign-up" options={{ presentation: 'modal' }} />
+              <Stack.Screen name="auth-callback" />
+            </Stack>
+          </AuthProvider>
+        </CaptchaProvider>
       </PersistQueryClientProvider>
     </ThemeProvider>
   );

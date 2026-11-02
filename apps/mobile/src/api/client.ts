@@ -1,4 +1,5 @@
 import {
+  ACTIVE_PROFILE_HEADER,
   API_PREFIX,
   type ApiErrorCode,
   type CreateUploadBody,
@@ -6,6 +7,7 @@ import {
   IDEMPOTENCY_KEY_HEADER,
   mediaSchema,
   meSchema,
+  mergeGuestResultSchema,
   uploadTicketSchema,
 } from '@outfitly/shared';
 import { z } from 'zod';
@@ -52,8 +54,10 @@ export class ApiRequestError extends Error {
 export interface ApiClientOptions {
   /** e.g. https://outfitly-api-staging.fly.dev (without /v1). */
   baseUrl: string;
-  /** The Supabase access token, or null when not logged in (Step 1.6). */
+  /** The Supabase access token, or null when not logged in. */
   getAccessToken: () => Promise<string | null>;
+  /** The profile requests act as (sent as X-Profile-Id); the server checks it. */
+  getActiveProfileId?: () => string | null;
   /** A fresh unique key per user action; a retry of the same action reuses it. */
   newIdempotencyKey: () => string;
   fetch?: typeof fetch;
@@ -80,6 +84,8 @@ export function createApiClient(options: ApiClientOptions) {
     const headers: Record<string, string> = { accept: 'application/json' };
     const token = await options.getAccessToken();
     if (token) headers['authorization'] = `Bearer ${token}`;
+    const profileId = options.getActiveProfileId?.();
+    if (token && profileId) headers[ACTIVE_PROFILE_HEADER] = profileId;
     if (method !== 'GET') {
       headers[IDEMPOTENCY_KEY_HEADER] = idempotencyKey ?? options.newIdempotencyKey();
     }
@@ -124,6 +130,14 @@ export function createApiClient(options: ApiClientOptions) {
   return {
     health: () => request('GET', '/health', { schema: healthSchema }),
     me: () => request('GET', '/me', { schema: meSchema }),
+    session: {
+      start: () => request('POST', '/session', { schema: meSchema, body: {} }),
+      mergeGuest: (guestAccessToken: string) =>
+        request('POST', '/session/merge-guest', {
+          schema: mergeGuestResultSchema,
+          body: { guestAccessToken },
+        }),
+    },
     media: {
       createUpload: (body: CreateUploadBody, idempotencyKey?: string) =>
         request('POST', '/media/uploads', {

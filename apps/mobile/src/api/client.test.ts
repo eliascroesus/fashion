@@ -57,9 +57,33 @@ describe('API client', () => {
   });
 
   it('does not send idempotency keys on reads', async () => {
-    const { api, calls } = setup(() => jsonResponse(200, { userId: MEDIA_ID, isAnonymous: true }));
+    const { api, calls } = setup(() =>
+      jsonResponse(200, {
+        userId: MEDIA_ID,
+        isAnonymous: true,
+        activeProfileId: null,
+        profiles: [],
+      }),
+    );
     await api.me();
     expect(headersOf(calls[0]?.init ?? {})['idempotency-key']).toBeUndefined();
+  });
+
+  it('names the active profile on logged-in requests', async () => {
+    const calls: RequestInit[] = [];
+    const api = createApiClient({
+      baseUrl: 'https://api.test',
+      getAccessToken: () => Promise.resolve('token-123'),
+      getActiveProfileId: () => MEDIA_ID,
+      newIdempotencyKey: () => 'key-abcdefgh',
+      fetch: ((_url: string, init: RequestInit) => {
+        calls.push(init);
+        return Promise.resolve(jsonResponse(200, { merged: true }));
+      }) as unknown as typeof fetch,
+    });
+    await api.session.mergeGuest('guest-token');
+    expect(headersOf(calls[0] ?? {})['x-profile-id']).toBe(MEDIA_ID);
+    expect(calls[0]?.body).toBe('{"guestAccessToken":"guest-token"}');
   });
 
   it('turns the API error format into an ApiRequestError', async () => {

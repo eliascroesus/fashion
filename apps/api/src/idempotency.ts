@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { and, type Db, eq, idempotencyKeys, lt, or, sql } from '@outfitly/db';
 import {
+  ACTIVE_PROFILE_HEADER,
   IDEMPOTENCY_KEY_HEADER,
   IDEMPOTENCY_KEY_PATTERN,
   IDEMPOTENT_REPLAY_HEADER,
@@ -23,9 +24,12 @@ const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  */
 const STALE_AFTER = sql`now() - interval '60 seconds'`;
 
+/** The same key must mean the same request: method, path, acting profile and body. */
 function requestHash(request: FastifyRequest): string {
+  const profile = request.headers[ACTIVE_PROFILE_HEADER] ?? '';
   return createHash('sha256')
-    .update(`${request.method} ${request.url}\n${JSON.stringify(request.body ?? null)}`)
+    .update(`${request.method} ${request.url}\n${String(profile)}\n`)
+    .update(JSON.stringify(request.body ?? null))
     .digest('hex');
 }
 

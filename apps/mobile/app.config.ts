@@ -11,6 +11,7 @@ const APP_ID = IS_DEV ? 'com.outfitly.app.dev' : 'com.outfitly.app';
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: IS_DEV ? 'Outfitly (Dev)' : 'Outfitly',
+  owner: 'eliascroesuss-team',
   slug: 'outfitly',
   version: '0.1.0',
   orientation: 'portrait',
@@ -21,6 +22,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     bundleIdentifier: APP_ID,
     icon: './assets/expo.icon',
     supportsTablet: false,
+    usesAppleSignIn: true,
   },
   android: {
     package: APP_ID,
@@ -34,6 +36,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   plugins: [
     'expo-router',
+    'expo-apple-authentication',
+    'expo-web-browser',
     ['expo-localization', { supportedLocales: { ios: ['en', 'sv'], android: ['en', 'sv'] } }],
     [
       'expo-splash-screen',
@@ -59,7 +63,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     reactCompiler: true,
   },
   extra: {
-    // Filled in once Elias runs `eas init` (see docs/PROGRESS.md).
-    eas: { projectId: process.env['EAS_PROJECT_ID'] },
+    // Expo project eliascroesuss-team/outfitly (created with `eas init`).
+    eas: { projectId: '1119995c-ec62-4465-8bb4-66c82af66272' },
   },
 });
