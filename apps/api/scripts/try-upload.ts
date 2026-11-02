@@ -15,6 +15,7 @@ if (!file) {
 const env = z
   .object({
     R2_ACCOUNT_ID: z.string().min(1),
+    R2_JURISDICTION: z.enum(['eu', 'default']).default('eu'),
     R2_ACCESS_KEY_ID: z.string().min(1),
     R2_SECRET_ACCESS_KEY: z.string().min(1),
     R2_ORIGINALS_BUCKET: z.string().min(1),
@@ -26,6 +27,7 @@ const env = z
   .parse(process.env);
 const storage = new R2Storage({
   accountId: env.R2_ACCOUNT_ID,
+  jurisdiction: env.R2_JURISDICTION,
   accessKeyId: env.R2_ACCESS_KEY_ID,
   secretAccessKey: env.R2_SECRET_ACCESS_KEY,
   originalsBucket: env.R2_ORIGINALS_BUCKET,

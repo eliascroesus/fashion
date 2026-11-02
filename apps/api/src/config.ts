@@ -18,6 +18,8 @@ const envSchema = z.object({
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
   // Cloudflare R2: private bucket for originals, public bucket served on the image CDN.
   R2_ACCOUNT_ID: z.string().min(1),
+  // Our buckets are in the EU jurisdiction (data stays in the EU).
+  R2_JURISDICTION: z.enum(['eu', 'default']).default('eu'),
   R2_ACCESS_KEY_ID: z.string().min(1),
   R2_SECRET_ACCESS_KEY: z.string().min(1),
   R2_ORIGINALS_BUCKET: z.string().min(1),
@@ -32,6 +34,7 @@ export type Config = z.infer<typeof envSchema>;
 export function r2Config(config: Config) {
   return {
     accountId: config.R2_ACCOUNT_ID,
+    jurisdiction: config.R2_JURISDICTION,
     accessKeyId: config.R2_ACCESS_KEY_ID,
     secretAccessKey: config.R2_SECRET_ACCESS_KEY,
     originalsBucket: config.R2_ORIGINALS_BUCKET,
