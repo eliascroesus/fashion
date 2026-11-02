@@ -8,6 +8,7 @@ Things we've parked on purpose. None of them block building, but all of them mus
 - [ ] CAPTCHA: add the domain as a hostname on the Turnstile widget "Outfitly app" and set `EXPO_PUBLIC_TURNSTILE_ORIGIN=https://<domain>`. Today it uses `outfitly-api-staging.fly.dev`.
 - [ ] Google login: put the domain, a privacy policy link and a logo on the Google Auth Platform screen and publish the app (it's in "Testing" mode, where only listed test users can log in).
 - [ ] A privacy policy and terms page on the domain (Apple and Google both ask for the links).
+- [ ] Google's account picker says "to continue to uvxsniutadtpyfmmzhdq.supabase.co". To show our own address instead, Supabase offers a custom domain (e.g. `auth.<domain>`) as a paid add-on. That's a new cost, so Elias decides; otherwise it stays as is.
 
 ## Email login (6-digit code)
 - [ ] Choose an email-sending service (for example Resend or Postmark; both have free tiers). It's a new service, so Elias decides. It needs the domain above to send from.

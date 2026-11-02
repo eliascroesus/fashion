@@ -1,6 +1,10 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { AppState } from 'react-native';
 import { storage } from '../lib/storage';
+import { installWebCrypto } from '../lib/web-crypto';
+
+// Before any login: PKCE needs SHA-256 and secure random values.
+installWebCrypto(globalThis);
 
 const url = process.env['EXPO_PUBLIC_SUPABASE_URL'];
 const publishableKey = process.env['EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY'];

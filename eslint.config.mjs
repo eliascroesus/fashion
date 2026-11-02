@@ -40,6 +40,11 @@ export default defineConfig(
     files: ['apps/mobile/src/**/*.{ts,tsx}'],
     extends: [reactHooks.configs.flat['recommended-latest']],
     rules: {
+      // The app's WebCrypto shim only does SHA-256 (src/lib/web-crypto.ts).
+      'no-restricted-properties': [
+        'error',
+        { property: 'getClaims', message: 'Not available in the app (see src/lib/web-crypto.ts).' },
+      ],
       'no-restricted-syntax': [
         'error',
         ...[
