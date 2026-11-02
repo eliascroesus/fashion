@@ -3,7 +3,7 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-Phase 2, Step 2.1 — Looks in the database + seed loader: code done and live on staging (PR on branch `phase-2-step-2-1`, 2026-11-02). 10,000 speed-test looks are in the shared dev/staging database. **Still open:** "300 real looks in dev" — waiting for Elias's outfit photos (see "Waiting on Elias"). Phase 1 gate: everything passed except "app on both phones with login" (no Android phone yet; real iPhone needs the Apple Developer membership); Elias chose to start Phase 2 anyway and do that check when the hardware is ready. Next: Step 2.2 — the feed engine.
+Phase 2, Step 2.1 — Looks in the database + seed loader: code done and live on staging (PR #8, 2026-11-02). 10,000 speed-test looks are in the shared dev/staging database. **Still open:** "300 real looks in dev" — waiting for Elias's outfit photos (see "Waiting on Elias"). Phase 1 gate: everything passed except "app on both phones with login" (no Android phone yet; real iPhone needs the Apple Developer membership); Elias chose to start Phase 2 anyway and do that check when the hardware is ready. Next: Step 2.2 — the feed engine.
 
 ## Done
 - Step 1.1 — Project skeleton and safety net (PR #1). Monorepo (pnpm + Turborepo), strict TypeScript, ESLint + Prettier, Vitest, GitHub Actions CI on every pull request. CI green.
