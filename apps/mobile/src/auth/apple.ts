@@ -9,10 +9,8 @@ export async function getAppleIdToken(): Promise<{ token: string; nonce: string 
   const nonce = randomUUID();
   try {
     const credential = await AppleAuthentication.signInAsync({
-      requestedScopes: [
-        AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
-        AppleAuthentication.AppleAuthenticationScope.EMAIL,
-      ],
+      // Only the email: we don't use the name (people choose their profile name themselves).
+      requestedScopes: [AppleAuthentication.AppleAuthenticationScope.EMAIL],
       nonce: await digestStringAsync(CryptoDigestAlgorithm.SHA256, nonce),
     });
     return credential.identityToken ? { token: credential.identityToken, nonce } : null;

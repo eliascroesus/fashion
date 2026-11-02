@@ -40,7 +40,7 @@
     "emailLabel": "E-post",
     "emailPlaceholder": "du@exempel.se",
     "sendCode": "Skicka kod",
-    "codeSent": "Vi skickade en sexsiffrig kod till {{email}}.",
+    "codeSent": "Vi skickade en kod till {{email}}.",
     "codeLabel": "Kod",
     "verify": "Verifiera",
     "back": "Tillbaka",

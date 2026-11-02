@@ -4,7 +4,13 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { type AuthOptions, requireAuth, verifyAccessToken } from '../auth.ts';
 import { ApiError } from '../errors.ts';
-import { ensurePersonalProfile, getMe, mergeGuestInto, requireActiveProfile } from '../profiles.ts';
+import {
+  ensurePersonalProfile,
+  getMe,
+  mergeGuestInto,
+  NotAGuestError,
+  requireActiveProfile,
+} from '../profiles.ts';
 import type { ZodTypeProvider } from '../zod.ts';
 
 export interface SessionRouteDeps {
@@ -46,13 +52,26 @@ export function sessionRoutes(app: FastifyInstance, { db, auth }: SessionRouteDe
       if (login.isAnonymous) {
         throw new ApiError(403, 'forbidden', 'Sign in to an account before merging a guest.');
       }
-      const guest = await verifyAccessToken(request.body.guestAccessToken, auth, request.log);
+      const guest = await verifyAccessToken(request.body.guestAccessToken, auth, request.log).catch(
+        (error: unknown) => {
+          // A bad guest token is a bad request, not a problem with the caller's own login.
+          if (error instanceof ApiError && error.statusCode === 401) {
+            throw new ApiError(400, 'validation_failed', 'The guest session is not valid.');
+          }
+          throw error;
+        },
+      );
       if (!guest.isAnonymous) {
         throw new ApiError(403, 'forbidden', 'Only a guest session can be merged.');
       }
       if (guest.userId === login.userId) return { merged: false };
       const targetProfileId = await requireActiveProfile(db, request);
-      return { merged: await mergeGuestInto(db, guest.userId, targetProfileId) };
+      try {
+        return { merged: await mergeGuestInto(db, guest.userId, targetProfileId) };
+      } catch (error) {
+        if (error instanceof NotAGuestError) throw new ApiError(403, 'forbidden', error.message);
+        throw error;
+      }
     },
   );
 }

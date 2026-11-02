@@ -5,7 +5,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export type AuthClient = Pick<
   SupabaseClient['auth'],
   | 'getSession'
-  | 'refreshSession'
   | 'signInAnonymously'
   | 'signInWithIdToken'
   | 'signInWithOtp'
@@ -34,6 +33,10 @@ export interface FlowDeps {
   redirectTo: string;
   onSignedIn: (me: Me) => void;
   onSignedOut: () => void;
+  /** Whether the app already has this login's profile (from POST /v1/session). */
+  hasProfile: () => boolean;
+  /** A guest token whose content still has to move into the signed-in account (kept on the phone). */
+  pendingMerge: { get: () => string | null; set: (token: string | null) => void };
 }
 
 export class AuthFlowError extends Error {
@@ -59,6 +62,8 @@ export function createAuthFlows(deps: FlowDeps) {
   const { auth, api } = deps;
   /** Set while an email sign-in that started from a guest session is in progress. */
   let pendingGuestToken: string | null = null;
+  /** One guest sign-in at a time, however many saves happen at once. */
+  let ensuring: Promise<Me | null> | null = null;
 
   async function currentSession() {
     const { data, error } = await auth.getSession();
@@ -66,10 +71,31 @@ export function createAuthFlows(deps: FlowDeps) {
     return data.session;
   }
 
+  /**
+   * Moves a guest's content into the signed-in account. Never throws: the
+   * sign-in already worked. Kept for a retry if our server was unreachable;
+   * dropped if the server says it can never work (e.g. the guest token expired).
+   */
+  async function mergePending(): Promise<void> {
+    const token = deps.pendingMerge.get();
+    if (!token) return;
+    try {
+      await api.mergeGuest(token);
+      deps.pendingMerge.set(null);
+    } catch (error) {
+      const status = (error as { status?: unknown }).status;
+      if (typeof status === 'number' && status >= 400 && status < 500) deps.pendingMerge.set(null);
+    }
+  }
+
   async function finish(result: Exclude<SignInResult, 'cancelled'>, guestToken?: string | null) {
     const me = await api.start();
-    if (guestToken) await api.mergeGuest(guestToken);
+    // Store the new login first, so the merge request acts as the account's profile.
     deps.onSignedIn(me);
+    if (guestToken) {
+      deps.pendingMerge.set(guestToken);
+      await mergePending();
+    }
     return result;
   }
 
@@ -79,14 +105,25 @@ export function createAuthFlows(deps: FlowDeps) {
      * this only when someone first saves something, never at app open.
      */
     async ensureSession(): Promise<Me | null> {
-      if (await currentSession()) return null;
-      const captchaToken = await deps.getCaptchaToken();
-      const { error } = await auth.signInAnonymously({ options: { captchaToken } });
-      fail(error);
-      const me = await api.start();
-      deps.onSignedIn(me);
-      return me;
+      ensuring ??= (async () => {
+        if (!(await currentSession())) {
+          const captchaToken = await deps.getCaptchaToken();
+          fail((await auth.signInAnonymously({ options: { captchaToken } })).error);
+        } else if (deps.hasProfile()) {
+          return null;
+        }
+        // New guest, or a session whose profile setup didn't finish last time.
+        const me = await api.start();
+        deps.onSignedIn(me);
+        return me;
+      })().finally(() => {
+        ensuring = null;
+      });
+      return ensuring;
     },
+
+    /** Finishes a guest merge that couldn't reach our server earlier (call at app start). */
+    retryPendingMerge: mergePending,
 
     /**
      * Native Apple sign-in (or any provider that gives an ID token). A guest is
@@ -97,11 +134,9 @@ export function createAuthFlows(deps: FlowDeps) {
       const credentials = { provider, token, ...(nonce ? { nonce } : {}) };
       const session = await currentSession();
       if (session?.user.is_anonymous) {
+        // Linking returns a fresh session in which the user is no longer anonymous.
         const linked = await auth.linkIdentity(credentials);
-        if (!linked.error) {
-          fail((await auth.refreshSession()).error);
-          return finish('upgraded');
-        }
+        if (!linked.error) return finish('upgraded');
         if (linked.error.code !== 'identity_already_exists') fail(linked.error);
         const guestToken = session.access_token;
         fail((await auth.signInWithIdToken(credentials)).error);
@@ -127,9 +162,11 @@ export function createAuthFlows(deps: FlowDeps) {
         if (!data?.url) throw new AuthFlowError('no_url');
         const returned = await deps.openAuthSession(data.url, deps.redirectTo);
         if (!returned) return { cancelled: true as const };
-        const params = new URL(returned.replace('#', '?')).searchParams;
-        const code = params.get('code');
-        return { cancelled: false as const, code, errorCode: params.get('error_code') };
+        // Supabase puts results in the query (?code=) and errors in the query or the fragment.
+        const url = new URL(returned);
+        const fragment = new URLSearchParams(url.hash.slice(1));
+        const read = (key: string) => url.searchParams.get(key) ?? fragment.get(key);
+        return { cancelled: false as const, code: read('code'), errorCode: read('error_code') };
       };
 
       if (session?.user.is_anonymous) {
@@ -137,7 +174,6 @@ export function createAuthFlows(deps: FlowDeps) {
         if (linked.cancelled) return 'cancelled';
         if (linked.code) {
           fail((await auth.exchangeCodeForSession(linked.code)).error);
-          fail((await auth.refreshSession()).error);
           return finish('upgraded');
         }
         if (linked.errorCode !== 'identity_already_exists') {
@@ -182,18 +218,22 @@ export function createAuthFlows(deps: FlowDeps) {
     async verifyEmail(email: string, code: string, mode: EmailMode): Promise<SignInResult> {
       const type = mode === 'link' ? 'email_change' : 'email';
       fail((await auth.verifyOtp({ email, token: code, type })).error);
-      if (mode === 'link') {
-        fail((await auth.refreshSession()).error);
-        return finish('upgraded');
-      }
+      if (mode === 'link') return finish('upgraded');
       const guestToken = pendingGuestToken;
       pendingGuestToken = null;
       return finish(guestToken ? 'merged' : 'signed_in', guestToken);
     },
 
+    /**
+     * Signs out on this phone only (other phones stay signed in). The local
+     * session is removed even if the server can't be reached.
+     */
     async signOut(): Promise<void> {
-      fail((await auth.signOut()).error);
-      deps.onSignedOut();
+      try {
+        await auth.signOut({ scope: 'local' });
+      } finally {
+        deps.onSignedOut();
+      }
     },
   };
 }

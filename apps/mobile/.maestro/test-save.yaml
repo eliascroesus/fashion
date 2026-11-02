@@ -7,7 +7,7 @@ appId: com.outfitly.app
 - tapOn:
     id: tab-profile
 - longPressOn:
-    id: screen-profile
+    id: profile-title
 - tapOn:
     id: dev-test-save
 - assertVisible:

@@ -53,7 +53,9 @@ function isUniqueViolation(error: unknown): boolean {
 export async function ensurePersonalProfile(db: Db, auth: AuthContext): Promise<void> {
   await db.transaction(async (tx) => {
     // One login at a time: concurrent first calls must not create two profiles.
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${auth.userId}))`);
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext('profile-setup'), hashtext(${auth.userId}))`,
+    );
     const [existing] = await tx
       .select({ id: profileMembers.id })
       .from(profileMembers)
@@ -62,7 +64,7 @@ export async function ensurePersonalProfile(db: Db, auth: AuthContext): Promise<
     if (existing) return;
 
     for (let attempt = 0; ; attempt++) {
-      const handle = generateHandle(auth.email, attempt < 3 ? 4 : 8);
+      const handle = generateHandle(attempt < 3 ? 4 : 8);
       try {
         await tx.transaction(async (sp) => {
           const [profile] = await sp
@@ -154,6 +156,13 @@ export const PROFILE_REFERENCES_HANDLED_BY_MERGE = [
   'profile_members.profile_id',
 ];
 
+export class NotAGuestError extends Error {
+  constructor() {
+    super('That login is no longer a guest.');
+    this.name = 'NotAGuestError';
+  }
+}
+
 /**
  * A guest signed in to an account that already existed: their guest
  * profiles' content moves to `targetProfileId`, and the guest profiles are
@@ -165,6 +174,13 @@ export async function mergeGuestInto(
   targetProfileId: string,
 ): Promise<boolean> {
   return db.transaction(async (tx) => {
+    // Trust the login's current state, not the token: a guest token stays valid
+    // for up to an hour after that guest upgraded to a real account.
+    const { rows } = await tx.execute<{ is_anonymous: boolean }>(
+      sql`SELECT is_anonymous FROM auth.users WHERE id = ${guestUserId} FOR UPDATE`,
+    );
+    if (rows[0]?.is_anonymous !== true) throw new NotAGuestError();
+
     const guestProfiles = await tx
       .select({ profileId: profileMembers.profileId })
       .from(profileMembers)

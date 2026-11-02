@@ -75,7 +75,8 @@ describe('POST /v1/session', () => {
     expect(me.userId).toBe(userId);
     expect(me.profiles).toHaveLength(1);
     expect(me.profiles[0]).toMatchObject({ accountType: 'personal', role: 'owner' });
-    expect(me.profiles[0]?.handle).toMatch(/^anna\.svensson\d{4}$/);
+    // Handles are public, so they never come from the email address.
+    expect(me.profiles[0]?.handle).toMatch(/^user\d{4}$/);
     expect(me.activeProfileId).toBe(me.profiles[0]?.id);
   });
 
@@ -219,13 +220,48 @@ describe('POST /v1/session/merge-guest (email already had an account)', () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it('refuses a forged guest token', async () => {
+  it('refuses a forged guest token as a bad request (the caller stays logged in)', async () => {
     const me = await login();
     await startSession(me.token);
     const res = await post(me.token, '/v1/session/merge-guest', {
       guestAccessToken: 'not.a.token',
     });
-    expect(res.statusCode).toBe(401);
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("refuses an old guest token once that guest has upgraded (can't merge a real account away)", async () => {
+    const victim = await login({ isAnonymous: true });
+    const victimProfile = (await startSession(victim.token)).activeProfileId ?? '';
+    const photo = await addPhoto(victimProfile);
+    // The victim upgrades in place; their old guest token is still valid for a while.
+    await ctx.db.execute(
+      sql`UPDATE auth.users SET is_anonymous = false WHERE id = ${victim.userId}`,
+    );
+
+    const attacker = await login();
+    await startSession(attacker.token);
+    const res = await post(attacker.token, '/v1/session/merge-guest', {
+      guestAccessToken: victim.token,
+    });
+    expect(res.statusCode).toBe(403);
+
+    const [row] = await ctx.db.select().from(media).where(eq(media.id, photo));
+    expect(row?.ownerProfileId).toBe(victimProfile);
+    expect(await ctx.db.$count(profileMembers, eq(profileMembers.userId, victim.userId))).toBe(1);
+  });
+
+  it('refuses to merge into a profile named by a stale X-Profile-Id header', async () => {
+    const guest = await login({ isAnonymous: true });
+    const guestProfile = (await startSession(guest.token)).activeProfileId ?? '';
+    const existing = await login();
+    await startSession(existing.token);
+    const res = await post(
+      existing.token,
+      '/v1/session/merge-guest',
+      { guestAccessToken: guest.token },
+      { 'x-profile-id': guestProfile },
+    );
+    expect(res.statusCode).toBe(403);
   });
 
   it('covers every table that belongs to a profile', async () => {

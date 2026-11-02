@@ -40,7 +40,7 @@
     "emailLabel": "Email",
     "emailPlaceholder": "you@example.com",
     "sendCode": "Send code",
-    "codeSent": "We sent a 6-digit code to {{email}}.",
+    "codeSent": "We sent a code to {{email}}.",
     "codeLabel": "Code",
     "verify": "Verify",
     "back": "Back",

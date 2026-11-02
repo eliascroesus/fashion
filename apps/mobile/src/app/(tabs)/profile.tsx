@@ -15,13 +15,14 @@ export default function ProfileScreen() {
   const me = useMe();
   const auth = useAuth();
   const [devMenu, setDevMenu] = useState(() => storage.getBoolean(DEV_MENU_KEY) ?? false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'signOut' | 'testSave' | null>(null);
   const profile = me?.profiles.find((p) => p.id === me.activeProfileId);
 
   return (
     <Screen style={styles.screen} testID="screen-profile">
       {/* Long-press the title to show the hidden developer menu. */}
       <Pressable
+        testID="profile-title"
         delayLongPress={800}
         onLongPress={() => {
           storage.set(DEV_MENU_KEY, !devMenu);
@@ -49,16 +50,21 @@ export default function ProfileScreen() {
             }}
           />
         ) : null}
-        {me && auth ? (
+        {/* Guests can't sign back in to a guest account, so they get no sign-out button. */}
+        {me && !me.isAnonymous && auth ? (
           <Button
             variant="secondary"
             label={t('profile.signOut')}
-            loading={busy}
+            loading={busy === 'signOut'}
             onPress={() => {
-              setBusy(true);
-              void auth.signOut().finally(() => {
-                setBusy(false);
-              });
+              setBusy('signOut');
+              // Local state is cleared even when offline; nothing else to show.
+              void auth
+                .signOut()
+                .catch(() => undefined)
+                .finally(() => {
+                  setBusy(null);
+                });
             }}
           />
         ) : null}
@@ -72,10 +78,15 @@ export default function ProfileScreen() {
             variant="secondary"
             label={t('profile.testSave')}
             testID="dev-test-save"
+            loading={busy === 'testSave'}
             onPress={() => {
-              void (auth?.ensureSession() ?? Promise.resolve()).finally(() => {
-                router.push('/sign-up');
-              });
+              setBusy('testSave');
+              void (auth?.ensureSession() ?? Promise.resolve())
+                .catch(() => undefined)
+                .finally(() => {
+                  setBusy(null);
+                  router.push('/sign-up');
+                });
             }}
           />
         </View>

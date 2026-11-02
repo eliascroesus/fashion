@@ -11,7 +11,6 @@ function fakeAuth() {
   let session: { access_token: string; user: { is_anonymous: boolean } } | null = null;
   const auth = {
     getSession: vi.fn(() => ok({ session })),
-    refreshSession: vi.fn(() => ok()),
     signInAnonymously: vi.fn(() => {
       session = { access_token: 'guest-token', user: { is_anonymous: true } };
       return ok();
@@ -26,7 +25,7 @@ function fakeAuth() {
     signInWithOtp: vi.fn(() => ok()),
     updateUser: vi.fn((): Promise<unknown> => ok()),
     verifyOtp: vi.fn(() => ok()),
-    signOut: vi.fn(() => {
+    signOut: vi.fn((): Promise<unknown> => {
       session = null;
       return ok();
     }),
@@ -39,69 +38,125 @@ function fakeAuth() {
   };
 }
 
+const guest = { access_token: 'guest-token', user: { is_anonymous: true } };
+
 let fake: ReturnType<typeof fakeAuth>;
-let deps: FlowDeps & {
-  api: { start: ReturnType<typeof vi.fn>; mergeGuest: ReturnType<typeof vi.fn> };
+let api: {
+  start: ReturnType<typeof vi.fn<() => Promise<Me>>>;
+  mergeGuest: ReturnType<typeof vi.fn<(token: string) => Promise<unknown>>>;
 };
+let deps: FlowDeps;
+let pending: string | null;
+let hasProfile: boolean;
 
 beforeEach(() => {
   fake = fakeAuth();
+  pending = null;
+  hasProfile = false;
+  api = {
+    start: vi.fn(() => Promise.resolve(ME)),
+    mergeGuest: vi.fn(() => Promise.resolve({} as unknown)),
+  };
   deps = {
     auth: fake.auth as unknown as AuthClient,
-    api: { start: vi.fn(() => Promise.resolve(ME)), mergeGuest: vi.fn(() => Promise.resolve({})) },
+    api,
     getCaptchaToken: () => Promise.resolve('captcha-ok'),
     openAuthSession: vi.fn(() => Promise.resolve('outfitly://auth-callback?code=abc')),
     redirectTo: 'outfitly://auth-callback',
     onSignedIn: vi.fn(),
     onSignedOut: vi.fn(),
+    hasProfile: () => hasProfile,
+    pendingMerge: {
+      get: () => pending,
+      set: (token) => {
+        pending = token;
+      },
+    },
   };
 });
 
-const guest = { access_token: 'guest-token', user: { is_anonymous: true } };
+/** The guest's data moved, and only after the new login was stored (so it acts as the account). */
+function expectMergedAfterSignIn() {
+  expect(api.mergeGuest).toHaveBeenCalledWith('guest-token');
+  const signedIn = vi.mocked(deps.onSignedIn).mock.invocationCallOrder[0] ?? Infinity;
+  const merged = api.mergeGuest.mock.invocationCallOrder[0] ?? -Infinity;
+  expect(signedIn).toBeLessThan(merged);
+  expect(pending).toBeNull();
+}
 
 describe('ensureSession (first save)', () => {
   it('creates a guest session with a CAPTCHA token and a profile', async () => {
-    const flows = createAuthFlows(deps);
-    await flows.ensureSession();
+    await createAuthFlows(deps).ensureSession();
     expect(fake.auth.signInAnonymously).toHaveBeenCalledWith({
       options: { captchaToken: 'captcha-ok' },
     });
-    expect(deps.api.start).toHaveBeenCalledOnce();
+    expect(api.start).toHaveBeenCalledOnce();
     expect(deps.onSignedIn).toHaveBeenCalledWith(ME);
   });
 
-  it('does nothing when there is already a session', async () => {
+  it('does nothing when there is already a session with a profile', async () => {
+    fake.setSession(guest);
+    hasProfile = true;
+    await createAuthFlows(deps).ensureSession();
+    expect(fake.auth.signInAnonymously).not.toHaveBeenCalled();
+    expect(api.start).not.toHaveBeenCalled();
+  });
+
+  it('finishes the profile setup if it failed last time', async () => {
     fake.setSession(guest);
     await createAuthFlows(deps).ensureSession();
     expect(fake.auth.signInAnonymously).not.toHaveBeenCalled();
+    expect(api.start).toHaveBeenCalledOnce();
+  });
+
+  it('makes only one guest when several saves happen at once', async () => {
+    const flows = createAuthFlows(deps);
+    await Promise.all([flows.ensureSession(), flows.ensureSession(), flows.ensureSession()]);
+    expect(fake.auth.signInAnonymously).toHaveBeenCalledOnce();
   });
 });
 
 describe('Sign in with Apple', () => {
   it('upgrades a guest in place (same account, so the data stays)', async () => {
     fake.setSession(guest);
-    const result = await createAuthFlows(deps).signInWithIdToken(
-      'apple',
-      'apple-id-token',
-      'nonce',
-    );
+    const result = await createAuthFlows(deps).signInWithIdToken('apple', 'apple-id', 'nonce');
     expect(result).toBe('upgraded');
     expect(fake.auth.linkIdentity).toHaveBeenCalledWith({
       provider: 'apple',
-      token: 'apple-id-token',
+      token: 'apple-id',
       nonce: 'nonce',
     });
     expect(fake.auth.signInWithIdToken).not.toHaveBeenCalled();
-    expect(deps.api.mergeGuest).not.toHaveBeenCalled();
+    expect(api.mergeGuest).not.toHaveBeenCalled();
   });
 
   it('signs in to the existing account and moves the guest data when the Apple ID is taken', async () => {
     fake.setSession(guest);
     fake.auth.linkIdentity.mockImplementationOnce(() => err('identity_already_exists'));
-    const result = await createAuthFlows(deps).signInWithIdToken('apple', 'apple-id-token');
+    const result = await createAuthFlows(deps).signInWithIdToken('apple', 'apple-id');
     expect(result).toBe('merged');
     expect(fake.auth.signInWithIdToken).toHaveBeenCalled();
-    expect(deps.api.mergeGuest).toHaveBeenCalledWith('guest-token');
+    expectMergedAfterSignIn();
+  });
+
+  it('keeps the guest token when our server is unreachable, and retries later', async () => {
+    fake.setSession(guest);
+    fake.auth.linkIdentity.mockImplementationOnce(() => err('identity_already_exists'));
+    api.mergeGuest.mockRejectedValueOnce(Object.assign(new Error('offline'), { status: 0 }));
+    const flows = createAuthFlows(deps);
+    expect(await flows.signInWithIdToken('apple', 't')).toBe('merged');
+    expect(pending).toBe('guest-token');
+    await flows.retryPendingMerge();
+    expect(pending).toBeNull();
+    expect(api.mergeGuest).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops the guest token when the server says it can never merge (e.g. expired)', async () => {
+    fake.setSession(guest);
+    fake.auth.linkIdentity.mockImplementationOnce(() => err('identity_already_exists'));
+    api.mergeGuest.mockRejectedValueOnce(Object.assign(new Error('bad'), { status: 400 }));
+    expect(await createAuthFlows(deps).signInWithIdToken('apple', 't')).toBe('merged');
+    expect(pending).toBeNull();
   });
 
   it('surfaces other linking errors', async () => {
@@ -113,8 +168,7 @@ describe('Sign in with Apple', () => {
   });
 
   it('just signs in when there is no guest', async () => {
-    const result = await createAuthFlows(deps).signInWithIdToken('apple', 't');
-    expect(result).toBe('signed_in');
+    expect(await createAuthFlows(deps).signInWithIdToken('apple', 't')).toBe('signed_in');
     expect(fake.auth.linkIdentity).not.toHaveBeenCalled();
   });
 });
@@ -123,8 +177,7 @@ describe('Google', () => {
   it('links Google to a guest through the browser', async () => {
     fake.setSession(guest);
     fake.auth.linkIdentity.mockImplementationOnce(() => ok({ url: 'https://supabase.test/link' }));
-    const result = await createAuthFlows(deps).signInWithGoogle();
-    expect(result).toBe('upgraded');
+    expect(await createAuthFlows(deps).signInWithGoogle()).toBe('upgraded');
     expect(fake.auth.exchangeCodeForSession).toHaveBeenCalledWith('abc');
   });
 
@@ -132,12 +185,13 @@ describe('Google', () => {
     fake.setSession(guest);
     fake.auth.linkIdentity.mockImplementationOnce(() => ok({ url: 'https://supabase.test/link' }));
     vi.mocked(deps.openAuthSession)
-      .mockResolvedValueOnce('outfitly://auth-callback#error=x&error_code=identity_already_exists')
+      .mockResolvedValueOnce(
+        'outfitly://auth-callback?error=x#error=x&error_description=Identity+exists&error_code=identity_already_exists',
+      )
       .mockResolvedValueOnce('outfitly://auth-callback?code=def');
-    const result = await createAuthFlows(deps).signInWithGoogle();
-    expect(result).toBe('merged');
+    expect(await createAuthFlows(deps).signInWithGoogle()).toBe('merged');
     expect(fake.auth.exchangeCodeForSession).toHaveBeenCalledWith('def');
-    expect(deps.api.mergeGuest).toHaveBeenCalledWith('guest-token');
+    expectMergedAfterSignIn();
   });
 
   it('reports a closed browser as cancelled', async () => {
@@ -170,22 +224,28 @@ describe('email code', () => {
       options: { shouldCreateUser: false, captchaToken: 'captcha-ok' },
     });
     expect(await flows.verifyEmail('anna@example.com', '123456', 'existing')).toBe('merged');
-    expect(deps.api.mergeGuest).toHaveBeenCalledWith('guest-token');
+    expectMergedAfterSignIn();
   });
 
   it('signs in (or up) without a guest', async () => {
     const flows = createAuthFlows(deps);
     expect(await flows.startEmail('new@example.com')).toBe('new');
     expect(await flows.verifyEmail('new@example.com', '654321', 'new')).toBe('signed_in');
-    expect(deps.api.mergeGuest).not.toHaveBeenCalled();
+    expect(api.mergeGuest).not.toHaveBeenCalled();
   });
 });
 
 describe('sign out', () => {
-  it('ends the session and clears local state', async () => {
+  it('ends the session on this phone only and clears local state', async () => {
     fake.setSession({ access_token: 'real', user: { is_anonymous: false } });
     await createAuthFlows(deps).signOut();
-    expect(fake.auth.signOut).toHaveBeenCalled();
+    expect(fake.auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+    expect(deps.onSignedOut).toHaveBeenCalled();
+  });
+
+  it('still clears local state when offline', async () => {
+    fake.auth.signOut.mockImplementationOnce(() => Promise.reject(new Error('offline')));
+    await expect(createAuthFlows(deps).signOut()).rejects.toThrow('offline');
     expect(deps.onSignedOut).toHaveBeenCalled();
   });
 });

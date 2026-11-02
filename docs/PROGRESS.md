@@ -3,7 +3,7 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-Phase 1, Step 1.6 — Login plumbing
+Phase 1 gate (all six steps built; gate items wait on Elias's accounts and phones). Next: Phase 2, Step 2.1 — Looks in the database + seed loader.
 
 ## Done
 - Step 1.1 — Project skeleton and safety net (PR #1). Monorepo (pnpm + Turborepo), strict TypeScript, ESLint + Prettier, Vitest, GitHub Actions CI on every pull request. CI green.
@@ -11,6 +11,7 @@ Phase 1, Step 1.6 — Login plumbing
 - Step 1.3 — Backend skeleton (PR #3) — **done locally and in CI; Fly staging deploy waiting on Elias.** Fastify API under `/v1`: `/v1/health`, `/v1/me` (login required), zod on every route (startup fails without response/body/params schemas), one error format, request ids + logs, Sentry (5xx only, no personal data), Supabase login check incl. guest tokens (503 if Supabase's keys can't be fetched), idempotency keys on every logged-in write (new `idempotency_keys` table), rate limiting per phone, pg-boss with a test job and a daily cleanup job. Dockerfile + `fly.toml` for `outfitly-api-staging` in Stockholm; CI builds the image, runs migrations in it, starts it and checks health / 401 / test job.
 - Step 1.4 — Photo pipeline (PR #4) — **done locally and in CI; real Cloudflare R2 waiting on Elias.** Upload flow: ask for a link → upload the original straight to R2 → say done → a background job makes 1080/600/300 WebP (location/camera data removed, iPhone Display P3 colours converted to sRGB, HEIC supported) plus size, blurry preview (thumbhash) and main colour. Unsafe files (decompression bombs, SVG/GIF/TIFF, strips) are refused from the header; processing runs in a worker thread; failed jobs are marked failed after retries. `pnpm media:try photo.heic` prints the 3 links once R2 exists.
 - Step 1.5 — App shell (PR #5) — **code done and bundles build in CI; running on phones waiting on Elias (Expo account + phones).** Expo SDK 58 app with five icon-only tabs (filled when active, named for screen readers), warm light + dark themes from `packages/ui-tokens` (contrast-tested), English + Swedish texts, typed API client, TanStack Query cached in MMKV, Sentry, translated error screen, EAS profiles (development / preview / production). Lint blocks hard-coded colours and untranslated text in the app.
+- Step 1.6 — Login plumbing (PR #6) — **code done and tested; real sign-in waiting on Elias (Supabase, Apple, Google, Turnstile, phones).** Server: `POST /v1/session` gives every login (guests too) a personal profile with a `user1234`-style handle and makes it active; `GET /v1/me`; requests name the profile they act as (`X-Profile-Id`, checked against `profile_members`); `POST /v1/session/merge-guest` moves a guest's content into an existing account (checks the guest is still a guest in the database). App: Supabase login (session saved on the phone), guest session only on demand (first save / "Test save"), Apple (native), Google and email code — a guest upgrading keeps the same account; if the Apple ID / Google account / email already has an account, the guest's data moves over (retried if offline). Sign out on this phone only. Reusable "sign up to save" sheet; Profile tab with a hidden developer menu (long-press the title → "Test save"). CAPTCHA via Cloudflare Turnstile.
 
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
@@ -32,6 +33,9 @@ Phase 1, Step 1.6 — Login plumbing
 - 2026-11-02 — App: Expo SDK 58 (latest stable on 2026-11-02) with native tabs; iOS icons are SF Symbols, Android icons Ionicons (the Material font has no filled/outline difference). The theme follows the phone's light/dark setting until Step 5.3.
 - 2026-11-02 — App id `com.outfitly.app`; development builds are `com.outfitly.app.dev` ("Outfitly (Dev)", scheme `outfitly-dev`) so both can be installed. Preview builds talk to the staging API.
 - 2026-11-02 — The app's cache is wiped on each new app version (cache "buster"), and requests aren't retried on answers that won't change (4xx except 408/429).
+- 2026-11-02 — New profiles get a neutral handle like `user4821` (never built from the email, which would expose it); people choose their own handle later (Step 4.x).
+- 2026-11-02 — Sign out ends the session on this phone only; guests have no sign-out button (a guest account can't be signed back in to).
+- 2026-11-02 — A guest whose Apple ID / Google account / email already has an account: sign in to that account, then the server moves the guest's content (photos now; saves, boards… in Phase 2 — a test fails if a new profile-owned table is forgotten). The guest's own login is left behind.
 - 2026-11-02 — Elias asked Claude to work through Phase 1 and Phase 2 overnight without stopping. Each step still gets its own branch + PR, stacked on the previous step's branch; nothing is merged into `main` without Elias.
 
 ## Waiting on Elias
@@ -44,6 +48,15 @@ Phase 1, Step 1.6 — Login plumbing
 - **A real iPhone photo** (taken somewhere neutral, location on) to add as a test file, so tests use a true iPhone capture.
 - **Expo / EAS (Step 1.5):** create a free Expo account, then (or let Claude, with an Expo access token): `cd apps/mobile && npx eas-cli@latest login && npx eas-cli init` (prints the project ID — Claude will put it and the owner into `app.config.ts`), `npx eas-cli device:create` to register your iPhone (needed for internal iOS builds; needs the Apple Developer account), then `npx eas-cli build --profile development --platform all` and install from the links on both phones. Run the Maestro tab test (`apps/mobile/.maestro/tabs.yaml`) on a preview build.
 - **Sentry for the app:** create a Sentry project "outfitly-app" (EU), share the DSN, and add a Sentry auth token as an EAS secret (`SENTRY_AUTH_TOKEN`) so crash reports point at real code lines. Builds work without it.
+- **Supabase login settings (Step 1.6)**, in the Supabase dashboard → Authentication:
+  - Sign In / Providers: turn on **Anonymous sign-ins** and **Allow manual linking**; Email provider on with **Email OTP** (length 6).
+  - Attack Protection: **CAPTCHA** on, provider **Turnstile**, paste the Turnstile **secret**. In Cloudflare, make the Turnstile widget **Invisible** (or Managed) and allow the hostname `outfitly.com` (or your domain; also set `EXPO_PUBLIC_TURNSTILE_ORIGIN`).
+  - Apple provider: add the app ids `com.outfitly.app` and `com.outfitly.app.dev` as client IDs (needs the Apple Developer account: enable "Sign in with Apple" for both app ids).
+  - Google provider: create a Google Cloud OAuth client (Web), paste its Client ID and Secret.
+  - URL Configuration → Redirect URLs: add `outfitly://auth-callback` and `outfitly-dev://auth-callback`.
+  - Email Templates: "Magic Link", "Confirm signup" and "Change Email Address" must show the code `{{ .Token }}` (otherwise people get a link instead of a code).
+- **Email sending (decision, Step 1.6):** Supabase's built-in email only reaches the project's team members and a few per hour. Real users need an email provider (SMTP), e.g. Resend or Postmark (free tiers exist). This is a new service — your OK needed before launch; fine to wait until testers.
+- **OK for login libraries (Step 1.6):** `@supabase/supabase-js` (Supabase login, in the stack), `expo-apple-authentication` (native Apple sign-in), `react-native-webview` + Cloudflare Turnstile (free CAPTCHA that Supabase requires for guest sign-ins).
 - **OK for app libraries (Step 1.5), all free/open source and standard in Expo apps:** `i18next` + `react-i18next` + `expo-localization` (translations), `expo-crypto` (unique keys), `@tanstack/react-query-persist-client` + `@tanstack/query-async-storage-persister` (cache on the phone), `react-native-nitro-modules` (needed by MMKV), `expo-dev-client` (development builds), `@expo/vector-icons` (tab icons on Android), `eslint-plugin-react-hooks` (lint), and allowing `@sentry/cli`'s install step (it downloads the Sentry upload tool).
 - **OK for photo libraries (Step 1.4):** `heic-decode` (reads iPhone HEIC; bundles the libde265 HEVC decoder — HEVC is patent-licensed, which is why the standard image library leaves it out) and the AWS S3 client (`@aws-sdk/client-s3` + presigner; talks to R2). Alternative to HEVC on the server: the app converts photos to JPEG on the phone before upload (planned anyway in Step 4.2).
 - **API machine size:** decoding a 12 MP HEIC peaks ~550 MB, so the API machine is set to 1 GB (staging sleeps when idle, so ~free; always-on would be ~$5.70/month instead of ~$3.20).
@@ -79,6 +92,9 @@ Phase 1, Step 1.6 — Login plumbing
 - Consider turning off Supabase's Data API (REST) entirely as a third lock (then adjust the live test).
 - Web shop clicks from logged-out visitors (Step 3.7) need a session-scoped idempotency key; include the active profile in the request fingerprint once Step 1.6 adds it.
 - Replayed idempotent responses don't restore headers such as `Location`.
+- Delete leftover guest logins (anonymous auth users with no profile) with a scheduled job (needs the Supabase admin key).
+- Hide the developer menu in store builds (before Step 5.6).
+- Encrypt the login session on the phone (MMKV encryption key in the secure keychain).
 - Replace Expo's placeholder app icon and splash with the Outfitly logo (before Step 5.6).
 - App writes: keep one idempotency key per user action through retries and the offline queue (helper when the first mutation lands, Step 2.4); let TanStack Query cancel requests (pass its AbortSignal).
 - Clean up abandoned uploads: `pending` media rows and originals older than a day.
