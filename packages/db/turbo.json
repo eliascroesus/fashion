@@ -1,0 +1,10 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      // Results depend on live database servers and .env, which turbo can't hash.
+      "cache": false
+    }
+  }
+}
