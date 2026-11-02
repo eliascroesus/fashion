@@ -4,16 +4,26 @@
     "appVersionSource": "remote"
   },
   "build": {
+    "base": {
+      "node": "22.23.0",
+      "pnpm": "11.20.0"
+    },
     "development": {
+      "extends": "base",
       "developmentClient": true,
       "distribution": "internal",
       "env": { "APP_VARIANT": "development", "EXPO_PUBLIC_APP_ENV": "development" }
     },
     "preview": {
+      "extends": "base",
       "distribution": "internal",
-      "env": { "EXPO_PUBLIC_APP_ENV": "staging" }
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "staging",
+        "EXPO_PUBLIC_API_URL": "https://outfitly-api-staging.fly.dev"
+      }
     },
     "production": {
+      "extends": "base",
       "autoIncrement": true,
       "env": { "EXPO_PUBLIC_APP_ENV": "production" }
     }

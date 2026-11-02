@@ -5,6 +5,13 @@ import { defineConfig, globalIgnores } from 'eslint/config';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
+// App rules: colours come from @outfitly/ui-tokens, and every visible or spoken word from i18n.
+const NO_COLOUR = 'No hard-coded colours: use the theme (useColors) from @outfitly/ui-tokens.';
+const NO_RAW_TEXT = 'No raw text: use t() with a key in src/i18n/en.json.';
+const COLOR_PROPS =
+  '^(?:color|backgroundColor|border\\w*Color|tintColor|shadowColor|textDecorationColor|overlayColor)$';
+const TEXT_PROPS = '^(?:accessibilityLabel|accessibilityHint|placeholder|title|label|alt)$';
+
 export default defineConfig(
   globalIgnores(['**/dist/', '**/build/', '**/.next/', '**/.expo/', '**/.turbo/', '**/coverage/']),
   js.configs.recommended,
@@ -35,18 +42,19 @@ export default defineConfig(
     rules: {
       'no-restricted-syntax': [
         'error',
-        {
-          selector: 'Literal[value=/^#(?:[0-9a-fA-F]{3,4}){1,2}$/]',
-          message: 'No hard-coded colours: use the theme (useColors) from @outfitly/ui-tokens.',
-        },
-        {
-          selector: 'Literal[value=/^(?:rgb|hsl)a?\\(/]',
-          message: 'No hard-coded colours: use the theme (useColors) from @outfitly/ui-tokens.',
-        },
-        {
-          selector: 'JSXText[value=/\\S/]',
-          message: 'No raw text on screen: use t() with a key in src/i18n/en.json.',
-        },
+        ...[
+          'Literal[value=/^#(?:[0-9a-fA-F]{3,4}){1,2}$/]',
+          'Literal[value=/^(?:rgb|hsl)a?\\(/]',
+          `Property[key.name=/${COLOR_PROPS}/] > Literal:not([value='transparent'])`,
+        ].map((selector) => ({ selector, message: NO_COLOUR })),
+        ...[
+          'JSXText[value=/\\S/]',
+          'JSXElement > JSXExpressionContainer > Literal[value=/\\S/]',
+          'JSXElement > JSXExpressionContainer > TemplateLiteral',
+          `JSXAttribute[name.name=/${TEXT_PROPS}/] > Literal`,
+          `JSXAttribute[name.name=/${TEXT_PROPS}/] > JSXExpressionContainer > Literal`,
+          `JSXAttribute[name.name=/${TEXT_PROPS}/] > JSXExpressionContainer > TemplateLiteral`,
+        ].map((selector) => ({ selector, message: NO_RAW_TEXT })),
       ],
     },
   },

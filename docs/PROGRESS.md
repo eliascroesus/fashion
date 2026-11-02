@@ -3,13 +3,14 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-Phase 1, Step 1.5 — App shell
+Phase 1, Step 1.6 — Login plumbing
 
 ## Done
 - Step 1.1 — Project skeleton and safety net (PR #1). Monorepo (pnpm + Turborepo), strict TypeScript, ESLint + Prettier, Vitest, GitHub Actions CI on every pull request. CI green.
 - Step 1.2 — Database (PR #2) — **done locally; live Supabase part waiting on Elias.** Drizzle schema + migrations for `profiles`, `profile_members`, `media`, `feature_flags`; pgvector + pg_trgm; RLS on every table with no policies, and Supabase's API roles (anon / authenticated / service_role) have their access revoked for existing and future tables and functions. Seed script. Tests run on a real Postgres 17 + pgvector locally and in CI. Still to do once the Supabase project exists: see "Waiting on Elias".
 - Step 1.3 — Backend skeleton (PR #3) — **done locally and in CI; Fly staging deploy waiting on Elias.** Fastify API under `/v1`: `/v1/health`, `/v1/me` (login required), zod on every route (startup fails without response/body/params schemas), one error format, request ids + logs, Sentry (5xx only, no personal data), Supabase login check incl. guest tokens (503 if Supabase's keys can't be fetched), idempotency keys on every logged-in write (new `idempotency_keys` table), rate limiting per phone, pg-boss with a test job and a daily cleanup job. Dockerfile + `fly.toml` for `outfitly-api-staging` in Stockholm; CI builds the image, runs migrations in it, starts it and checks health / 401 / test job.
 - Step 1.4 — Photo pipeline (PR #4) — **done locally and in CI; real Cloudflare R2 waiting on Elias.** Upload flow: ask for a link → upload the original straight to R2 → say done → a background job makes 1080/600/300 WebP (location/camera data removed, iPhone Display P3 colours converted to sRGB, HEIC supported) plus size, blurry preview (thumbhash) and main colour. Unsafe files (decompression bombs, SVG/GIF/TIFF, strips) are refused from the header; processing runs in a worker thread; failed jobs are marked failed after retries. `pnpm media:try photo.heic` prints the 3 links once R2 exists.
+- Step 1.5 — App shell (PR #5) — **code done and bundles build in CI; running on phones waiting on Elias (Expo account + phones).** Expo SDK 58 app with five icon-only tabs (filled when active, named for screen readers), warm light + dark themes from `packages/ui-tokens` (contrast-tested), English + Swedish texts, typed API client, TanStack Query cached in MMKV, Sentry, translated error screen, EAS profiles (development / preview / production). Lint blocks hard-coded colours and untranslated text in the app.
 
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
@@ -28,6 +29,9 @@ Phase 1, Step 1.5 — App shell
 - 2026-11-02 — Photos: sizes are widths (1080/600/300), never enlarged; WebP quality 80; keys `m/<media id>/<size>.webp` (never reused) with `Cache-Control: public, max-age=31536000, immutable`; originals stay private in a separate bucket. Limits: 25 MB upload, 50 MP (25 MP for HEIC), aspect ratio ≤ 4:1; formats JPEG/PNG/WebP/HEIC/AVIF only.
 - 2026-11-02 — Media must belong to the active profile; `requireActiveProfile` looks it up server-side from `profile_members` (Step 1.6 adds automatic profile creation).
 - 2026-11-02 — App rule for later (Steps 1.5/4.2): use a fresh Idempotency-Key per user action; a retry of the *same* action reuses its key (4xx answers like "not uploaded yet" are replayed for 24 h).
+- 2026-11-02 — App: Expo SDK 58 (latest stable on 2026-11-02) with native tabs; iOS icons are SF Symbols, Android icons Ionicons (the Material font has no filled/outline difference). The theme follows the phone's light/dark setting until Step 5.3.
+- 2026-11-02 — App id `com.outfitly.app`; development builds are `com.outfitly.app.dev` ("Outfitly (Dev)", scheme `outfitly-dev`) so both can be installed. Preview builds talk to the staging API.
+- 2026-11-02 — The app's cache is wiped on each new app version (cache "buster"), and requests aren't retried on answers that won't change (4xx except 408/429).
 - 2026-11-02 — Elias asked Claude to work through Phase 1 and Phase 2 overnight without stopping. Each step still gets its own branch + PR, stacked on the previous step's branch; nothing is merged into `main` without Elias.
 
 ## Waiting on Elias
@@ -38,6 +42,9 @@ Phase 1, Step 1.5 — App shell
 - **Sentry** — create a free Sentry account/project "outfitly-api" (EU region) and share the DSN.
 - **Cloudflare R2 + image domain (Step 1.4):** in Cloudflare, create two R2 buckets in the EU jurisdiction: `outfitly-originals-dev` (private) and `outfitly-public-dev` (connect the custom domain `img.<your domain>` to it; needs the domain on Cloudflare). Create an R2 API token with Object Read & Write on both. Share Account ID, Access Key ID and Secret. Claude then runs `pnpm media:try` with a real iPhone photo (prints 3 links to open in the browser) and also checks that R2 refuses an upload whose size/type doesn't match the link.
 - **A real iPhone photo** (taken somewhere neutral, location on) to add as a test file, so tests use a true iPhone capture.
+- **Expo / EAS (Step 1.5):** create a free Expo account, then (or let Claude, with an Expo access token): `cd apps/mobile && npx eas-cli@latest login && npx eas-cli init` (prints the project ID — Claude will put it and the owner into `app.config.ts`), `npx eas-cli device:create` to register your iPhone (needed for internal iOS builds; needs the Apple Developer account), then `npx eas-cli build --profile development --platform all` and install from the links on both phones. Run the Maestro tab test (`apps/mobile/.maestro/tabs.yaml`) on a preview build.
+- **Sentry for the app:** create a Sentry project "outfitly-app" (EU), share the DSN, and add a Sentry auth token as an EAS secret (`SENTRY_AUTH_TOKEN`) so crash reports point at real code lines. Builds work without it.
+- **OK for app libraries (Step 1.5), all free/open source and standard in Expo apps:** `i18next` + `react-i18next` + `expo-localization` (translations), `expo-crypto` (unique keys), `@tanstack/react-query-persist-client` + `@tanstack/query-async-storage-persister` (cache on the phone), `react-native-nitro-modules` (needed by MMKV), `expo-dev-client` (development builds), `@expo/vector-icons` (tab icons on Android), `eslint-plugin-react-hooks` (lint), and allowing `@sentry/cli`'s install step (it downloads the Sentry upload tool).
 - **OK for photo libraries (Step 1.4):** `heic-decode` (reads iPhone HEIC; bundles the libde265 HEVC decoder — HEVC is patent-licensed, which is why the standard image library leaves it out) and the AWS S3 client (`@aws-sdk/client-s3` + presigner; talks to R2). Alternative to HEVC on the server: the app converts photos to JPEG on the phone before upload (planned anyway in Step 4.2).
 - **API machine size:** decoding a 12 MP HEIC peaks ~550 MB, so the API machine is set to 1 GB (staging sleeps when idle, so ~free; always-on would be ~$5.70/month instead of ~$3.20).
 - **Photo originals keep location data** (only the public sizes are stripped). Decide how long to keep originals (GDPR): e.g. delete after 30 days, or strip on arrival.
@@ -72,6 +79,8 @@ Phase 1, Step 1.5 — App shell
 - Consider turning off Supabase's Data API (REST) entirely as a third lock (then adjust the live test).
 - Web shop clicks from logged-out visitors (Step 3.7) need a session-scoped idempotency key; include the active profile in the request fingerprint once Step 1.6 adds it.
 - Replayed idempotent responses don't restore headers such as `Location`.
+- Replace Expo's placeholder app icon and splash with the Outfitly logo (before Step 5.6).
+- App writes: keep one idempotency key per user action through retries and the offline queue (helper when the first mutation lands, Step 2.4); let TanStack Query cancel requests (pass its AbortSignal).
 - Clean up abandoned uploads: `pending` media rows and originals older than a day.
 - Measure photo processing on the real Fly machine (target < 10 s; 1.7 s on GitHub's runner, 0.6 s on a Mac).
 - Production (Phase 5): keep at least one API machine always on so the 03:17 cleanup and other jobs run (staging sleeps when idle).

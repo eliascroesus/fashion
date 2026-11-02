@@ -1,5 +1,6 @@
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import { QueryClient } from '@tanstack/react-query';
+import { shouldRetry } from './query-retry';
 import { storage } from './storage';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -10,7 +11,7 @@ export const queryClient = new QueryClient({
       staleTime: 60 * 1000,
       // Kept long enough that a cold start can show the last feed while refreshing.
       gcTime: DAY,
-      retry: 2,
+      retry: shouldRetry,
     },
   },
 });

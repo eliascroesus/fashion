@@ -4,6 +4,10 @@ import { PlaceholderScreen } from '../../components/placeholder-screen';
 export default function SearchScreen() {
   const { t } = useTranslation();
   return (
-    <PlaceholderScreen title={t('screens.search.title')} body={t('screens.search.comingSoon')} />
+    <PlaceholderScreen
+      testID="screen-search"
+      title={t('screens.search.title')}
+      body={t('screens.search.comingSoon')}
+    />
   );
 }

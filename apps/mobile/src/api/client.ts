@@ -1,6 +1,5 @@
 import {
   API_PREFIX,
-  apiErrorSchema,
   type ApiErrorCode,
   type CreateUploadBody,
   healthSchema,
@@ -9,12 +8,28 @@ import {
   meSchema,
   uploadTicketSchema,
 } from '@outfitly/shared';
-import type { z } from 'zod';
+import { z } from 'zod';
 
-/** An error answer from the API, or a network failure (`code: 'network_error'`). */
+/**
+ * Error answers are parsed leniently: an app in the field may meet error
+ * codes from a newer server, and should still show the message.
+ */
+const errorBodySchema = z.object({
+  error: z.object({
+    code: z.string(),
+    message: z.string(),
+    requestId: z.string().optional(),
+    details: z.unknown().optional(),
+  }),
+});
+
+/**
+ * An error answer from the API, or a network failure (`code: 'network_error'`).
+ * `code` is one of the shared API error codes, or one this app version doesn't know yet.
+ */
 export class ApiRequestError extends Error {
   readonly status: number;
-  readonly code: ApiErrorCode | 'network_error' | 'invalid_response';
+  readonly code: ApiErrorCode | 'network_error' | 'invalid_response' | (string & {});
   readonly requestId: string | undefined;
   readonly details: unknown;
 
@@ -75,6 +90,7 @@ export function createApiClient(options: ApiClientOptions) {
       controller.abort();
     }, timeoutMs);
     let res: Response;
+    let json: unknown;
     try {
       res = await doFetch(`${options.baseUrl}${API_PREFIX}${path}`, {
         method,
@@ -82,15 +98,16 @@ export function createApiClient(options: ApiClientOptions) {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: controller.signal,
       });
+      // 204 has no body; the endpoint's schema must accept null. Non-JSON bodies become null.
+      json = res.status === 204 ? null : await res.json().catch(() => null);
     } catch (error) {
       throw new ApiRequestError(0, 'network_error', String(error));
     } finally {
       clearTimeout(timer);
     }
 
-    const json: unknown = res.status === 204 ? null : await res.json().catch(() => null);
     if (!res.ok) {
-      const parsed = apiErrorSchema.safeParse(json);
+      const parsed = errorBodySchema.safeParse(json);
       if (parsed.success) {
         const { code, message, requestId, details } = parsed.data.error;
         throw new ApiRequestError(res.status, code, message, requestId, details);

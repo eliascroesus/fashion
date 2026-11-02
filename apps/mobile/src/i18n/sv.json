@@ -7,13 +7,29 @@
     "profile": "Profil"
   },
   "screens": {
-    "home": { "title": "Hem", "comingSoon": "Ditt flöde med outfits visas här." },
-    "search": { "title": "Sök", "comingSoon": "Sök efter looks, plagg och personer." },
-    "create": { "title": "Skapa", "comingSoon": "Lägg upp en look och tagga det du har på dig." },
-    "saved": { "title": "Sparat", "comingSoon": "Looks du sparar hamnar här." },
-    "profile": { "title": "Profil", "comingSoon": "Din profil och dina inställningar." }
+    "home": {
+      "title": "Hem",
+      "comingSoon": "Ditt flöde med outfits visas här."
+    },
+    "search": {
+      "title": "Sök",
+      "comingSoon": "Sök efter looks, plagg och personer."
+    },
+    "create": {
+      "title": "Skapa",
+      "comingSoon": "Lägg upp en look och tagga det du har på dig."
+    },
+    "saved": {
+      "title": "Sparat",
+      "comingSoon": "Looks du sparar hamnar här."
+    },
+    "profile": {
+      "title": "Profil",
+      "comingSoon": "Din profil och dina inställningar."
+    }
   },
   "errors": {
-    "generic": "Något gick fel. Försök igen."
+    "generic": "Något gick fel. Försök igen.",
+    "retry": "Försök igen"
   }
 }

@@ -7,13 +7,29 @@
     "profile": "Profile"
   },
   "screens": {
-    "home": { "title": "Home", "comingSoon": "Your outfit feed will appear here." },
-    "search": { "title": "Search", "comingSoon": "Search for looks, pieces and people." },
-    "create": { "title": "Create", "comingSoon": "Post a look and tag what you wear." },
-    "saved": { "title": "Saved", "comingSoon": "Looks you save end up here." },
-    "profile": { "title": "Profile", "comingSoon": "Your profile and settings." }
+    "home": {
+      "title": "Home",
+      "comingSoon": "Your outfit feed will appear here."
+    },
+    "search": {
+      "title": "Search",
+      "comingSoon": "Search for looks, pieces and people."
+    },
+    "create": {
+      "title": "Create",
+      "comingSoon": "Post a look and tag what you wear."
+    },
+    "saved": {
+      "title": "Saved",
+      "comingSoon": "Looks you save end up here."
+    },
+    "profile": {
+      "title": "Profile",
+      "comingSoon": "Your profile and settings."
+    }
   },
   "errors": {
-    "generic": "Something went wrong. Please try again."
+    "generic": "Something went wrong. Please try again.",
+    "retry": "Try again"
   }
 }

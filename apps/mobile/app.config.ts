@@ -15,7 +15,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   version: '0.1.0',
   orientation: 'portrait',
   icon: './assets/images/icon.png',
-  scheme: 'outfitly',
+  scheme: IS_DEV ? 'outfitly-dev' : 'outfitly',
   userInterfaceStyle: 'automatic',
   ios: {
     bundleIdentifier: APP_ID,
@@ -34,7 +34,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   plugins: [
     'expo-router',
-    'expo-localization',
+    ['expo-localization', { supportedLocales: { ios: ['en', 'sv'], android: ['en', 'sv'] } }],
     [
       'expo-splash-screen',
       {
@@ -50,6 +50,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         organization: process.env['SENTRY_ORG'],
         project: process.env['SENTRY_PROJECT'],
         url: 'https://de.sentry.io/',
+        // Release builds upload source maps only once a Sentry token exists (an EAS secret).
+        disableAutoUpload: !process.env['SENTRY_AUTH_TOKEN'],
       },
     ],
   ],

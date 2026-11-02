@@ -2,9 +2,17 @@ import { StyleSheet } from 'react-native';
 import { Screen, spacing, ThemedText } from '../theme';
 
 /** Temporary content for tabs whose real screens come in later steps. */
-export function PlaceholderScreen({ title, body }: { title: string; body: string }) {
+export function PlaceholderScreen({
+  title,
+  body,
+  testID,
+}: {
+  title: string;
+  body: string;
+  testID: string;
+}) {
   return (
-    <Screen style={styles.center}>
+    <Screen style={styles.center} testID={testID}>
       <ThemedText variant="headline" accessibilityRole="header">
         {title}
       </ThemedText>

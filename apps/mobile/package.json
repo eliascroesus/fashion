@@ -12,6 +12,7 @@
     "doctor": "expo-doctor"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.1.1",
     "@outfitly/shared": "workspace:*",
     "@outfitly/ui-tokens": "workspace:*",
     "@sentry/react-native": "~8.28.0",
@@ -21,6 +22,7 @@
     "expo": "~58.0.22",
     "expo-constants": "~58.0.14",
     "expo-crypto": "~58.0.7",
+    "expo-dev-client": "~58.0.18",
     "expo-font": "~58.0.11",
     "expo-image": "~58.0.18",
     "expo-linking": "~58.0.15",

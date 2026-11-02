@@ -74,6 +74,29 @@ describe('API client', () => {
     });
   });
 
+  it('keeps the message of error codes this app version does not know yet', async () => {
+    const { api } = setup(() =>
+      jsonResponse(403, { error: { code: 'brand_new_code', message: 'Nope', requestId: 'r-2' } }),
+    );
+    await expect(api.me()).rejects.toMatchObject({
+      status: 403,
+      code: 'brand_new_code',
+      message: 'Nope',
+      requestId: 'r-2',
+    });
+  });
+
+  it('reports a non-JSON error page (e.g. a proxy 502) with its status', async () => {
+    const { api } = setup(() => new Response('<html>Bad gateway</html>', { status: 502 }));
+    await expect(api.health()).rejects.toMatchObject({ status: 502, code: 'invalid_response' });
+  });
+
+  it('treats 204 as an empty (null) answer', async () => {
+    const { api } = setup(() => new Response(null, { status: 204 }));
+    // health expects a body, so an empty answer is invalid for it.
+    await expect(api.health()).rejects.toMatchObject({ status: 204, code: 'invalid_response' });
+  });
+
   it('refuses answers that do not match the shared schema', async () => {
     const { api } = setup(() => jsonResponse(200, { status: 'maybe' }));
     await expect(api.health()).rejects.toMatchObject({ code: 'invalid_response' });
