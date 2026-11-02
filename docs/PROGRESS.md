@@ -45,31 +45,25 @@ Phase 1 gate (all six steps built; gate items wait on Elias's accounts and phone
 - **A real iPhone photo** (the R2 check used the generated 12 MP test HEIC) (taken somewhere neutral, location on) to add as a test file, so tests use a true iPhone capture.
 - **Expo / EAS (Step 1.5):** create a free Expo account, then (or let Claude, with an Expo access token): `cd apps/mobile && npx eas-cli@latest login && npx eas-cli init` (prints the project ID — Claude will put it and the owner into `app.config.ts`), `npx eas-cli device:create` to register your iPhone (needed for internal iOS builds; needs the Apple Developer account), then `npx eas-cli build --profile development --platform all` and install from the links on both phones. Run the Maestro tab test (`apps/mobile/.maestro/tabs.yaml`) on a preview build.
 - **Sentry for the app:** create a Sentry project "outfitly-app" (EU), share the DSN, and add a Sentry auth token as an EAS secret (`SENTRY_AUTH_TOKEN`) so crash reports point at real code lines. Builds work without it.
-- **Supabase login settings (Step 1.6)**, in the Supabase dashboard → Authentication. Done 2026-11-02: anonymous sign-ins on; CAPTCHA (Turnstile, widget hostname `outfitly-api-staging.fly.dev`, site key in `apps/mobile/.env`) on and enforced (a guest sign-up without a token gets 400 `captcha_failed`). Still to confirm/do:
-  - Sign In / Providers: turn on **Anonymous sign-ins** and **Allow manual linking**; Email provider on with **Email OTP** (length 6).
-  - Attack Protection: **CAPTCHA** on, provider **Turnstile**, paste the Turnstile **secret**. In Cloudflare, make the Turnstile widget **Invisible** (or Managed) and allow the hostname `outfitly.com` (or your domain; also set `EXPO_PUBLIC_TURNSTILE_ORIGIN`).
+- **Supabase login settings (Step 1.6)** — done 2026-11-02: anonymous sign-ins, manual linking, redirect URLs (`outfitly://auth-callback`, `outfitly-dev://auth-callback`), CAPTCHA (Turnstile, widget hostname `outfitly-api-staging.fly.dev`; a guest sign-up without a token gets 400 `captcha_failed`). Still to add once those accounts exist:
   - Apple provider: add the app ids `com.outfitly.app` and `com.outfitly.app.dev` as client IDs (needs the Apple Developer account: enable "Sign in with Apple" for both app ids).
-  - Google provider: create a Google Cloud OAuth client (Web), paste its Client ID and Secret.
-  - URL Configuration → Redirect URLs: add `outfitly://auth-callback` and `outfitly-dev://auth-callback`.
-  - Email Templates: "Magic Link", "Confirm signup" and "Change Email Address" must show the code `{{ .Token }}` (otherwise people get a link instead of a code). Supabase only allows editing templates once custom SMTP is set up, so **email-code login waits for a domain + an email provider**; test login with Apple / Google until then.
-- **Email sending (decision, Step 1.6):** Supabase's built-in email only reaches the project's team members and a few per hour. Real users need an email provider (SMTP), e.g. Resend or Postmark (free tiers exist). This is a new service — your OK needed before launch; fine to wait until testers.
+  - Google provider: create a Google Cloud OAuth client (Web, redirect `https://<project-ref>.supabase.co/auth/v1/callback`), paste its Client ID and Secret.
+  - Email templates: parked, see `docs/BEFORE_LAUNCH.md`.
 - **OK for login libraries (Step 1.6):** `@supabase/supabase-js` (Supabase login, in the stack), `expo-apple-authentication` (native Apple sign-in), `react-native-webview` + Cloudflare Turnstile (free CAPTCHA that Supabase requires for guest sign-ins).
 - **OK for app libraries (Step 1.5), all free/open source and standard in Expo apps:** `i18next` + `react-i18next` + `expo-localization` (translations), `expo-crypto` (unique keys), `@tanstack/react-query-persist-client` + `@tanstack/query-async-storage-persister` (cache on the phone), `react-native-nitro-modules` (needed by MMKV), `expo-dev-client` (development builds), `@expo/vector-icons` (tab icons on Android), `eslint-plugin-react-hooks` (lint), and allowing `@sentry/cli`'s install step (it downloads the Sentry upload tool).
 - **OK for photo libraries (Step 1.4):** `heic-decode` (reads iPhone HEIC; bundles the libde265 HEVC decoder — HEVC is patent-licensed, which is why the standard image library leaves it out) and the AWS S3 client (`@aws-sdk/client-s3` + presigner; talks to R2). Alternative to HEVC on the server: the app converts photos to JPEG on the phone before upload (planned anyway in Step 4.2).
 - **API machine size:** decoding a 12 MP HEIC peaks ~550 MB, so the API machine is set to 1 GB (staging sleeps when idle, so ~free; always-on would be ~$5.70/month instead of ~$3.20).
-- **Photo originals keep location data** (only the public sizes are stripped). Decide how long to keep originals (GDPR): e.g. delete after 30 days, or strip on arrival.
 - **OK for two small free libraries (Step 1.3)** — `jose` (checks Supabase login tokens) and `@fastify/rate-limit` (rate limiting). Both are free, open source, widely used. Say no and Claude will replace them.
 
 ## Open decisions for Elias
-- Domain name (outfitly.com or other) — none yet (2026-11-02); outfitly.com is registered by someone else (since 2011). Until we have one, images use the R2 public dev address (r2.dev — rate-limited and meant for development, so connect `img.<domain>` as a Custom Domain on `outfitly-public-dev` and update `MEDIA_PUBLIC_BASE_URL` before launch) and Turnstile allows `outfitly-api-staging.fly.dev` (`EXPO_PUBLIC_TURNSTILE_ORIGIN`)
+- Domain name (outfitly.com or other) — none yet (2026-11-02); everything that waits on it is in `docs/BEFORE_LAUNCH.md`; outfitly.com is registered by someone else (since 2011). Until we have one, images use the R2 public dev address (r2.dev — rate-limited and meant for development, so connect `img.<domain>` as a Custom Domain on `outfitly-public-dev` and update `MEDIA_PUBLIC_BASE_URL` before launch) and Turnstile allows `outfitly-api-staging.fly.dev` (`EXPO_PUBLIC_TURNSTILE_ORIGIN`)
 - App ID (default `com.outfitly.app`)
 - Dark or light theme by default (Step 5.3)
 - English only or English + Swedish at launch (Step 5.3)
 - 18+ only or teens allowed (Step 5.5)
 
 ## Known issues
-- Email-code login can't work yet: without custom SMTP Supabase sends its default emails (a link, no code) and won't let us edit them. The app still shows the email option; hide it or set up SMTP before testers (needs a domain).
-- `main` has no branch protection yet, so a PR with a red check could still be merged (ask Elias to require the "Typecheck, lint, test" check).
+- Parked until before launch (domain, email-code login, store polish, privacy, production servers): `docs/BEFORE_LAUNCH.md`.
 - On Supabase, objects created by `supabase_admin` (Supabase's own platform role, not us) in `public` still get default grants for the API roles; we can't change that role's defaults. Our tables are created by `postgres`, and RLS with no policies blocks rows regardless.
 - `pnpm audit`: moderate advisory in esbuild ≤0.24 via drizzle-kit (dev server only, not used) — dev-only, not exploitable here.
 - `pnpm audit`: one moderate advisory in minimatch, pulled in only by ESLint (dev tool reading our own config) — not exploitable here; wait for upstream fix.
@@ -92,11 +86,7 @@ Phase 1 gate (all six steps built; gate items wait on Elias's accounts and phone
 - Web shop clicks from logged-out visitors (Step 3.7) need a session-scoped idempotency key; include the active profile in the request fingerprint once Step 1.6 adds it.
 - Replayed idempotent responses don't restore headers such as `Location`.
 - Delete leftover guest logins (anonymous auth users with no profile) with a scheduled job (needs the Supabase admin key).
-- Hide the developer menu in store builds (before Step 5.6).
-- Encrypt the login session on the phone (MMKV encryption key in the secure keychain).
-- Replace Expo's placeholder app icon and splash with the Outfitly logo (before Step 5.6).
 - App writes: keep one idempotency key per user action through retries and the offline queue (helper when the first mutation lands, Step 2.4); let TanStack Query cancel requests (pass its AbortSignal).
 - Clean up abandoned uploads: `pending` media rows and originals older than a day.
 - Measure photo processing on the real Fly machine (target < 10 s; 1.7 s on GitHub's runner, 0.6 s on a Mac).
-- Production (Phase 5): keep at least one API machine always on so the 03:17 cleanup and other jobs run (staging sleeps when idle).
 - Pin GitHub Actions to commit SHAs (with Dependabot to keep them current); consider moving to `pnpm/setup` and pnpm 12.
