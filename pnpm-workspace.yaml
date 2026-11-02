@@ -4,5 +4,6 @@ packages:
 
 # One version of each shared dev tool across every workspace.
 catalog:
+  # Stay on 6.0.x: typescript-eslint supports TS <6.1, and TS 7 (native) drops the JS compiler API.
   typescript: ~6.0.3
   vitest: ^5.0.5

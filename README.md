@@ -14,7 +14,7 @@ This repository is built step by step with Claude Code.
 
 ## How to run (developers)
 
-Needs Node 22 or newer and pnpm 11 (`npm install -g pnpm@11`).
+Needs Node 22.13 or newer and pnpm 11 (`npm install -g pnpm@11`).
 
 ```sh
 cp .env.example .env   # then fill in real values; never commit .env
