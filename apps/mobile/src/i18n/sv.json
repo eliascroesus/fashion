@@ -31,5 +31,33 @@
   "errors": {
     "generic": "Något gick fel. Försök igen.",
     "retry": "Försök igen"
+  },
+  "auth": {
+    "sheetTitle": "Skapa konto för att spara",
+    "sheetBody": "Spara looks att återkomma till, på alla dina enheter.",
+    "google": "Fortsätt med Google",
+    "email": "Fortsätt med e-post",
+    "emailLabel": "E-post",
+    "emailPlaceholder": "du@exempel.se",
+    "sendCode": "Skicka kod",
+    "codeSent": "Vi skickade en sexsiffrig kod till {{email}}.",
+    "codeLabel": "Kod",
+    "verify": "Verifiera",
+    "back": "Tillbaka",
+    "close": "Stäng",
+    "notConfigured": "Inloggning är inte konfigurerad i den här versionen.",
+    "errorGeneric": "Det gick inte att logga in. Försök igen.",
+    "errorEmail": "Ange en giltig e-postadress.",
+    "errorCode": "Koden fungerade inte. Kontrollera den och försök igen."
+  },
+  "profile": {
+    "guest": "Gäst",
+    "signedIn": "Inloggad",
+    "notSignedIn": "Inte inloggad",
+    "handle": "@{{handle}}",
+    "signIn": "Logga in",
+    "signOut": "Logga ut",
+    "devMenu": "Utvecklarmeny",
+    "testSave": "Testa spara"
   }
 }

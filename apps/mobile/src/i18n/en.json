@@ -31,5 +31,33 @@
   "errors": {
     "generic": "Something went wrong. Please try again.",
     "retry": "Try again"
+  },
+  "auth": {
+    "sheetTitle": "Sign up to save",
+    "sheetBody": "Save looks to come back to, on all your devices.",
+    "google": "Continue with Google",
+    "email": "Continue with email",
+    "emailLabel": "Email",
+    "emailPlaceholder": "you@example.com",
+    "sendCode": "Send code",
+    "codeSent": "We sent a 6-digit code to {{email}}.",
+    "codeLabel": "Code",
+    "verify": "Verify",
+    "back": "Back",
+    "close": "Close",
+    "notConfigured": "Sign-in isn't set up in this build.",
+    "errorGeneric": "Couldn't sign in. Please try again.",
+    "errorEmail": "Enter a valid email address.",
+    "errorCode": "That code didn't work. Check it and try again."
+  },
+  "profile": {
+    "guest": "Guest",
+    "signedIn": "Signed in",
+    "notSignedIn": "Not signed in",
+    "handle": "@{{handle}}",
+    "signIn": "Sign in",
+    "signOut": "Sign out",
+    "devMenu": "Developer menu",
+    "testSave": "Test save"
   }
 }

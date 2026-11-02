@@ -21,6 +21,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     bundleIdentifier: APP_ID,
     icon: './assets/expo.icon',
     supportsTablet: false,
+    usesAppleSignIn: true,
   },
   android: {
     package: APP_ID,
@@ -34,6 +35,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   plugins: [
     'expo-router',
+    'expo-apple-authentication',
+    'expo-web-browser',
     ['expo-localization', { supportedLocales: { ios: ['en', 'sv'], android: ['en', 'sv'] } }],
     [
       'expo-splash-screen',

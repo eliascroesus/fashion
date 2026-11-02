@@ -18,6 +18,7 @@ export const testJwks = createLocalJWKSet({ keys: [publicJwk] });
 export interface TokenOptions {
   sub?: string;
   isAnonymous?: boolean;
+  email?: string;
   expiresIn?: string;
   issuer?: string;
   audience?: string;
@@ -29,6 +30,7 @@ export async function signToken(options: TokenOptions = {}): Promise<string> {
   return new SignJWT({
     role: options.role ?? 'authenticated',
     is_anonymous: options.isAnonymous ?? false,
+    ...(options.email ? { email: options.email } : {}),
   })
     .setProtectedHeader({ alg: 'ES256', kid: 'test-key' })
     .setSubject(options.sub ?? randomUUID())
