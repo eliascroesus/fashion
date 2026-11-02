@@ -21,6 +21,9 @@ export async function ensureEventPartitions(
 ): Promise<string[]> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ensure_event_partitions'))`);
+    // Attaching briefly locks the default partition: give up rather than queue
+    // event writes behind a long query (the job retries, and runs daily).
+    await tx.execute(sql`SET LOCAL lock_timeout = '5s'`);
     const created: string[] = [];
     for (let i = 0; i <= monthsAhead; i++) {
       const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + i, 1));
@@ -35,7 +38,8 @@ export async function ensureEventPartitions(
       // Bounds are built from Dates above; DDL can't take query parameters.
       const bounds = sql.raw(`FROM ('${start.toISOString()}') TO ('${end.toISOString()}')`);
       // Built standalone and attached (rather than CREATE … PARTITION OF) so rows
-      // from the default partition can move first and inserts aren't blocked.
+      // from the default partition can move in first. The copy has the same
+      // columns in the same order as every partition, so SELECT * lines up.
       await tx.execute(
         sql`CREATE TABLE ${table} (LIKE public.events INCLUDING DEFAULTS INCLUDING CONSTRAINTS)`,
       );

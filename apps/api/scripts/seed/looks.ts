@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
-import { type Db, eq, lookMedia, looks, sql } from '@outfitly/db';
+import { and, type Db, eq, inArray, isNull, lookMedia, looks, notInArray, sql } from '@outfitly/db';
 import { LOOK_TAGS, lookSlug, MAX_LOOK_PHOTOS, splitLookTags } from '@outfitly/shared';
 import { z } from 'zod';
 import type { PhotoStorage } from '../../src/storage.ts';
@@ -136,6 +136,8 @@ export async function writeSeedTemplate(folder: string): Promise<number> {
 export interface SeedResult {
   looksCreated: number;
   looksUpdated: number;
+  /** Older looks of these photos that the file no longer has (soft-deleted). */
+  looksRetired: number;
   photosProcessed: number;
   photosSkipped: number;
   failures: { photo: string; reason: string }[];
@@ -151,13 +153,36 @@ export interface SeedOptions {
 }
 
 /**
- * Creates (or updates) one published look per entry. Safe to run again: the
- * same photo is the same media row, and a look is identified by its first
- * photo. Looks whose photos failed are left out and reported.
+ * Makes the database match looks.json: one published look per entry. Safe to
+ * run again: the same photo is the same media row, and a look is identified
+ * by its first photo. Seed looks that showed one of these photos but are no
+ * longer in the file (photos regrouped, cover changed) are retired, so each
+ * photo is in one look. Looks whose photos failed are left out and reported.
  */
 export async function seedLooks(options: SeedOptions): Promise<SeedResult> {
   const { db, storage, folder, concurrency = 4, log = () => undefined } = options;
   const entries = await readSeedFile(folder);
+  const files = entries.flatMap((entry) => entry.photos);
+
+  // The same picture under two names would be one photo in two places: refuse up front.
+  const hashed = await mapLimit(files, 8, async (file) =>
+    createHash('sha256')
+      .update(await readFile(join(folder, file)))
+      .digest('hex'),
+  );
+  const mediaIdOf = new Map<string, string>();
+  const byHash = new Map<string, string[]>();
+  hashed.forEach((h, i) => {
+    if (h.status !== 'fulfilled') throw h.reason;
+    const file = files[i] ?? '?';
+    mediaIdOf.set(file, fixedUuid('seed-photo', h.value));
+    byHash.set(h.value, [...(byHash.get(h.value) ?? []), file]);
+  });
+  const duplicates = [...byHash.values()].filter((names) => names.length > 1);
+  if (duplicates.length > 0) {
+    const list = duplicates.map((names) => `  ${names.join(' = ')}`).join('\n');
+    throw new SeedFileError(`These files are the same picture; keep one of each:\n${list}`);
+  }
 
   const authorIds = new Map<string, string>();
   for (const entry of entries) {
@@ -166,50 +191,39 @@ export async function seedLooks(options: SeedOptions): Promise<SeedResult> {
     authorIds.set(entry.author, await ensureAuthor(db, { handle: entry.author, displayName }));
   }
 
-  // Photos, each once; owned by the author of the look they're in.
+  // Each photo once; owned by the author of the look it's in.
   const photos = entries.flatMap((entry) =>
-    entry.photos.map((file) => ({ file, ownerProfileId: authorIds.get(entry.author) ?? '' })),
+    entry.photos.map((file) => ({
+      file,
+      mediaId: mediaIdOf.get(file) ?? '',
+      ownerProfileId: authorIds.get(entry.author) ?? '',
+    })),
   );
-  // The same picture under two names would be one photo in two places: refuse up front.
-  const hashed = await mapLimit(photos, 8, async ({ file }) =>
-    createHash('sha256')
-      .update(await readFile(join(folder, file)))
-      .digest('hex'),
-  );
-  const byHash = new Map<string, string[]>();
-  hashed.forEach((h, i) => {
-    if (h.status !== 'fulfilled') throw h.reason;
-    byHash.set(h.value, [...(byHash.get(h.value) ?? []), photos[i]?.file ?? '?']);
-  });
-  const duplicates = [...byHash.values()].filter((files) => files.length > 1);
-  if (duplicates.length > 0) {
-    const list = duplicates.map((files) => `  ${files.join(' = ')}`).join('\n');
-    throw new SeedFileError(`These files are the same picture; keep one of each:\n${list}`);
-  }
-
-  const mediaIds = new Map<string, string>();
+  const ready = new Set<string>();
   const failures: SeedResult['failures'] = [];
   let processed = 0;
   let skipped = 0;
   let done = 0;
-  const outcomes = await mapLimit(photos, concurrency, async ({ file, ownerProfileId }, i) => {
-    const body = await readFile(join(folder, file));
-    const hash = hashed[i]?.status === 'fulfilled' ? hashed[i].value : '';
-    const mediaId = fixedUuid('seed-photo', hash);
-    const contentType = PHOTO_TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream';
-    try {
-      const outcome = await storeSeedPhoto(db, storage, {
-        mediaId,
-        ownerProfileId,
-        body,
-        contentType,
-      });
-      mediaIds.set(file, mediaId);
-      return outcome;
-    } finally {
-      log(`  ${String(++done)}/${String(photos.length)} ${file}`);
-    }
-  });
+  const outcomes = await mapLimit(
+    photos,
+    concurrency,
+    async ({ file, mediaId, ownerProfileId }) => {
+      const body = await readFile(join(folder, file));
+      const contentType = PHOTO_TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream';
+      try {
+        const outcome = await storeSeedPhoto(db, storage, {
+          mediaId,
+          ownerProfileId,
+          body,
+          contentType,
+        });
+        ready.add(file);
+        return outcome;
+      } finally {
+        log(`  ${String(++done)}/${String(photos.length)} ${file}`);
+      }
+    },
+  );
   outcomes.forEach((outcome, i) => {
     if (outcome.status === 'fulfilled') {
       if (outcome.value === 'processed') processed++;
@@ -224,11 +238,13 @@ export async function seedLooks(options: SeedOptions): Promise<SeedResult> {
   let created = 0;
   let updated = 0;
   const startedAt = Date.now();
+  const fileLookIds = entries.map((entry) =>
+    fixedUuid('seed-look', mediaIdOf.get(entry.photos[0] ?? '') ?? ''),
+  );
   for (const [index, entry] of entries.entries()) {
-    const ids = entry.photos.map((file) => mediaIds.get(file));
-    if (ids.some((id) => id === undefined)) continue; // A photo failed; reported above.
-    const mediaOrder = ids as string[];
-    const lookId = fixedUuid('seed-look', mediaOrder[0] ?? '');
+    if (!entry.photos.every((file) => ready.has(file))) continue; // A photo failed; reported above.
+    const mediaOrder = entry.photos.map((file) => mediaIdOf.get(file) ?? '');
+    const lookId = fileLookIds[index] ?? '';
     const { occasions, seasons } = splitLookTags(entry.tags);
     const fields = {
       authorProfileId: authorIds.get(entry.author) ?? '',
@@ -259,9 +275,29 @@ export async function seedLooks(options: SeedOptions): Promise<SeedResult> {
     else updated++;
   }
 
+  // Earlier groupings of these photos that the file no longer has.
+  const retired = await db
+    .update(looks)
+    .set({ deletedAt: sql`now()` })
+    .where(
+      and(
+        isNull(looks.deletedAt),
+        notInArray(looks.id, fileLookIds),
+        inArray(
+          looks.id,
+          db
+            .select({ id: lookMedia.lookId })
+            .from(lookMedia)
+            .where(inArray(lookMedia.mediaId, [...mediaIdOf.values()])),
+        ),
+      ),
+    )
+    .returning({ id: looks.id });
+
   return {
     looksCreated: created,
     looksUpdated: updated,
+    looksRetired: retired.length,
     photosProcessed: processed,
     photosSkipped: skipped,
     failures,

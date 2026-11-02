@@ -149,9 +149,10 @@ type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 /**
  * Moves a guest's rows in a "one row per profile and X" table to the account,
- * except rows the account already has (same `key`). Those duplicates stay on
- * the closed guest profile. With `skipKey`, rows whose key is the account
- * itself are left too (following yourself isn't allowed).
+ * except rows the account already has (same `key`); moveProfileContent then
+ * retires those leftovers. With `skipKey`, rows whose key is the account
+ * itself are left too (following yourself isn't allowed). With `revive`, an
+ * account row that was undone comes back when the guest's is active.
  */
 async function moveUnlessDuplicate(
   tx: Tx,
@@ -160,7 +161,7 @@ async function moveUnlessDuplicate(
   key: string,
   fromProfileId: string,
   toProfileId: string,
-  { skipKey = false } = {},
+  { skipKey = false, revive = true } = {},
 ): Promise<void> {
   const [t, c, k] = [sql.identifier(table), sql.identifier(column), sql.identifier(key)];
   await tx.execute(sql`
@@ -169,6 +170,7 @@ async function moveUnlessDuplicate(
        ${skipKey ? sql`AND mine.${k} <> ${toProfileId}` : sql``}
        AND NOT EXISTS (SELECT 1 FROM ${t} AS theirs
                         WHERE theirs.${c} = ${toProfileId} AND theirs.${k} = mine.${k})`);
+  if (!revive) return;
   // The guest did it and the account had undone it (soft-deleted): the guest's is newer.
   await tx.execute(sql`
     UPDATE ${t} AS theirs SET deleted_at = NULL, updated_at = now()
@@ -221,8 +223,13 @@ async function moveProfileContent(
   await moveUnlessDuplicate(tx, 'saves', 'profile_id', 'look_id', fromProfileId, toProfileId);
   const follows = ['follows', 'follower_profile_id', 'followed_profile_id'] as const;
   await moveUnlessDuplicate(tx, ...follows, fromProfileId, toProfileId, { skipKey: true });
+  // Someone who followed the guest now follows the account, unless they had
+  // deliberately unfollowed the account (their choice, so no revive).
   const followers = ['follows', 'followed_profile_id', 'follower_profile_id'] as const;
-  await moveUnlessDuplicate(tx, ...followers, fromProfileId, toProfileId, { skipKey: true });
+  await moveUnlessDuplicate(tx, ...followers, fromProfileId, toProfileId, {
+    skipKey: true,
+    revive: false,
+  });
   await moveMissing(tx, 'swipes', 'profile_id', 'look_id', fromProfileId, toProfileId);
   await moveMissing(tx, 'seen', 'profile_id', 'look_id', fromProfileId, toProfileId);
   // The account's own taste wins; the guest's picks only move if it has none.
@@ -230,6 +237,19 @@ async function moveProfileContent(
     UPDATE taste_profiles SET profile_id = ${toProfileId}, updated_at = now()
      WHERE profile_id = ${fromProfileId}
        AND NOT EXISTS (SELECT 1 FROM taste_profiles WHERE profile_id = ${toProfileId})`);
+
+  // What's left on the guest profile duplicates the account's rows: retire it,
+  // so one person's save or follow never counts twice.
+  await tx.execute(sql`
+    UPDATE saves SET deleted_at = now(), updated_at = now()
+     WHERE profile_id = ${fromProfileId} AND deleted_at IS NULL`);
+  await tx.execute(sql`
+    UPDATE follows SET deleted_at = now(), updated_at = now()
+     WHERE (follower_profile_id = ${fromProfileId} OR followed_profile_id = ${fromProfileId})
+       AND deleted_at IS NULL`);
+  await tx.execute(sql`DELETE FROM swipes WHERE profile_id = ${fromProfileId}`);
+  await tx.execute(sql`DELETE FROM seen WHERE profile_id = ${fromProfileId}`);
+  await tx.execute(sql`DELETE FROM taste_profiles WHERE profile_id = ${fromProfileId}`);
 }
 
 /** Database columns that point at a profile and are handled by moveProfileContent (or by membership). */
@@ -264,6 +284,10 @@ export async function mergeGuestInto(
   targetProfileId: string,
 ): Promise<boolean> {
   return db.transaction(async (tx) => {
+    // One merge into an account at a time (two guests merging at once would collide).
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext('profile-merge'), hashtext(${targetProfileId}))`,
+    );
     // Trust the login's current state, not the token: a guest token stays valid
     // for up to an hour after that guest upgraded to a real account.
     const { rows } = await tx.execute<{ is_anonymous: boolean }>(

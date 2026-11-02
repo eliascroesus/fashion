@@ -1,6 +1,7 @@
 // Shared by the seed scripts: fixed ids, author profiles and running photos through the pipeline.
 import { createHash } from 'node:crypto';
 import { type Db, eq, media, profiles } from '@outfitly/db';
+import { MAX_UPLOAD_BYTES } from '@outfitly/shared';
 import { ImageRejectedError } from '../../src/media/image.ts';
 import { markMediaFailed, originalKey, processUploadedMedia } from '../../src/media/pipeline.ts';
 import type { PhotoStorage } from '../../src/storage.ts';
@@ -62,11 +63,23 @@ export async function storeSeedPhoto(
   storage: PhotoStorage,
   photo: SeedPhoto,
 ): Promise<'processed' | 'skipped'> {
+  if (photo.body.length > MAX_UPLOAD_BYTES) {
+    throw new ImageRejectedError('The photo is larger than 25 MB.');
+  }
   const [row] = await db
-    .select({ status: media.status })
+    .select({ status: media.status, ownerProfileId: media.ownerProfileId })
     .from(media)
     .where(eq(media.id, photo.mediaId));
-  if (row?.status === 'ready') return 'skipped';
+  if (row?.status === 'ready') {
+    // The look moved to another author: its photos go with it.
+    if (row.ownerProfileId !== photo.ownerProfileId) {
+      await db
+        .update(media)
+        .set({ ownerProfileId: photo.ownerProfileId })
+        .where(eq(media.id, photo.mediaId));
+    }
+    return 'skipped';
+  }
 
   const fields = {
     ownerProfileId: photo.ownerProfileId,

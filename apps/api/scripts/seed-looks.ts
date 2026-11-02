@@ -42,7 +42,8 @@ try {
     const seconds = ((performance.now() - started) / 1000).toFixed(1);
     console.log(
       `Done in ${seconds} s: ${String(result.looksCreated)} looks created, ` +
-        `${String(result.looksUpdated)} updated; ${String(result.photosProcessed)} photos processed, ` +
+        `${String(result.looksUpdated)} updated, ${String(result.looksRetired)} retired; ` +
+        `${String(result.photosProcessed)} photos processed, ` +
         `${String(result.photosSkipped)} already there.`,
     );
     if (result.failures.length > 0) {

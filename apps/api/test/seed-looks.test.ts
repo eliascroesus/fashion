@@ -1,7 +1,19 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { asc, eq, inArray, lookMedia, looks, media, profiles, saves } from '@outfitly/db';
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNull,
+  lookMedia,
+  looks,
+  media,
+  profiles,
+  saves,
+} from '@outfitly/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   countFakeLooks,
@@ -10,6 +22,7 @@ import {
   removeFakeLooks,
   seedFakeLooks,
 } from '../scripts/seed/fake-looks.ts';
+import { fixedUuid } from '../scripts/seed/common.ts';
 import {
   readSeedFile,
   SeedFileError,
@@ -99,6 +112,7 @@ describe('pnpm seed:looks', () => {
     expect(result).toEqual({
       looksCreated: 2,
       looksUpdated: 0,
+      looksRetired: 0,
       photosProcessed: 3,
       photosSkipped: 0,
       failures: [],
@@ -183,6 +197,88 @@ describe('pnpm seed:looks', () => {
     ]);
     const failed = await ctx.db.select().from(media).where(eq(media.status, 'failed'));
     expect(failed).toHaveLength(1);
+  });
+});
+
+describe('pnpm seed:looks after editing looks.json', () => {
+  /** Active looks of an author, each as its photo files in order. */
+  async function activeLooks(handle: string, folder: string, files: string[]) {
+    const fileOf = new Map<string, string>();
+    for (const file of files) {
+      const hash = createHash('sha256')
+        .update(await readFile(join(folder, file)))
+        .digest('hex');
+      fileOf.set(fixedUuid('seed-photo', hash), file);
+    }
+    const rows = await ctx.db
+      .select({ lookId: looks.id, mediaId: lookMedia.mediaId })
+      .from(looks)
+      .innerJoin(profiles, eq(profiles.id, looks.authorProfileId))
+      .innerJoin(lookMedia, eq(lookMedia.lookId, looks.id))
+      .where(and(eq(profiles.handle, handle), isNull(looks.deletedAt)))
+      .orderBy(asc(lookMedia.position));
+    const grouped = new Map<string, string[]>();
+    for (const r of rows) {
+      grouped.set(r.lookId, [...(grouped.get(r.lookId) ?? []), fileOf.get(r.mediaId) ?? '?']);
+    }
+    return [...grouped.values()].sort();
+  }
+
+  it('keeps every photo in exactly one look when photos are regrouped or the cover changes', async () => {
+    const files = ['a.jpg', 'b.jpg'];
+    const folder = await photoFolder({ 'a.jpg': 11, 'b.jpg': 12 });
+    const run = async (groups: string[][]) => {
+      await writeFile(
+        join(folder, 'looks.json'),
+        JSON.stringify(groups.map((photos) => ({ photos, author: 'seed.regroup' }))),
+      );
+      return seedLooks({ db: ctx.db, storage: ctx.storage, folder });
+    };
+
+    await run([['a.jpg'], ['b.jpg']]);
+    expect(await activeLooks('seed.regroup', folder, files)).toEqual([['a.jpg'], ['b.jpg']]);
+
+    // Grouped into one look: b's single-photo look is retired.
+    expect((await run([['a.jpg', 'b.jpg']])).looksRetired).toBe(1);
+    expect(await activeLooks('seed.regroup', folder, files)).toEqual([['a.jpg', 'b.jpg']]);
+
+    // New cover: the look known by b comes back with both photos, a's is retired.
+    expect((await run([['b.jpg', 'a.jpg']])).looksRetired).toBe(1);
+    expect(await activeLooks('seed.regroup', folder, files)).toEqual([['b.jpg', 'a.jpg']]);
+
+    // Running the same file again changes nothing.
+    expect((await run([['b.jpg', 'a.jpg']])).looksRetired).toBe(0);
+  });
+
+  it("moves a look's photos to its new author", async () => {
+    const folder = await photoFolder({ 'own.jpg': 13 }, [
+      { photos: ['own.jpg'], author: 'seed.first' },
+    ]);
+    await seedLooks({ db: ctx.db, storage: ctx.storage, folder });
+    await writeFile(
+      join(folder, 'looks.json'),
+      JSON.stringify([{ photos: ['own.jpg'], author: 'seed.second' }]),
+    );
+    await seedLooks({ db: ctx.db, storage: ctx.storage, folder });
+
+    const owners = await ctx.db
+      .select({ handle: profiles.handle })
+      .from(media)
+      .innerJoin(profiles, eq(profiles.id, media.ownerProfileId))
+      .where(inArray(profiles.handle, ['seed.first', 'seed.second']));
+    expect(owners).toEqual([{ handle: 'seed.second' }]);
+  });
+
+  it('refuses a photo over 25 MB before uploading it', async () => {
+    const folder = await photoFolder({}, [{ photos: ['huge.jpg'], author: 'seed.huge' }]);
+    await writeFile(join(folder, 'huge.jpg'), Buffer.alloc(26 * 1024 * 1024));
+    const originals = ctx.storage.originals.size;
+    const result = await seedLooks({ db: ctx.db, storage: ctx.storage, folder });
+    expect(result.failures).toEqual([
+      { photo: 'huge.jpg', reason: 'The photo is larger than 25 MB.' },
+    ]);
+    expect(result.looksCreated).toBe(0);
+    expect(ctx.storage.originals.size).toBe(originals);
   });
 });
 
