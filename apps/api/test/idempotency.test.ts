@@ -36,6 +36,15 @@ beforeAll(async () => {
       return reply.status(201).send({ call: calls, amount: request.body.amount });
     },
   );
+  // A write that answers with no body, like unfollow or unsave.
+  app.delete(
+    '/v1/test/counter',
+    { schema: { response: { 204: z.null() } } },
+    async (_request, reply) => {
+      calls += 1;
+      return reply.status(204).send();
+    },
+  );
   await app.ready();
 });
 
@@ -138,6 +147,35 @@ describe('idempotency keys', () => {
     expect(other.statusCode).toBe(201);
     expect(other.headers['idempotent-replayed']).toBeUndefined();
     expect(calls).toBe(2);
+  });
+
+  it('also protect writes that answer with no body (204)', async () => {
+    const key = crypto.randomUUID();
+    const send = async () =>
+      app.inject({
+        method: 'DELETE',
+        url: '/v1/test/counter',
+        headers: {
+          authorization: `Bearer ${await signToken({ sub: USER })}`,
+          'idempotency-key': key,
+        },
+      });
+    const first = await send();
+    const retry = await send();
+    expect([first.statusCode, retry.statusCode]).toEqual([204, 204]);
+    expect(retry.headers['idempotent-replayed']).toBe('true');
+    expect(retry.body).toBe('');
+    expect(calls).toBe(1);
+  });
+
+  it('let unknown routes answer 404 instead of asking for a key', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/nope',
+      headers: { authorization: `Bearer ${await signToken({ sub: USER })}` },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(404);
   });
 
   it('are not needed for reads', async () => {

@@ -19,10 +19,13 @@ const validatorCompiler: FastifySchemaCompiler<z.ZodType> =
     return result.success ? { value: result.data } : { error: result.error };
   };
 
+const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH']);
+
 /**
- * Validates request params, query, headers and body with zod, checks every
- * response against its schema, and refuses to start if a route has no
- * response schema.
+ * Validates request params, query, headers and body with zod and checks every
+ * response against its schema. Refuses to start if a route is missing the
+ * response schema, the body schema of a write, or the params schema of a path
+ * with parameters.
  */
 export function registerZod(app: FastifyInstance): void {
   app.setValidatorCompiler(validatorCompiler);
@@ -32,8 +35,14 @@ export function registerZod(app: FastifyInstance): void {
         JSON.stringify(schema.parse(data)),
   );
   app.addHook('onRoute', (route: RouteOptions) => {
-    if (!route.schema?.response) {
-      throw new Error(`Route ${String(route.method)} ${route.url} has no response schema.`);
+    const name = `${String(route.method)} ${route.url}`;
+    const methods = [route.method].flat();
+    if (!route.schema?.response) throw new Error(`Route ${name} has no response schema.`);
+    if (methods.some((m) => BODY_METHODS.has(m)) && !route.schema.body) {
+      throw new Error(`Route ${name} has no body schema.`);
+    }
+    if (route.url.includes(':') && !route.schema.params) {
+      throw new Error(`Route ${name} has no params schema.`);
     }
   });
 }

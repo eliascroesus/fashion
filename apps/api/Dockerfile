@@ -1,6 +1,6 @@
 # Build from the repo root: docker build -f apps/api/Dockerfile .
 # Node runs the TypeScript sources directly (type stripping), so there is no build step.
-FROM node:22-slim AS base
+FROM node:22.23-slim AS base
 RUN npm install -g pnpm@11.20.0
 WORKDIR /app
 

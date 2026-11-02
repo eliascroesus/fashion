@@ -25,6 +25,7 @@ export async function startJobs(options: JobsOptions): Promise<PgBoss> {
     ssl: options.caCert ? { ca: options.caCert } : undefined,
     schema: 'pgboss',
     application_name: 'outfitly-api-jobs',
+    max: 3,
   });
   boss.on('error', (err) => {
     log.error({ err }, 'job system error');

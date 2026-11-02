@@ -1,5 +1,5 @@
 import type { ApiErrorBody, ApiErrorCode } from '@outfitly/shared';
-import type { FastifyError, FastifyInstance } from 'fastify';
+import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
 /** Throw this from any route or hook to answer with the one error format. */
@@ -32,14 +32,25 @@ function toApiError(error: FastifyError | Error): ApiError {
   }
   const status = 'statusCode' in error ? error.statusCode : undefined;
   if (status === 404) return new ApiError(404, 'not_found', 'Not found.');
+  if (status === 413) return new ApiError(413, 'payload_too_large', 'The request is too large.');
+  if (status === 415) {
+    return new ApiError(415, 'unsupported_media_type', 'Send the request as JSON.');
+  }
   if (status && status >= 400 && status < 500) {
-    // Fastify's own client errors (bad JSON, body too large, wrong content type).
+    // Fastify's other client errors, such as malformed JSON.
     return new ApiError(400, 'validation_failed', error.message);
   }
   return new ApiError(500, 'internal_error', 'Something went wrong on our side.');
 }
 
-export function registerErrorHandlers(app: FastifyInstance): void {
+export function notFoundHandler(request: FastifyRequest, reply: FastifyReply): FastifyReply {
+  const body: ApiErrorBody = {
+    error: { code: 'not_found', message: 'Not found.', requestId: request.id },
+  };
+  return reply.status(404).send(body);
+}
+
+export function registerErrorHandler(app: FastifyInstance): void {
   app.setErrorHandler((error: FastifyError, request, reply) => {
     const apiError = toApiError(error);
     if (apiError.statusCode >= 500) {
@@ -54,12 +65,5 @@ export function registerErrorHandlers(app: FastifyInstance): void {
       },
     };
     return reply.status(apiError.statusCode).send(body);
-  });
-
-  app.setNotFoundHandler((request, reply) => {
-    const body: ApiErrorBody = {
-      error: { code: 'not_found', message: 'Not found.', requestId: request.id },
-    };
-    return reply.status(404).send(body);
   });
 }

@@ -16,7 +16,11 @@ declare module 'fastify' {
 }
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-/** An unfinished claim older than this is treated as a crashed request and can be retried. */
+/**
+ * An unfinished claim older than this is treated as a crashed request and can
+ * be retried, so write handlers must finish well within it; slow work belongs
+ * in a background job.
+ */
 const STALE_AFTER = sql`now() - interval '60 seconds'`;
 
 function requestHash(request: FastifyRequest): string {
@@ -34,7 +38,7 @@ export function registerIdempotency(app: FastifyInstance, { db }: { db: Db }): v
   app.decorateRequest('idempotencyKeyId', null);
 
   app.addHook('preHandler', async (request, reply) => {
-    if (!WRITE_METHODS.has(request.method) || !request.auth) return;
+    if (!WRITE_METHODS.has(request.method) || !request.auth || request.is404) return;
 
     const key = request.headers[IDEMPOTENCY_KEY_HEADER];
     if (typeof key !== 'string' || !IDEMPOTENCY_KEY_PATTERN.test(key)) {
@@ -99,9 +103,9 @@ export function registerIdempotency(app: FastifyInstance, { db }: { db: Db }): v
       void reply.header('retry-after', '1');
       throw new ApiError(409, 'idempotency_in_progress', 'This request is still being processed.');
     }
+    void reply.status(existing.responseStatus).header(IDEMPOTENT_REPLAY_HEADER, 'true');
+    if (existing.responseBody === null) return reply.send();
     return reply
-      .status(existing.responseStatus)
-      .header(IDEMPOTENT_REPLAY_HEADER, 'true')
       .header('content-type', 'application/json; charset=utf-8')
       .send(existing.responseBody);
   });
@@ -111,13 +115,18 @@ export function registerIdempotency(app: FastifyInstance, { db }: { db: Db }): v
     if (!id) return payload;
     request.idempotencyKeyId = null;
 
-    if (reply.statusCode >= 500 || typeof payload !== 'string') {
-      // Nothing worth replaying: free the key so the client can retry.
+    const empty = payload === undefined || payload === null || payload === '';
+    if (reply.statusCode >= 500 || (!empty && typeof payload !== 'string')) {
+      // Our failure, or a stream we can't store: free the key so the client can retry.
       await db.delete(idempotencyKeys).where(eq(idempotencyKeys.id, id));
     } else {
       await db
         .update(idempotencyKeys)
-        .set({ status: 'completed', responseStatus: reply.statusCode, responseBody: payload })
+        .set({
+          status: 'completed',
+          responseStatus: reply.statusCode,
+          responseBody: empty ? null : payload,
+        })
         .where(eq(idempotencyKeys.id, id));
     }
     return payload;

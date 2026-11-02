@@ -4,6 +4,8 @@
 #   DATABASE_URL, DATABASE_CA_CERT, SUPABASE_URL, SENTRY_DSN
 app = "outfitly-api-staging"
 primary_region = "arn"
+# Time to finish requests and running jobs on shutdown (server.ts waits up to 20 s).
+kill_timeout = "30s"
 
 [deploy]
   # Applies database migrations once per deploy, before new machines start.

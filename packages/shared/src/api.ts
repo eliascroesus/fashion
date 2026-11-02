@@ -18,8 +18,11 @@ export const API_ERROR_CODES = [
   'idempotency_key_required',
   'idempotency_key_reused',
   'idempotency_in_progress',
+  'payload_too_large',
+  'unsupported_media_type',
   'rate_limited',
   'internal_error',
+  'service_unavailable',
 ] as const;
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 

@@ -52,10 +52,16 @@ async function verify(request: FastifyRequest, options: AuthOptions): Promise<Au
     const claims = claimsSchema.parse(payload);
     return { userId: claims.sub, isAnonymous: claims.is_anonymous ?? false };
   } catch (error) {
-    if (error instanceof joseErrors.JOSEError || error instanceof z.ZodError) {
-      throw new ApiError(401, 'unauthorized', 'Invalid or expired login.');
+    // Couldn't fetch Supabase's keys: our problem, not a logged-out user.
+    const keysUnavailable =
+      error instanceof joseErrors.JWKSTimeout ||
+      error instanceof joseErrors.JWKSInvalid ||
+      !(error instanceof joseErrors.JOSEError || error instanceof z.ZodError);
+    if (keysUnavailable) {
+      request.log.error({ err: error }, 'could not load Supabase signing keys');
+      throw new ApiError(503, 'service_unavailable', 'Login check is unavailable. Try again.');
     }
-    throw error;
+    throw new ApiError(401, 'unauthorized', 'Invalid or expired login.');
   }
 }
 

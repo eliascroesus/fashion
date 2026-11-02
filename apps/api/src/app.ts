@@ -6,7 +6,7 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastif
 import type { JWTVerifyGetKey } from 'jose';
 import { registerAuth } from './auth.ts';
 import type { Config } from './config.ts';
-import { ApiError, registerErrorHandlers } from './errors.ts';
+import { ApiError, notFoundHandler, registerErrorHandler } from './errors.ts';
 import { registerIdempotency } from './idempotency.ts';
 import { systemRoutes } from './routes/system.ts';
 import { registerZod } from './zod.ts';
@@ -34,7 +34,7 @@ export async function buildApp({ config, db, jwks, logger }: AppDeps): Promise<F
   });
 
   registerZod(app);
-  registerErrorHandlers(app);
+  registerErrorHandler(app);
   app.addHook('onSend', async (request, reply) => {
     void reply.header('x-request-id', request.id);
   });
@@ -50,6 +50,7 @@ export async function buildApp({ config, db, jwks, logger }: AppDeps): Promise<F
     errorResponseBuilder: (_request, context) =>
       new ApiError(429, 'rate_limited', `Too many requests. Try again in ${context.after}.`),
   });
+  app.setNotFoundHandler({ preHandler: app.rateLimit() }, notFoundHandler);
   registerAuth(app, { supabaseUrl: config.SUPABASE_URL, jwks });
   registerIdempotency(app, { db });
 

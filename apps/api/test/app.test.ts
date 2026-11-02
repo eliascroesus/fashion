@@ -1,8 +1,16 @@
 import { apiErrorSchema } from '@outfitly/shared';
 import type { FastifyInstance } from 'fastify';
+import { errors as joseErrors } from 'jose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { buildTestApp, createTestContext, signToken, type TestContext } from './helpers.ts';
+import { buildApp } from '../src/app.ts';
+import {
+  buildTestApp,
+  createTestContext,
+  signToken,
+  testConfig,
+  type TestContext,
+} from './helpers.ts';
 
 let ctx: TestContext;
 let app: FastifyInstance;
@@ -103,6 +111,31 @@ describe('login check', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it('also guards HEAD requests', async () => {
+    const res = await app.inject({ method: 'HEAD', url: '/v1/me' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it.each([
+    ['times out', () => new joseErrors.JWKSTimeout()],
+    ['is unreachable', () => new TypeError('fetch failed')],
+  ])('answers 503, not 401, when Supabase key server %s', async (_label, makeError) => {
+    const broken = await buildApp({
+      config: testConfig(ctx.testDb.url),
+      db: ctx.db,
+      jwks: () => Promise.reject(makeError()),
+      logger: false,
+    });
+    const res = await broken.inject({
+      method: 'GET',
+      url: '/v1/me',
+      headers: { authorization: `Bearer ${await signToken()}` },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(apiErrorSchema.parse(res.json()).error.code).toBe('service_unavailable');
+    await broken.close();
+  });
+
   it('rejects a malformed Authorization header', async () => {
     const res = await app.inject({
       method: 'GET',
@@ -156,6 +189,20 @@ describe('error format', () => {
     expect(apiErrorSchema.parse(res.json()).error.code).toBe('validation_failed');
   });
 
+  it('answers a too-large body with 413 payload_too_large', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/test/echo',
+      headers: {
+        authorization: `Bearer ${await signToken()}`,
+        'idempotency-key': crypto.randomUUID(),
+      },
+      payload: { name: 'x'.repeat(1024 * 1024 + 1), age: 1 },
+    });
+    expect(res.statusCode).toBe(413);
+    expect(apiErrorSchema.parse(res.json()).error.code).toBe('payload_too_large');
+  });
+
   it('hides internal details of unexpected errors behind 500 internal_error', async () => {
     const res = await app.inject({
       method: 'GET',
@@ -179,9 +226,16 @@ describe('error format', () => {
 });
 
 describe('route rules', () => {
-  it('refuses to start with a route that has no response schema', async () => {
+  it('refuse routes without zod schemas for their response, body and params', async () => {
     const strict = await buildTestApp(ctx);
-    expect(() => strict.get('/v1/test/unchecked', () => ({}))).toThrow(/no response schema/);
+    const response = { response: { 200: z.object({}) } };
+    expect(() => strict.get('/v1/test/a', () => ({}))).toThrow(/no response schema/);
+    expect(() => strict.post('/v1/test/b', { schema: response }, () => ({}))).toThrow(
+      /no body schema/,
+    );
+    expect(() => strict.get('/v1/test/c/:id', { schema: response }, () => ({}))).toThrow(
+      /no params schema/,
+    );
     await strict.close();
   });
 });
@@ -198,6 +252,29 @@ describe('rate limiting', () => {
     }
     expect(statuses).toEqual([401, 401, 401, 429]);
     expect(apiErrorSchema.parse(last?.json()).error.code).toBe('rate_limited');
+    await limited.close();
+  });
+
+  it('also limits requests to unknown addresses', async () => {
+    const limited = await buildTestApp(ctx, { RATE_LIMIT_PER_MINUTE: 2 });
+    await limited.ready();
+    const statuses: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      statuses.push((await limited.inject({ method: 'GET', url: '/v1/nope' })).statusCode);
+    }
+    expect(statuses).toEqual([404, 404, 429]);
+    await limited.close();
+  });
+
+  it('counts each phone separately on Fly.io (Fly-Client-IP)', async () => {
+    const limited = await buildTestApp(ctx, { RATE_LIMIT_PER_MINUTE: 1, FLY_APP_NAME: 'x' });
+    await limited.ready();
+    const from = async (ip: string) =>
+      (await limited.inject({ method: 'GET', url: '/v1/me', headers: { 'fly-client-ip': ip } }))
+        .statusCode;
+    expect([await from('1.1.1.1'), await from('1.1.1.1'), await from('2.2.2.2')]).toEqual([
+      401, 429, 401,
+    ]);
     await limited.close();
   });
 });
