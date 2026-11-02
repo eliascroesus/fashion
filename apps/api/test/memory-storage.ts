@@ -39,6 +39,11 @@ export class MemoryStorage implements PhotoStorage {
     return Promise.resolve(body);
   }
 
+  putOriginal(key: string, body: Buffer): Promise<void> {
+    this.originals.set(key, body);
+    return Promise.resolve();
+  }
+
   putPublic(key: string, body: Buffer, contentType: string): Promise<void> {
     this.publicObjects.set(key, { body, contentType });
     return Promise.resolve();

@@ -1,4 +1,17 @@
-import { eq, media, profileMembers, profiles, sql } from '@outfitly/db';
+import {
+  and,
+  boards,
+  eq,
+  follows,
+  isNull,
+  looks,
+  media,
+  profileMembers,
+  profiles,
+  saves,
+  sql,
+  tasteProfiles,
+} from '@outfitly/db';
 import { apiErrorSchema, meSchema, mergeGuestResultSchema } from '@outfitly/shared';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -200,6 +213,97 @@ describe('POST /v1/session/merge-guest (email already had an account)', () => {
       guestAccessToken: guest.token,
     });
     expect(again.json()).toEqual({ merged: false });
+  });
+
+  it("moves saves, boards, follows and taste without duplicates, keeping the account's own", async () => {
+    const guest = await login({ isAnonymous: true });
+    const guestProfile = (await startSession(guest.token)).activeProfileId ?? '';
+    const existing = await login({ email: 'collector@example.com' });
+    const accountProfile = (await startSession(existing.token)).activeProfileId ?? '';
+    const [creator] = await ctx.db
+      .insert(profiles)
+      .values({ handle: `creator.${String(Date.now())}` })
+      .returning({ id: profiles.id });
+    const creatorId = creator?.id ?? '';
+    const lookIds = await ctx.db
+      .insert(looks)
+      .values(
+        ['a', 'b', 'c'].map((x) => ({
+          authorProfileId: creatorId,
+          slug: `merge-${x}-${crypto.randomUUID().slice(0, 8)}`,
+        })),
+      )
+      .returning({ id: looks.id });
+    const [lookA, lookB, lookC] = lookIds.map((l) => l.id) as [string, string, string];
+
+    // Account: saved A; saved B then unsaved it; follows the creator; has a taste profile.
+    await ctx.db.insert(saves).values([
+      { profileId: accountProfile, lookId: lookA },
+      { profileId: accountProfile, lookId: lookB, deletedAt: new Date() },
+    ]);
+    await ctx.db
+      .insert(follows)
+      .values({ followerProfileId: accountProfile, followedProfileId: creatorId });
+    await ctx.db.insert(tasteProfiles).values({ profileId: accountProfile, styles: ['minimal'] });
+    // Guest: saved A, B and C; a board; followed the creator and the account itself; own taste.
+    await ctx.db
+      .insert(saves)
+      .values([lookA, lookB, lookC].map((lookId) => ({ profileId: guestProfile, lookId })));
+    const [board] = await ctx.db
+      .insert(boards)
+      .values({ profileId: guestProfile, name: 'Autumn' })
+      .returning({ id: boards.id });
+    await ctx.db.insert(follows).values([
+      { followerProfileId: guestProfile, followedProfileId: creatorId },
+      { followerProfileId: guestProfile, followedProfileId: accountProfile },
+    ]);
+    await ctx.db.insert(tasteProfiles).values({ profileId: guestProfile, styles: ['street'] });
+
+    const res = await post(existing.token, '/v1/session/merge-guest', {
+      guestAccessToken: guest.token,
+    });
+    expect(res.json()).toEqual({ merged: true });
+
+    const activeSaves = await ctx.db
+      .select({ lookId: saves.lookId })
+      .from(saves)
+      .where(and(eq(saves.profileId, accountProfile), isNull(saves.deletedAt)));
+    expect(activeSaves.map((r) => r.lookId).sort()).toEqual([lookA, lookB, lookC].sort());
+    expect(await ctx.db.$count(saves, eq(saves.profileId, accountProfile))).toBe(3);
+
+    const [movedBoard] = await ctx.db
+      .select()
+      .from(boards)
+      .where(eq(boards.id, board?.id ?? ''));
+    expect(movedBoard?.profileId).toBe(accountProfile);
+
+    const accountFollows = await ctx.db
+      .select({ followed: follows.followedProfileId })
+      .from(follows)
+      .where(eq(follows.followerProfileId, accountProfile));
+    expect(accountFollows).toEqual([{ followed: creatorId }]);
+
+    const [taste] = await ctx.db
+      .select({ styles: tasteProfiles.styles })
+      .from(tasteProfiles)
+      .where(eq(tasteProfiles.profileId, accountProfile));
+    expect(taste?.styles).toEqual(['minimal']);
+  });
+
+  it("gives the account the guest's taste picks when it has none of its own", async () => {
+    const guest = await login({ isAnonymous: true });
+    const guestProfile = (await startSession(guest.token)).activeProfileId ?? '';
+    await ctx.db.insert(tasteProfiles).values({ profileId: guestProfile, brands: ['Arket'] });
+    const existing = await login({ email: 'newbie@example.com' });
+    const accountProfile = (await startSession(existing.token)).activeProfileId ?? '';
+
+    await post(existing.token, '/v1/session/merge-guest', { guestAccessToken: guest.token });
+
+    const [taste] = await ctx.db
+      .select({ brands: tasteProfiles.brands })
+      .from(tasteProfiles)
+      .where(eq(tasteProfiles.profileId, accountProfile));
+    expect(taste?.brands).toEqual(['Arket']);
   });
 
   it('refuses a token that is not a guest', async () => {
