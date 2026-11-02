@@ -3,7 +3,7 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-Phase 1 gate (all six steps built; gate items wait on Elias's accounts and phones). Next: Phase 2, Step 2.1 — Looks in the database + seed loader.
+Phase 1 gate — PRs #1–#6 merged into `main` (2026-11-02, CI green on main). Staging API, Supabase, R2, Sentry, Expo and Google login are live; only "app on both phones with login" is open (no Android phone yet; iPhone needs the Apple Developer membership). The app runs in the iPhone simulator on the Mac meanwhile. Next: Phase 2, Step 2.1 — Looks in the database + seed loader (Elias provides outfit photos).
 
 ## Done
 - Step 1.1 — Project skeleton and safety net (PR #1). Monorepo (pnpm + Turborepo), strict TypeScript, ESLint + Prettier, Vitest, GitHub Actions CI on every pull request. CI green.
@@ -62,6 +62,7 @@ Phase 1 gate (all six steps built; gate items wait on Elias's accounts and phone
 - 18+ only or teens allowed (Step 5.5)
 
 ## Known issues
+- iPhone simulator on the Mac (Xcode 27.2, iOS 27.2 simulator; the Simulator app is now called DeviceHub): `expo run:ios --device <simulator>` mistakes Xcode 27 simulators for physical devices and asks for code signing. Workaround: `cd apps/mobile && APP_VARIANT=development npx expo prebuild -p ios`, then `xcodebuild -workspace ios/OutfitlyDev.xcworkspace -scheme OutfitlyDev -configuration Debug -sdk iphonesimulator -destination id=<udid> -derivedDataPath ios/build build`, `xcrun simctl install <udid> ios/build/Build/Products/Debug-iphonesimulator/OutfitlyDev.app`, `APP_VARIANT=development EXPO_PUBLIC_API_URL=https://outfitly-api-staging.fly.dev npx expo start --dev-client`, and `xcrun simctl openurl <udid> "outfitly-dev://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081"` (tap Open). First JS bundle: 2.8 s.
 - Parked until before launch (domain, email-code login, store polish, privacy, production servers): `docs/BEFORE_LAUNCH.md`.
 - On Supabase, objects created by `supabase_admin` (Supabase's own platform role, not us) in `public` still get default grants for the API roles; we can't change that role's defaults. Our tables are created by `postgres`, and RLS with no policies blocks rows regardless.
 - `pnpm audit`: moderate advisory in esbuild ≤0.24 via drizzle-kit (dev server only, not used) — dev-only, not exploitable here.
@@ -80,6 +81,7 @@ Phase 1 gate (all six steps built; gate items wait on Elias's accounts and phone
 - First EAS Android preview build (free plan): ~40 min in queue + ~15 min building; APK 107 MB (2026-11-02)
 
 ## Later (parked ideas, not in current scope)
+- Metro warns that expo-router 58.0.29's package.json has an invalid configuration (harmless; recheck on the next expo-router update).
 - Staging: try `auto_stop_machines = "suspend"` instead of `"stop"` so a sleeping machine wakes in well under a second instead of ~8 s (nicer for phone testing; same cost).
 - Open the same look after a fresh install (deferred deep link)
 - Relax `globals` back to `^17` once 17.14 is a few days old.
