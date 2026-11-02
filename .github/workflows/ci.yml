@@ -82,7 +82,10 @@ jobs:
       - name: Server starts, answers health, refuses logged-out requests, runs the test job
         run: |
           docker run -d --name api --network host -e DATABASE_URL \
-            -e SUPABASE_URL=https://example.supabase.co outfitly-api
+            -e SUPABASE_URL=https://example.supabase.co \
+            -e R2_ACCOUNT_ID=ci -e R2_ACCESS_KEY_ID=ci -e R2_SECRET_ACCESS_KEY=ci \
+            -e R2_ORIGINALS_BUCKET=ci-originals -e R2_PUBLIC_BUCKET=ci-public \
+            -e MEDIA_PUBLIC_BASE_URL=https://img.example.com outfitly-api
           for i in $(seq 1 30); do curl -sf localhost:8080/v1/health && break; sleep 1; done
           curl -sf localhost:8080/v1/health | grep -q '"status":"ok"'
           test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/v1/me)" = 401

@@ -123,6 +123,8 @@ describe('login check', () => {
     const broken = await buildApp({
       config: testConfig(ctx.testDb.url),
       db: ctx.db,
+      storage: ctx.storage,
+      queue: ctx.queue,
       jwks: () => Promise.reject(makeError()),
       logger: false,
     });

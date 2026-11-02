@@ -8,7 +8,10 @@ import { registerAuth } from './auth.ts';
 import type { Config } from './config.ts';
 import { ApiError, notFoundHandler, registerErrorHandler } from './errors.ts';
 import { registerIdempotency } from './idempotency.ts';
+import type { JobQueue } from './jobs.ts';
+import { mediaRoutes } from './routes/media.ts';
 import { systemRoutes } from './routes/system.ts';
+import type { PhotoStorage } from './storage.ts';
 import { registerZod } from './zod.ts';
 
 export interface AppDeps {
@@ -16,11 +19,14 @@ export interface AppDeps {
   db: Db;
   /** Supabase signing keys; tests pass local ones. */
   jwks: JWTVerifyGetKey;
+  storage: PhotoStorage;
+  queue: JobQueue;
   logger?: FastifyServerOptions['logger'];
 }
 
 /** Builds the API without starting it, so tests can call it in-process. */
-export async function buildApp({ config, db, jwks, logger }: AppDeps): Promise<FastifyInstance> {
+export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
+  const { config, db, jwks, logger } = deps;
   const behindFly = Boolean(config.FLY_APP_NAME);
   const app = Fastify({
     logger: logger ?? {
@@ -57,6 +63,7 @@ export async function buildApp({ config, db, jwks, logger }: AppDeps): Promise<F
   await app.register(
     (v1, _opts, done) => {
       systemRoutes(v1);
+      mediaRoutes(v1, deps);
       done();
     },
     { prefix: API_PREFIX },

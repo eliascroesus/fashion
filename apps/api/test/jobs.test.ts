@@ -1,7 +1,7 @@
 import { idempotencyKeys, sql } from '@outfitly/db';
 import type { PgBoss } from 'pg-boss';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { QUEUES, startJobs } from '../src/jobs.ts';
+import { createJobQueue, QUEUES, startJobs } from '../src/jobs.ts';
 import { createTestContext, type TestContext } from './helpers.ts';
 
 let ctx: TestContext;
@@ -10,16 +10,12 @@ const logged: unknown[] = [];
 const log = {
   info: (obj: unknown) => logged.push(obj),
   error: (obj: unknown) => logged.push(obj),
-} as unknown as Parameters<typeof startJobs>[0]['log'];
+} as unknown as Parameters<typeof startJobs>[1]['log'];
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  boss = await startJobs({
-    databaseUrl: ctx.testDb.url,
-    db: ctx.db,
-    log,
-    pollingIntervalSeconds: 0.5,
-  });
+  boss = createJobQueue(ctx.testDb.url);
+  await startJobs(boss, { db: ctx.db, storage: ctx.storage, log, pollingIntervalSeconds: 0.5 });
 });
 
 afterAll(async () => {

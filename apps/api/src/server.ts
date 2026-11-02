@@ -1,18 +1,22 @@
 import { createDb } from '@outfitly/db';
 import { buildApp } from './app.ts';
 import { supabaseJwks } from './auth.ts';
-import { loadConfig } from './config.ts';
-import { QUEUES, startJobs } from './jobs.ts';
+import { loadConfig, r2Config } from './config.ts';
+import { createJobQueue, QUEUES, startJobs } from './jobs.ts';
+import { R2Storage } from './storage.ts';
 
 const config = loadConfig();
 const db = createDb(config.DATABASE_URL, { caCert: config.DATABASE_CA_CERT });
-const app = await buildApp({ config, db, jwks: supabaseJwks(config.SUPABASE_URL) });
-const boss = await startJobs({
-  databaseUrl: config.DATABASE_URL,
-  caCert: config.DATABASE_CA_CERT,
+const storage = new R2Storage(r2Config(config));
+const boss = createJobQueue(config.DATABASE_URL, config.DATABASE_CA_CERT);
+const app = await buildApp({
+  config,
   db,
-  log: app.log,
+  jwks: supabaseJwks(config.SUPABASE_URL),
+  storage,
+  queue: boss,
 });
+await startJobs(boss, { db, storage, log: app.log });
 await boss.send(QUEUES.ping, { reason: 'startup' });
 await app.listen({ host: config.HOST, port: config.PORT });
 

@@ -14,7 +14,8 @@
     "db:generate": "pnpm --filter @outfitly/db generate",
     "db:migrate": "pnpm --filter @outfitly/db migrate",
     "db:seed": "pnpm --filter @outfitly/db seed",
-    "dev:api": "pnpm --filter @outfitly/api dev"
+    "dev:api": "pnpm --filter @outfitly/api dev",
+    "media:try": "pnpm --filter @outfitly/api try-upload"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
