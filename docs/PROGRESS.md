@@ -45,13 +45,13 @@ Phase 1 gate (all six steps built; gate items wait on Elias's accounts and phone
 - **A real iPhone photo** (the R2 check used the generated 12 MP test HEIC) (taken somewhere neutral, location on) to add as a test file, so tests use a true iPhone capture.
 - **Expo / EAS (Step 1.5):** create a free Expo account, then (or let Claude, with an Expo access token): `cd apps/mobile && npx eas-cli@latest login && npx eas-cli init` (prints the project ID — Claude will put it and the owner into `app.config.ts`), `npx eas-cli device:create` to register your iPhone (needed for internal iOS builds; needs the Apple Developer account), then `npx eas-cli build --profile development --platform all` and install from the links on both phones. Run the Maestro tab test (`apps/mobile/.maestro/tabs.yaml`) on a preview build.
 - **Sentry for the app:** create a Sentry project "outfitly-app" (EU), share the DSN, and add a Sentry auth token as an EAS secret (`SENTRY_AUTH_TOKEN`) so crash reports point at real code lines. Builds work without it.
-- **Supabase login settings (Step 1.6)**, in the Supabase dashboard → Authentication:
+- **Supabase login settings (Step 1.6)**, in the Supabase dashboard → Authentication. Done 2026-11-02: anonymous sign-ins on; CAPTCHA (Turnstile, widget hostname `outfitly-api-staging.fly.dev`, site key in `apps/mobile/.env`) on and enforced (a guest sign-up without a token gets 400 `captcha_failed`). Still to confirm/do:
   - Sign In / Providers: turn on **Anonymous sign-ins** and **Allow manual linking**; Email provider on with **Email OTP** (length 6).
   - Attack Protection: **CAPTCHA** on, provider **Turnstile**, paste the Turnstile **secret**. In Cloudflare, make the Turnstile widget **Invisible** (or Managed) and allow the hostname `outfitly.com` (or your domain; also set `EXPO_PUBLIC_TURNSTILE_ORIGIN`).
   - Apple provider: add the app ids `com.outfitly.app` and `com.outfitly.app.dev` as client IDs (needs the Apple Developer account: enable "Sign in with Apple" for both app ids).
   - Google provider: create a Google Cloud OAuth client (Web), paste its Client ID and Secret.
   - URL Configuration → Redirect URLs: add `outfitly://auth-callback` and `outfitly-dev://auth-callback`.
-  - Email Templates: "Magic Link", "Confirm signup" and "Change Email Address" must show the code `{{ .Token }}` (otherwise people get a link instead of a code).
+  - Email Templates: "Magic Link", "Confirm signup" and "Change Email Address" must show the code `{{ .Token }}` (otherwise people get a link instead of a code). Supabase only allows editing templates once custom SMTP is set up, so **email-code login waits for a domain + an email provider**; test login with Apple / Google until then.
 - **Email sending (decision, Step 1.6):** Supabase's built-in email only reaches the project's team members and a few per hour. Real users need an email provider (SMTP), e.g. Resend or Postmark (free tiers exist). This is a new service — your OK needed before launch; fine to wait until testers.
 - **OK for login libraries (Step 1.6):** `@supabase/supabase-js` (Supabase login, in the stack), `expo-apple-authentication` (native Apple sign-in), `react-native-webview` + Cloudflare Turnstile (free CAPTCHA that Supabase requires for guest sign-ins).
 - **OK for app libraries (Step 1.5), all free/open source and standard in Expo apps:** `i18next` + `react-i18next` + `expo-localization` (translations), `expo-crypto` (unique keys), `@tanstack/react-query-persist-client` + `@tanstack/query-async-storage-persister` (cache on the phone), `react-native-nitro-modules` (needed by MMKV), `expo-dev-client` (development builds), `@expo/vector-icons` (tab icons on Android), `eslint-plugin-react-hooks` (lint), and allowing `@sentry/cli`'s install step (it downloads the Sentry upload tool).
@@ -68,6 +68,7 @@ Phase 1 gate (all six steps built; gate items wait on Elias's accounts and phone
 - 18+ only or teens allowed (Step 5.5)
 
 ## Known issues
+- Email-code login can't work yet: without custom SMTP Supabase sends its default emails (a link, no code) and won't let us edit them. The app still shows the email option; hide it or set up SMTP before testers (needs a domain).
 - `main` has no branch protection yet, so a PR with a red check could still be merged (ask Elias to require the "Typecheck, lint, test" check).
 - On Supabase, objects created by `supabase_admin` (Supabase's own platform role, not us) in `public` still get default grants for the API roles; we can't change that role's defaults. Our tables are created by `postgres`, and RLS with no policies blocks rows regardless.
 - `pnpm audit`: moderate advisory in esbuild ≤0.24 via drizzle-kit (dev server only, not used) — dev-only, not exploitable here.
