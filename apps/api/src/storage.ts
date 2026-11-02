@@ -33,6 +33,8 @@ export interface PhotoStorage {
   originalSize(key: string): Promise<number | null>;
   /** Downloads an original, refusing (before downloading) anything over `maxBytes`. */
   getOriginal(key: string, maxBytes: number): Promise<Buffer>;
+  /** Stores an original from the server side (seed scripts); the app uploads with a link instead. */
+  putOriginal(key: string, body: Buffer, contentType: string): Promise<void>;
   putPublic(key: string, body: Buffer, contentType: string): Promise<void>;
   publicUrl(key: string): string;
 }
@@ -124,6 +126,17 @@ export class R2Storage implements PhotoStorage {
       throw new OriginalTooLargeError();
     }
     return Buffer.from(await object.Body.transformToByteArray());
+  }
+
+  async putOriginal(key: string, body: Buffer, contentType: string): Promise<void> {
+    await this.#s3.send(
+      new PutObjectCommand({
+        Bucket: this.#config.originalsBucket,
+        Key: key,
+        Body: body,
+        ContentType: contentType,
+      }),
+    );
   }
 
   async putPublic(key: string, body: Buffer, contentType: string): Promise<void> {

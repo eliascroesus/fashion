@@ -14,6 +14,8 @@
     "db:generate": "pnpm --filter @outfitly/db generate",
     "db:migrate": "pnpm --filter @outfitly/db migrate",
     "db:seed": "pnpm --filter @outfitly/db seed",
+    "seed:looks": "pnpm --filter @outfitly/api seed-looks",
+    "seed:fake-looks": "pnpm --filter @outfitly/api fake-looks",
     "dev:api": "pnpm --filter @outfitly/api dev",
     "media:try": "pnpm --filter @outfitly/api try-upload",
     "dev:app": "pnpm --filter @outfitly/mobile start"

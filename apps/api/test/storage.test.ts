@@ -109,6 +109,15 @@ describe('R2 storage', () => {
     expect(IMMUTABLE_CACHE_CONTROL).toBe('public, max-age=31536000, immutable');
   });
 
+  it('stores originals from the server in the private bucket, never cached publicly', async () => {
+    await storage.putOriginal('originals/seed', Buffer.from('jpeg'), 'image/jpeg');
+    const put = requests.findLast((r) => r.method === 'PUT' && r.url.includes('/originals/seed'));
+    expect(put?.url).toContain('/outfitly-originals/originals/seed');
+    expect(put?.headers['content-type']).toBe('image/jpeg');
+    expect(put?.headers['cache-control']).toBeUndefined();
+    expect(await storage.getOriginal('originals/seed', 100)).toEqual(Buffer.from('jpeg'));
+  });
+
   it('builds CDN links on the image domain', () => {
     expect(storage.publicUrl('m/abc/300.webp')).toBe('https://img.example.com/m/abc/300.webp');
   });

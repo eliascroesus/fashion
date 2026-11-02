@@ -1,4 +1,4 @@
-import { idempotencyKeys, sql } from '@outfitly/db';
+import { eventPartitionName, idempotencyKeys, sql } from '@outfitly/db';
 import type { PgBoss } from 'pg-boss';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createJobQueue, QUEUES, startJobs } from '../src/jobs.ts';
@@ -59,6 +59,26 @@ describe('background jobs (pg-boss)', () => {
     const schedules = await boss.getSchedules();
     expect(schedules).toContainEqual(
       expect.objectContaining({ name: QUEUES.idempotencyCleanup, cron: '17 3 * * *' }),
+    );
+  });
+
+  it('make the events partitions for this month and the next two, every day', async () => {
+    const id = await boss.send(QUEUES.eventPartitions, {});
+    if (!id) throw new Error('job was not created');
+    await waitForState(QUEUES.eventPartitions, id, 'completed');
+    const now = new Date();
+    const expected = [0, 1, 2].map((i) =>
+      eventPartitionName(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + i, 1))),
+    );
+    const { rows } = await ctx.db.execute<{ name: string }>(
+      sql`SELECT inhrelid::regclass::text AS name FROM pg_inherits
+           WHERE inhparent = 'public.events'::regclass ORDER BY 1`,
+    );
+    expect(rows.map((r) => r.name)).toEqual(['events_default', ...expected].sort());
+
+    const schedules = await boss.getSchedules();
+    expect(schedules).toContainEqual(
+      expect.objectContaining({ name: QUEUES.eventPartitions, cron: '7 2 * * *' }),
     );
   });
 

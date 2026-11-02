@@ -1,4 +1,4 @@
-import { type Db, idempotencyKeys, lt, sql } from '@outfitly/db';
+import { type Db, ensureEventPartitions, idempotencyKeys, lt, sql } from '@outfitly/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { PgBoss } from 'pg-boss';
 import { ImageRejectedError } from './media/image.ts';
@@ -9,6 +9,8 @@ export const QUEUES = {
   /** Does nothing but log; proves the job system works end to end. */
   ping: 'system-ping',
   idempotencyCleanup: 'idempotency-cleanup',
+  /** Makes the `events` partitions for this month and the next two. */
+  eventPartitions: 'event-partitions',
   /** Makes the public sizes of one uploaded photo. */
   mediaProcess: 'media-process',
   /** Photos whose processing ran out of retries (or crashed); marks them failed. */
@@ -68,6 +70,15 @@ export async function startJobs(boss: PgBoss, options: WorkerDeps): Promise<void
     return { deleted: deleted.length };
   });
   await boss.schedule(QUEUES.idempotencyCleanup, '17 3 * * *');
+
+  await boss.createQueue(QUEUES.eventPartitions);
+  await boss.work(QUEUES.eventPartitions, workOptions, async () => {
+    const created = await ensureEventPartitions(db);
+    if (created.length > 0) log.info({ created }, 'event partitions created');
+    return { created };
+  });
+  // Also sent at every startup: a sleeping staging machine misses the daily run.
+  await boss.schedule(QUEUES.eventPartitions, '7 2 * * *');
 
   await boss.createQueue(QUEUES.mediaProcessFailed);
   await boss.work<{ mediaId: string }>(QUEUES.mediaProcessFailed, workOptions, async (jobs) => {

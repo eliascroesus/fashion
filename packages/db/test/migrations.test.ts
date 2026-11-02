@@ -6,11 +6,22 @@ import { seed } from '../src/seed.ts';
 import { createTestDatabase, type TestDatabase, withDb } from './test-database.ts';
 
 const EXPECTED_TABLES = [
+  'board_items',
+  'boards',
+  'events',
+  'events_default',
   'feature_flags',
+  'follows',
   'idempotency_keys',
+  'look_media',
+  'looks',
   'media',
   'profile_members',
   'profiles',
+  'saves',
+  'seen',
+  'swipes',
+  'taste_profiles',
 ];
 /** Supabase's API roles: public app key, logged-in users, secret key. */
 const API_ROLES = ['anon', 'authenticated', 'service_role'];
