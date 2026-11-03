@@ -169,4 +169,31 @@ describe('API client', () => {
     expect(headersOf(calls[0]?.init ?? {})['idempotency-key']).toBe('batch-key-1234');
     expect(JSON.parse(calls[0]?.init.body as string)).toEqual(batch);
   });
+
+  it('stops a request the caller cancels', async () => {
+    // A long timeout, so only the caller's cancel can end the request.
+    const api = createApiClient({
+      baseUrl: 'https://api.test',
+      getAccessToken: () => Promise.resolve(null),
+      newIdempotencyKey: () => 'key-abcdefgh',
+      fetch: ((_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            reject(new Error('aborted'));
+          });
+        })) as unknown as typeof fetch,
+      timeoutMs: 60_000,
+    });
+    const before = new AbortController();
+    before.abort();
+    await expect(api.feed.forYou(undefined, before.signal)).rejects.toMatchObject({
+      code: 'network_error',
+    });
+
+    const during = new AbortController();
+    const pending = api.feed.forYou(undefined, during.signal);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    during.abort();
+    await expect(pending).rejects.toMatchObject({ code: 'network_error' });
+  });
 });

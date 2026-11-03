@@ -5,6 +5,9 @@ import { recordEvents } from '../events.ts';
 import { findActiveProfile } from '../profiles.ts';
 import type { ZodTypeProvider } from '../zod.ts';
 
+/** Batches per minute per IP. */
+export const EVENTS_PER_MINUTE = { loggedIn: 60, loggedOut: 20 } as const;
+
 /** What the app saw and did (impressions so far), sent in batches. */
 export function eventsRoutes(app: FastifyInstance, { db }: { db: Db }): void {
   const routes = app.withTypeProvider<ZodTypeProvider>();
@@ -14,7 +17,18 @@ export function eventsRoutes(app: FastifyInstance, { db }: { db: Db }): void {
     {
       // Logged-out visitors browse too. Each event carries its own id, so a resent
       // batch is skipped by the database without an Idempotency-Key row per batch.
-      config: { public: true, dedupedByIds: true, rateLimit: { max: 60, timeWindow: '1 minute' } },
+      config: {
+        public: true,
+        dedupedByIds: true,
+        // After the login check (preValidation), so logged-out callers get the lower limit.
+        // The app sends a batch every 10 s at most while scrolling.
+        rateLimit: {
+          hook: 'preValidation',
+          max: (request) =>
+            request.auth ? EVENTS_PER_MINUTE.loggedIn : EVENTS_PER_MINUTE.loggedOut,
+          timeWindow: '1 minute',
+        },
+      },
       bodyLimit: 64 * 1024,
       schema: { body: eventBatchSchema, response: { 200: eventBatchResultSchema } },
     },

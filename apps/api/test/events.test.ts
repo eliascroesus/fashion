@@ -9,6 +9,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { deleteOldSeen } from '../src/events.ts';
+import { EVENTS_PER_MINUTE } from '../src/routes/events.ts';
 import { createAuthor, createLogin, createLooks } from './feed-fixtures.ts';
 import { buildTestApp, createTestContext, type TestContext } from './helpers.ts';
 
@@ -128,6 +129,16 @@ describe('POST /v1/events', () => {
     expect(await stored(future.id)).toHaveLength(0);
   });
 
+  it('skips looks that are not public', async () => {
+    const author = await createAuthor(ctx.db, 'poster.hidden');
+    const [hidden, draft] = await createLooks(ctx.db, [
+      { authorId: author, status: 'hidden' },
+      { authorId: author, status: 'draft' },
+    ]);
+    const res = await send(batch([impression(hidden ?? ''), impression(draft ?? '')]));
+    expect(res.json()).toEqual({ accepted: 0 });
+  });
+
   it(`refuses more than ${String(MAX_EVENT_BATCH)} events and unknown event names`, async () => {
     const tooMany = Array.from({ length: MAX_EVENT_BATCH + 1 }, () => impression(look(0)));
     expect((await send(batch(tooMany))).statusCode).toBe(400);
@@ -212,6 +223,32 @@ describe('POST /v1/events', () => {
       'x-profile-id': other.profileId,
     });
     expect(res.statusCode).toBe(403);
+  });
+});
+
+describe('POST /v1/events rate limit', () => {
+  it(`allows ${String(EVENTS_PER_MINUTE.loggedOut)} batches a minute logged out, more logged in`, async () => {
+    const limited = await buildTestApp(ctx, { RATE_LIMIT_PER_MINUTE: 1000 });
+    await limited.ready();
+    try {
+      const post = (headers: Record<string, string>) =>
+        limited.inject({
+          method: 'POST',
+          url: '/v1/events',
+          headers: { 'x-forwarded-for': '203.0.113.9', ...headers },
+          payload: batch([impression(look(9))]),
+        });
+      const codes: number[] = [];
+      for (let i = 0; i <= EVENTS_PER_MINUTE.loggedOut; i++)
+        codes.push((await post({})).statusCode);
+      expect(codes.slice(0, -1).every((c) => c === 200)).toBe(true);
+      expect(codes.at(-1)).toBe(429);
+
+      const { headers } = await loggedIn();
+      expect((await post(headers)).statusCode).toBe(200);
+    } finally {
+      await limited.close();
+    }
   });
 });
 

@@ -1,30 +1,29 @@
 import type { FeedPage } from '@outfitly/shared';
-import { type InfiniteData, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useMe } from '../auth/store';
+import { replaceFeed } from './cache';
 import { type FeedKind, feedQueryKey } from './keys';
 import { dedupeCards } from './layout';
-
-type FeedData = InfiniteData<FeedPage, string | null>;
 
 /** Cached feeds older than this were restored from the phone at a cold start. */
 const LAUNCHED_AT = Date.now();
 /** Feeds already refreshed once after the cold start. */
 const refreshedThisLaunch = new Set<string>();
 
-function fetchPage(kind: FeedKind, cursor: string | null): Promise<FeedPage> {
+function fetchPage(kind: FeedKind, cursor: string | null, signal?: AbortSignal): Promise<FeedPage> {
   const page = cursor ?? undefined;
-  return kind === 'for-you' ? api.feed.forYou(page) : api.feed.following(page);
+  return kind === 'for-you' ? api.feed.forYou(page, signal) : api.feed.following(page, signal);
 }
 
 interface Options {
   enabled: boolean;
   /**
-   * Whether a fresh list may replace the one on screen without the user
-   * losing their place. Keep it stable (useCallback reading refs).
+   * Whether the cold-start refresh may swap in a fresh list: only while the
+   * user hasn't touched the stored one. Keep it stable (useCallback reading refs).
    */
-  isNearTop: () => boolean;
+  canReplace: () => boolean;
 }
 
 /**
@@ -32,19 +31,20 @@ interface Options {
  * demand, and pull to refresh. At a cold start the feed stored on the phone
  * shows at once; a fresh one replaces it if the user hasn't started scrolling.
  */
-export function useFeed(kind: FeedKind, { enabled, isNearTop }: Options) {
+export function useFeed(kind: FeedKind, { enabled, canReplace }: Options) {
   const queryClient = useQueryClient();
   const profileId = useMe()?.activeProfileId ?? null;
   const queryKey = useMemo(() => feedQueryKey(kind, profileId), [kind, profileId]);
 
   const query = useInfiniteQuery({
     queryKey,
-    queryFn: ({ pageParam }) => fetchPage(kind, pageParam),
+    queryFn: ({ pageParam, signal }) => fetchPage(kind, pageParam, signal),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
     enabled,
-    // Never refetched automatically: that would mix a new page 1 with the old
-    // list's cursors. A new list only comes from replaceWithNewList.
+    // Never refetched automatically: a refetch reloads every page already
+    // scrolled as a new list (a request per page, different looks under the
+    // user's thumb). A new list only comes from replaceWithNewList, page 1 only.
     staleTime: Infinity,
     refetchOnMount: false,
     refetchOnReconnect: false,
@@ -55,14 +55,12 @@ export function useFeed(kind: FeedKind, { enabled, isNearTop }: Options) {
 
   /** Fetches a new list's first page and shows it instead of the current list. */
   const replaceWithNewList = useCallback(
-    async (onlyNearTop: boolean): Promise<void> => {
+    async (onlyIfUntouched: boolean): Promise<void> => {
       const first = await fetchPage(kind, null);
-      if (onlyNearTop && !isNearTop()) return;
-      // A next page still loading belongs to the old list.
-      await queryClient.cancelQueries({ queryKey });
-      queryClient.setQueryData<FeedData>(queryKey, { pages: [first], pageParams: [null] });
+      if (onlyIfUntouched && !canReplace()) return;
+      await replaceFeed(queryClient, queryKey, first);
     },
-    [kind, queryClient, queryKey, isNearTop],
+    [kind, queryClient, queryKey, canReplace],
   );
 
   useEffect(() => {

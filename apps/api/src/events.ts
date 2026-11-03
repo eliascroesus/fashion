@@ -10,7 +10,7 @@ import { FEED_RULES } from './feed/arrange.ts';
 export const EVENT_TIME_WINDOW = { pastDays: 7, futureMinutes: 10 } as const;
 
 /**
- * Stores a batch from the app: only looks that exist, each event id once.
+ * Stores a batch from the app: only published looks, each event id once.
  * A logged-in profile's impressions also go into `seen`, so For You leaves
  * those looks out for a week. Returns how many events were new.
  */
@@ -36,6 +36,8 @@ export async function recordEvents(
         INSERT INTO seen (profile_id, look_id, last_seen_at)
         SELECT ${profileId}::uuid, look_id, max(occurred_at) FROM valid
          WHERE name = 'impression' GROUP BY look_id
+         -- Same row order for every batch, so two phones of one profile can't deadlock.
+         ORDER BY look_id
         ON CONFLICT (profile_id, look_id) DO UPDATE
           SET last_seen_at = GREATEST(seen.last_seen_at, EXCLUDED.last_seen_at), updated_at = now())`
     : sql``;
@@ -47,7 +49,8 @@ export async function recordEvents(
       SELECT * FROM incoming e
        WHERE e.occurred_at > now() - make_interval(days => ${pastDays})
          AND e.occurred_at < now() + make_interval(mins => ${futureMinutes})
-         AND EXISTS (SELECT 1 FROM looks l WHERE l.id = e.look_id)
+         AND EXISTS (SELECT 1 FROM looks l
+                      WHERE l.id = e.look_id AND l.status = 'published' AND l.deleted_at IS NULL)
     ), inserted AS (
       INSERT INTO events (id, created_at, name, profile_id, session_id, look_id, position, source, platform)
       SELECT id, occurred_at, name, ${profileId}::uuid, ${batch.sessionId}::uuid, look_id, position,

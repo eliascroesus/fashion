@@ -7,7 +7,7 @@ import {
 } from '@shopify/flash-list';
 import { Image } from 'expo-image';
 import { router, useIsFocused } from 'expo-router';
-import { type ReactElement, useCallback, useEffect, useMemo, useRef } from 'react';
+import { type ReactElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ActivityIndicator,
@@ -44,8 +44,11 @@ const SOURCE: Record<FeedKind, EventSource> = {
 
 const METRICS: GridMetrics = { columns: grid.columns, gap: grid.gap, inset: grid.inset };
 
-/** "On screen" = at least half of the card visible (checked 100 ms after scrolling settles there). */
-const VIEWABILITY = { itemVisiblePercentThreshold: 50, minimumViewTime: 100 };
+/**
+ * "On screen" = at least half of the card visible, reported as soon as it
+ * changes (the impression clock and prefetching run off it; the handler is cheap).
+ */
+const VIEWABILITY = { itemVisiblePercentThreshold: 50, minimumViewTime: 0 };
 
 interface FeedGridProps {
   kind: FeedKind;
@@ -70,14 +73,16 @@ export function FeedGrid({ kind, active, empty, testID }: FeedGridProps) {
   const appActive = useAppActive();
   const listRef = useRef<FlashListRef<FeedCard>>(null);
   const offset = useRef(0);
+  /** The user has dragged this list since it opened. */
+  const touched = useRef(false);
   const viewport = useRef(screenHeight);
   const furthestVisible = useRef(-1);
   const prefetched = useRef(new Set<string>());
 
   const width = cardWidth(screenWidth, METRICS);
   const widthPx = PixelRatio.getPixelSizeForLayoutSize(width);
-  const isNearTop = useCallback(() => offset.current < viewport.current, []);
-  const feed = useFeed(kind, { enabled: true, isNearTop });
+  const canReplace = useCallback(() => !touched.current, []);
+  const feed = useFeed(kind, { enabled: true, canReplace });
   const { cards, loadMore, firstPage } = feed;
 
   const tracker = useMemo(
@@ -97,12 +102,13 @@ export function FeedGrid({ kind, active, empty, testID }: FeedGridProps) {
     tracker.setActive(active && focused && appActive);
   }, [tracker, active, focused, appActive]);
 
-  // A new list replaced the old one: back to the top, and every card may count again.
-  useEffect(() => {
+  // A new list replaced the old one: every card may count again, and the list
+  // starts at the top (before paint, so the new cards never show at the old place).
+  useLayoutEffect(() => {
     if (!firstPage) return;
     tracker.reset();
     furthestVisible.current = -1;
-    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    if (offset.current > 0) listRef.current?.scrollToOffset({ offset: 0, animated: false });
     listRef.current?.recomputeViewableItems();
   }, [tracker, firstPage]);
 
@@ -210,6 +216,9 @@ export function FeedGrid({ kind, active, empty, testID }: FeedGridProps) {
         offset.current = e.nativeEvent.contentOffset.y;
       }}
       scrollEventThrottle={16}
+      onScrollBeginDrag={() => {
+        touched.current = true;
+      }}
       onLayout={(e: LayoutChangeEvent) => {
         viewport.current = e.nativeEvent.layout.height;
       }}

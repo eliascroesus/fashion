@@ -15,7 +15,8 @@ export const POPULARITY = {
 
 /**
  * Recomputes `looks.popularity_score` = saves per view, with recent activity
- * weighing more: (decayed saves + 1) / (decayed impressions + 20). Only rows
+ * weighing more: (decayed saves + 1) / (decayed viewers + 20), where a viewer
+ * counts once per look per day. Only rows
  * whose rounded score changed are written, and `updated_at` is left alone:
  * the score is derived, `updated_at` tracks edits. Returns rows changed.
  */
@@ -31,10 +32,14 @@ export async function recomputePopularity(db: Db): Promise<number> {
        WHERE deleted_at IS NULL AND created_at > now() - make_interval(days => ${windowDays})
        GROUP BY look_id
     ), viewed AS (
-      SELECT look_id, sum(${weight('created_at')}) AS w
-        FROM events
-       WHERE name = 'impression' AND look_id IS NOT NULL
-         AND created_at > now() - make_interval(days => ${windowDays})
+      -- Viewers, not impressions: one per look per person (profile, or app install
+      -- when logged out) per day, so reopening the app or faking repeats adds nothing.
+      SELECT look_id, sum(${weight('first_seen_at')}) AS w
+        FROM (SELECT look_id, min(created_at) AS first_seen_at
+                FROM events
+               WHERE name = 'impression' AND look_id IS NOT NULL
+                 AND created_at > now() - make_interval(days => ${windowDays})
+               GROUP BY look_id, coalesce(profile_id, session_id, id), date_trunc('day', created_at)) v
        GROUP BY look_id
     ), scored AS (
       SELECT l.id,

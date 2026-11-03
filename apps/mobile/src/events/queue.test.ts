@@ -34,6 +34,7 @@ function deps(initial: ClientEvent[] = []): EventQueueDeps {
       return fail ? Promise.reject(fail) : Promise.resolve();
     },
     newKey: () => `key-${String(++k)}`,
+    random: () => 0,
     timers: {
       set: (fn, ms) => setTimeout(fn, ms),
       clear: (h) => {
@@ -93,6 +94,41 @@ describe('EventQueue', () => {
     await vi.advanceTimersByTimeAsync(QUEUE_RULES.retryAfterMs);
     expect(sent).toHaveLength(2);
     expect(sent[1]?.ids).toEqual(sent[0]?.ids);
+    expect(queue.size).toBe(0);
+  });
+
+  it('sends nothing more while waiting to retry, however many events arrive', async () => {
+    const queue = new EventQueue(deps());
+    fail = new ApiRequestError(503, 'service_unavailable', 'down');
+    for (let i = 0; i < QUEUE_RULES.batchSize; i++) queue.add(event());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent).toHaveLength(1);
+    // One impression a second for the whole wait: still no new request.
+    for (let s = 0; s < 29; s++) {
+      queue.add(event());
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+    expect(sent).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sent).toHaveLength(2);
+  });
+
+  it('waits twice as long after each failure in a row, up to 15 minutes', async () => {
+    const queue = new EventQueue(deps());
+    fail = new ApiRequestError(0, 'network_error', 'offline');
+    queue.add(event());
+    await queue.flush();
+    const times: number[] = [];
+    let last = Date.now();
+    for (let i = 0; i < 7; i++) {
+      const before = sent.length;
+      while (sent.length === before) await vi.advanceTimersByTimeAsync(1000);
+      times.push((Date.now() - last) / 1000);
+      last = Date.now();
+    }
+    expect(times).toEqual([30, 60, 120, 240, 480, 900, 900]);
+    fail = undefined;
+    await vi.advanceTimersByTimeAsync(900_000);
     expect(queue.size).toBe(0);
   });
 

@@ -65,6 +65,7 @@ export class ImpressionTracker {
 
   dispose(): void {
     for (const entry of this.visible.values()) this.stop(entry);
+    this.visible.clear();
   }
 
   private start(lookId: string): void {
