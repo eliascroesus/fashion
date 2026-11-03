@@ -40,6 +40,8 @@ export interface FlowDeps {
   pendingMerge: { get: () => string | null; set: (token: string | null) => void };
   /** Before a guest's content moves: lets a save already on its way as the guest land first. */
   beforeMerge?: () => Promise<void>;
+  /** A guest's content moved into the account: lists loaded before (e.g. Saves) are out of date. */
+  onMerged?: () => void;
 }
 
 export class AuthFlowError extends Error {
@@ -111,6 +113,7 @@ export function createAuthFlows(deps: FlowDeps) {
     try {
       await api.mergeGuest(token);
       deps.pendingMerge.set(null);
+      deps.onMerged?.();
     } catch (error) {
       const status = (error as { status?: unknown }).status;
       if (typeof status === 'number' && status >= 400 && status < 500) deps.pendingMerge.set(null);

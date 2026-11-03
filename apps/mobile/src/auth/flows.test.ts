@@ -342,8 +342,12 @@ describe('no guest session in the middle of a sign-in', () => {
       order.push('merge');
       return Promise.resolve({});
     });
+    deps.onMerged = () => {
+      order.push('lists refreshed');
+    };
     await createAuthFlows(deps).signInWithPassword('test@example.com', 'pw');
-    expect(order).toEqual(['saves settled', 'merge']);
+    // Lists the account loaded at sign-in (before the move) are loaded again after it.
+    expect(order).toEqual(['saves settled', 'merge', 'lists refreshed']);
   });
 
   it('moves a guest made while the email code was being typed', async () => {

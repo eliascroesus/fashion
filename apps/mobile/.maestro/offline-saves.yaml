@@ -23,9 +23,12 @@ env:
     visible:
       id: feed-card
     timeout: 20000
+# A card below the For You / Following switch (the grid keeps cards ready above the screen too).
 - tapOn:
     id: feed-card-save
     index: 0
+    below:
+      id: feed-switch-for-you
 - extendedWaitUntil:
     visible:
       id: sign-up-sheet
@@ -42,9 +45,13 @@ env:
 - tapOn:
     id: feed-card-save
     index: 1
+    below:
+      id: feed-switch-for-you
 - tapOn:
     id: feed-card-save
     index: 2
+    below:
+      id: feed-switch-for-you
 - tapOn:
     id: tab-saved
 - assertVisible:

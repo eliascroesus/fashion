@@ -109,13 +109,21 @@ export const outbox = new Outbox({
       setSavedInLists(queryClient, action.lookId, false);
     }
   },
+  // Saves and boards loaded while actions were waiting (or dropped) may be off.
   onDrained: () => {
-    // Saves and boards loaded while actions were waiting (or dropped) may be off.
-    for (const root of [SAVES_QUERY_ROOT, BOARDS_QUERY_ROOT, BOARD_LOOKS_QUERY_ROOT]) {
-      void queryClient.invalidateQueries({ queryKey: [root] });
-    }
+    refreshSavedLists();
   },
 });
+
+/**
+ * Loads Saves and boards again (those on screen now, the rest when next
+ * shown): after actions reached the server, or a guest's saves moved to the account.
+ */
+export function refreshSavedLists(): void {
+  for (const root of [SAVES_QUERY_ROOT, BOARDS_QUERY_ROOT, BOARD_LOOKS_QUERY_ROOT]) {
+    void queryClient.invalidateQueries({ queryKey: [root] });
+  }
+}
 
 /**
  * The AuthProvider hands over how to make a guest session (it needs the

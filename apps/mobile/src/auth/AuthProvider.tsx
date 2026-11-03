@@ -5,7 +5,7 @@ import { createContext, type ReactNode, useContext, useEffect, useMemo } from 'r
 import { api } from '../api';
 import { carryOverLoggedOutFeed } from '../feed/cache';
 import { queryClient } from '../lib/query';
-import { forgetLocalSaves, outbox, setGuestSessionStarter } from '../saves';
+import { forgetLocalSaves, outbox, refreshSavedLists, setGuestSessionStarter } from '../saves';
 import { useCaptchaToken } from './captcha';
 import { type AuthFlows, createAuthFlows } from './flows';
 import { getMe, pendingGuestMerge, setMe } from './store';
@@ -47,6 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             pendingMerge: pendingGuestMerge,
             // A save sent as the guest a moment ago lands before the guest's saves move.
             beforeMerge: () => outbox.settled(),
+            onMerged: refreshSavedLists,
           })
         : null,
     [getCaptchaToken],

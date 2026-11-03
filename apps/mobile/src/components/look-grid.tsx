@@ -19,8 +19,6 @@ import { useTranslation } from 'react-i18next';
 import {
   ActivityIndicator,
   type LayoutChangeEvent,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
   PixelRatio,
   RefreshControl,
   StyleSheet,
@@ -98,7 +96,6 @@ export function LookGrid({
   const colors = useColors();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const listRef = useRef<FlashListRef<FeedCard>>(null);
-  const offset = useRef(0);
   const viewport = useRef(screenHeight);
   const furthestVisible = useRef(-1);
   const prefetched = useRef(new Set<string>());
@@ -116,7 +113,8 @@ export function LookGrid({
     if (!resetKey) return;
     reset();
     furthestVisible.current = -1;
-    if (offset.current > 0) listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    // Always: the list may have moved without a scroll event (e.g. while another tab showed).
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
     listRef.current?.recomputeViewableItems();
   }, [resetKey]);
 
@@ -225,10 +223,6 @@ export function LookGrid({
       onViewableItemsChanged={onViewableItemsChanged}
       onEndReached={loadMore}
       onEndReachedThreshold={1}
-      onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
-        offset.current = e.nativeEvent.contentOffset.y;
-      }}
-      scrollEventThrottle={16}
       {...(onScrollBeginDrag ? { onScrollBeginDrag } : {})}
       onLayout={(e: LayoutChangeEvent) => {
         viewport.current = e.nativeEvent.layout.height;

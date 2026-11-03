@@ -10,7 +10,8 @@ appId: ${APP_ID || 'com.outfitly.app'}
 - tapOn:
     id: dev-password
 - inputText: ${TEST_PASSWORD}
-- hideKeyboard
+# No hideKeyboard: with the simulator's hardware keyboard there is none to hide (and it fails).
+# The button sits above where the on-screen keyboard would be.
 - tapOn:
     id: dev-sign-in-submit
 # The CAPTCHA and the sign-in take a few seconds; the sheet closes when done.
@@ -18,3 +19,7 @@ appId: ${APP_ID || 'com.outfitly.app'}
     notVisible:
       id: sign-up-sheet
     timeout: 30000
+# iOS may offer to store the password afterwards; that dialog covers the tabs.
+- tapOn:
+    text: 'Not Now'
+    optional: true
