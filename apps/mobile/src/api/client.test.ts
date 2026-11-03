@@ -139,4 +139,34 @@ describe('API client', () => {
     expect(error).toBeInstanceOf(ApiRequestError);
     expect(error).toMatchObject({ code: 'network_error', status: 0 });
   });
+  it('pages feeds with the cursor in the query string', async () => {
+    const { api, calls } = setup(() => jsonResponse(200, { items: [], nextCursor: null }));
+    await api.feed.forYou();
+    await api.feed.following('a/b+c');
+    expect(calls.map((c) => c.url)).toEqual([
+      'https://api.test/v1/feed/for-you',
+      'https://api.test/v1/feed/following?cursor=a%2Fb%2Bc',
+    ]);
+  });
+
+  it('sends event batches with the key it is given', async () => {
+    const { api, calls } = setup(() => jsonResponse(200, { accepted: 1 }));
+    const batch = {
+      sessionId: MEDIA_ID,
+      platform: 'ios' as const,
+      events: [
+        {
+          id: MEDIA_ID,
+          name: 'impression' as const,
+          lookId: MEDIA_ID,
+          position: 0,
+          source: 'feed_for_you' as const,
+          occurredAt: '2026-11-03T10:00:00.000Z',
+        },
+      ],
+    };
+    expect(await api.events.send(batch, 'batch-key-1234')).toEqual({ accepted: 1 });
+    expect(headersOf(calls[0]?.init ?? {})['idempotency-key']).toBe('batch-key-1234');
+    expect(JSON.parse(calls[0]?.init.body as string)).toEqual(batch);
+  });
 });

@@ -3,6 +3,9 @@ import {
   API_PREFIX,
   type ApiErrorCode,
   type CreateUploadBody,
+  type EventBatch,
+  eventBatchResultSchema,
+  feedPageSchema,
   healthSchema,
   IDEMPOTENCY_KEY_HEADER,
   mediaSchema,
@@ -127,6 +130,11 @@ export function createApiClient(options: ApiClientOptions) {
     return parsed.data;
   }
 
+  const page = (path: string, cursor?: string) =>
+    request('GET', cursor ? `${path}?cursor=${encodeURIComponent(cursor)}` : path, {
+      schema: feedPageSchema,
+    });
+
   return {
     health: () => request('GET', '/health', { schema: healthSchema }),
     me: () => request('GET', '/me', { schema: meSchema }),
@@ -153,6 +161,16 @@ export function createApiClient(options: ApiClientOptions) {
         }),
       get: (mediaId: string) =>
         request('GET', `/media/${encodeURIComponent(mediaId)}`, { schema: mediaSchema }),
+    },
+    feed: {
+      /** Works logged out. Leave out the cursor for a new list (page 1). */
+      forYou: (cursor?: string) => page('/feed/for-you', cursor),
+      following: (cursor?: string) => page('/feed/following', cursor),
+    },
+    events: {
+      /** Resending a batch is safe: the server skips event ids it already has. */
+      send: (batch: EventBatch, idempotencyKey: string) =>
+        request('POST', '/events', { schema: eventBatchResultSchema, body: batch, idempotencyKey }),
     },
   };
 }

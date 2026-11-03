@@ -14,6 +14,14 @@ declare module 'fastify' {
     /** Row this request claimed in `idempotency_keys`; its response gets stored there. */
     idempotencyKeyId: string | null;
   }
+  interface FastifyContextConfig {
+    /**
+     * The route stores client-made ids and skips ones it already has, so a
+     * retry can't duplicate without an `idempotency_keys` row. The header is
+     * still required.
+     */
+    dedupedByIds?: boolean;
+  }
 }
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -52,6 +60,7 @@ export function registerIdempotency(app: FastifyInstance, { db }: { db: Db }): v
         'Writes need an Idempotency-Key header (8–255 letters, digits, - or _).',
       );
     }
+    if (request.routeOptions.config.dedupedByIds) return;
     const { userId } = request.auth;
     const hash = requestHash(request);
     const thisKey = and(eq(idempotencyKeys.userId, userId), eq(idempotencyKeys.key, key));

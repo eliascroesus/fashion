@@ -1,6 +1,7 @@
 import { type Db, ensureEventPartitions, idempotencyKeys, lt, sql } from '@outfitly/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { PgBoss } from 'pg-boss';
+import { deleteOldSeen } from './events.ts';
 import { deleteOldFeedSnapshots, recomputePopularity } from './feed/popularity.ts';
 import { ImageRejectedError } from './media/image.ts';
 import { markMediaFailed, processUploadedMedia } from './media/pipeline.ts';
@@ -20,6 +21,8 @@ export const QUEUES = {
   feedPopularity: 'feed-popularity',
   /** Deletes For You lists older than a day (hourly). */
   feedSnapshotCleanup: 'feed-snapshot-cleanup',
+  /** Deletes "seen" rows older than a week (daily); the feed only looks back 7 days. */
+  seenCleanup: 'seen-cleanup',
 } as const;
 
 /** What routes need to enqueue work. */
@@ -100,6 +103,14 @@ export async function startJobs(boss: PgBoss, options: WorkerDeps): Promise<void
     return { deleted };
   });
   await boss.schedule(QUEUES.feedSnapshotCleanup, '37 * * * *');
+
+  await boss.createQueue(QUEUES.seenCleanup);
+  await boss.work(QUEUES.seenCleanup, workOptions, async () => {
+    const deleted = await deleteOldSeen(db);
+    log.info({ deleted }, 'old seen rows removed');
+    return { deleted };
+  });
+  await boss.schedule(QUEUES.seenCleanup, '47 3 * * *');
 
   await boss.createQueue(QUEUES.mediaProcessFailed);
   await boss.work<{ mediaId: string }>(QUEUES.mediaProcessFailed, workOptions, async (jobs) => {

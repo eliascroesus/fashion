@@ -7,10 +7,6 @@
     "profile": "Profile"
   },
   "screens": {
-    "home": {
-      "title": "Home",
-      "comingSoon": "Your outfit feed will appear here."
-    },
     "search": {
       "title": "Search",
       "comingSoon": "Search for looks, pieces and people."
@@ -27,6 +23,28 @@
       "title": "Profile",
       "comingSoon": "Your profile and settings."
     }
+  },
+  "feed": {
+    "forYou": "For you",
+    "following": "Following",
+    "openLook": "Open look",
+    "save": "Save",
+    "itemCount_one": "{{count}} piece",
+    "itemCount_other": "{{count}} pieces",
+    "emptyTitle": "No looks yet",
+    "empty": "New outfits will show up here soon.",
+    "followingEmptyTitle": "Nothing here yet",
+    "followingEmpty": "Follow people to see their newest looks here.",
+    "followingLoggedOutTitle": "See looks from people you follow",
+    "followingLoggedOut": "Sign in to follow people and see their newest looks here.",
+    "loadFailedTitle": "Couldn't load looks",
+    "loadFailed": "Check your connection and try again.",
+    "loadMoreFailed": "Couldn't load more looks.",
+    "allCaughtUp": "You're all caught up. Pull down for new looks."
+  },
+  "look": {
+    "back": "Back",
+    "notFound": "This look isn't available."
   },
   "errors": {
     "generic": "Something went wrong. Please try again.",

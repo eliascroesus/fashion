@@ -1,0 +1,45 @@
+# Home grid: looks show, fast scrolling keeps loading more, and tapping a card opens the look.
+# Uses ids, so any phone language works. Needs looks in the database the build talks to.
+# Preview build:  maestro test apps/mobile/.maestro/home-grid.yaml
+# A Release build of the development app (no dev menu, so launchApp opens the app itself):
+#                 maestro test -e APP_ID=com.outfitly.app.dev apps/mobile/.maestro/home-grid.yaml
+appId: ${APP_ID || 'com.outfitly.app'}
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: feed-card
+    timeout: 20000
+- assertVisible:
+    id: feed-switch-for-you
+# Fast flings: 10 swipes is well past the first page, so the next pages must load as we go.
+- repeat:
+    times: 10
+    commands:
+      - swipe:
+          start: 50%, 80%
+          end: 50%, 15%
+          duration: 150
+# Let the last fling settle: a tap on a moving list only stops it.
+- waitForAnimationToEnd:
+    timeout: 5000
+- assertVisible:
+    id: feed-card
+# A spot in the left column (clear of the save button). Not `id: feed-card, index: 0`:
+# the list keeps cards ready just off screen, and the first of those may be above the top.
+- tapOn:
+    point: 20%, 45%
+- assertVisible:
+    id: screen-look
+- tapOn:
+    id: look-back
+- assertVisible:
+    id: screen-home
+- tapOn:
+    id: feed-switch-following
+- assertNotVisible:
+    id: feed-for-you
+- tapOn:
+    id: feed-switch-for-you
+- assertVisible:
+    id: feed-for-you
