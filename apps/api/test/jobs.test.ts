@@ -99,6 +99,16 @@ describe('background jobs (pg-boss)', () => {
     );
   });
 
+  it('clear old "seen" rows every day', async () => {
+    const id = await boss.send(QUEUES.seenCleanup, {});
+    if (!id) throw new Error('job was not created');
+    await waitForState(QUEUES.seenCleanup, id, 'completed');
+    const schedules = await boss.getSchedules();
+    expect(schedules).toContainEqual(
+      expect.objectContaining({ name: QUEUES.seenCleanup, cron: '47 3 * * *' }),
+    );
+  });
+
   it('keep their tables away from the public app key', async () => {
     const { rows } = await ctx.db.execute(
       sql`SELECT r AS role, has_schema_privilege(r, 'pgboss', 'USAGE') AS usage

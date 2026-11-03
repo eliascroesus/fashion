@@ -7,10 +7,6 @@
     "profile": "Profil"
   },
   "screens": {
-    "home": {
-      "title": "Hem",
-      "comingSoon": "Ditt flöde med outfits visas här."
-    },
     "search": {
       "title": "Sök",
       "comingSoon": "Sök efter looks, plagg och personer."
@@ -27,6 +23,28 @@
       "title": "Profil",
       "comingSoon": "Din profil och dina inställningar."
     }
+  },
+  "feed": {
+    "forYou": "För dig",
+    "following": "Följer",
+    "openLook": "Öppna look",
+    "save": "Spara",
+    "itemCount_one": "{{count}} plagg",
+    "itemCount_other": "{{count}} plagg",
+    "emptyTitle": "Inga looks än",
+    "empty": "Nya outfits dyker snart upp här.",
+    "followingEmptyTitle": "Inget här än",
+    "followingEmpty": "Följ personer för att se deras senaste looks här.",
+    "followingLoggedOutTitle": "Se looks från dem du följer",
+    "followingLoggedOut": "Logga in för att följa personer och se deras senaste looks här.",
+    "loadFailedTitle": "Det gick inte att ladda looks",
+    "loadFailed": "Kontrollera din anslutning och försök igen.",
+    "loadMoreFailed": "Det gick inte att ladda fler looks.",
+    "allCaughtUp": "Du har sett allt. Dra nedåt för nya looks."
+  },
+  "look": {
+    "back": "Tillbaka",
+    "notFound": "Den här looken är inte tillgänglig."
   },
   "errors": {
     "generic": "Något gick fel. Försök igen.",

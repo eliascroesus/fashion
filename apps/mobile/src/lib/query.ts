@@ -1,5 +1,6 @@
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import { QueryClient } from '@tanstack/react-query';
+import { trimFeedsForStorage } from './persist';
 import { shouldRetry } from './query-retry';
 import { storage } from './storage';
 
@@ -27,6 +28,8 @@ export const queryPersister = createAsyncStoragePersister({
       storage.remove(key);
     },
   },
+  // Feeds keep only their first pages on the phone, so writing the cache stays quick while scrolling.
+  serialize: (client) => JSON.stringify(trimFeedsForStorage(client)),
 });
 
 export const PERSIST_MAX_AGE = DAY;

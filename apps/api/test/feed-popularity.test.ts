@@ -1,6 +1,6 @@
 import { eq, events, feedSnapshots, inArray, looks, saves, sql } from '@outfitly/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { deleteOldFeedSnapshots, recomputePopularity } from '../src/feed/popularity.ts';
+import { deleteOldFeedSnapshots, POPULARITY, recomputePopularity } from '../src/feed/popularity.ts';
 import { createAuthor, createLook } from './feed-fixtures.ts';
 import { createTestContext, type TestContext } from './helpers.ts';
 
@@ -101,6 +101,31 @@ describe('popularity score', () => {
       .from(looks)
       .where(eq(looks.id, look));
     expect(after?.updatedAt).toEqual(before?.updatedAt);
+  });
+
+  it('counts viewers, not impressions: one per person per look per day', async () => {
+    const look = await createLook(ctx.db, { authorId: author, popularity: 0 });
+    const [a, b] = [crypto.randomUUID(), crypto.randomUUID()];
+    const seenBy = (sessionId: string, daysAgo: number) => ({
+      name: 'impression',
+      lookId: look,
+      sessionId,
+      createdAt: sql`date_trunc('day', now()) - make_interval(days => ${daysAgo}) + interval '1 hour'`,
+    });
+    // a: 5 times today and once 2 days ago (2 viewer-days); b: 3 times today (1).
+    await ctx.db
+      .insert(events)
+      .values([
+        ...Array.from({ length: 5 }, () => seenBy(a, 0)),
+        seenBy(a, 2),
+        ...Array.from({ length: 3 }, () => seenBy(b, 0)),
+      ]);
+    await recomputePopularity(ctx.db);
+    // 3 viewer-days, each decayed a little (9 impressions would give ~8; 2 people or 2 days ~2).
+    const score = (await scores([look])).get(look) ?? 0;
+    const viewers = 1 / score - POPULARITY.priorViews;
+    expect(viewers).toBeGreaterThan(2.4);
+    expect(viewers).toBeLessThan(3.1);
   });
 
   it('only scores published looks', async () => {

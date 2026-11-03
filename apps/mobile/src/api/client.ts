@@ -3,6 +3,9 @@ import {
   API_PREFIX,
   type ApiErrorCode,
   type CreateUploadBody,
+  type EventBatch,
+  eventBatchResultSchema,
+  feedPageSchema,
   healthSchema,
   IDEMPOTENCY_KEY_HEADER,
   mediaSchema,
@@ -69,6 +72,8 @@ interface RequestOptions<T extends z.ZodType> {
   body?: unknown;
   /** Writes only: pass the action's key so retries can't duplicate it. */
   idempotencyKey?: string;
+  /** Lets the caller cancel (e.g. TanStack Query dropping a page nobody needs). */
+  signal?: AbortSignal;
 }
 
 /** Typed client for the Outfitly API: every response is checked against the shared schemas. */
@@ -79,7 +84,7 @@ export function createApiClient(options: ApiClientOptions) {
   async function request<T extends z.ZodType>(
     method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
     path: string,
-    { schema, body, idempotencyKey }: RequestOptions<T>,
+    { schema, body, idempotencyKey, signal }: RequestOptions<T>,
   ): Promise<z.output<T>> {
     const headers: Record<string, string> = { accept: 'application/json' };
     const token = await options.getAccessToken();
@@ -90,11 +95,16 @@ export function createApiClient(options: ApiClientOptions) {
       headers[IDEMPOTENCY_KEY_HEADER] = idempotencyKey ?? options.newIdempotencyKey();
     }
     if (body !== undefined) headers['content-type'] = 'application/json';
+    if (signal?.aborted) throw new ApiRequestError(0, 'network_error', 'Cancelled.');
 
     const controller = new AbortController();
     const timer = setTimeout(() => {
       controller.abort();
     }, timeoutMs);
+    const cancel = () => {
+      controller.abort();
+    };
+    signal?.addEventListener('abort', cancel);
     let res: Response;
     let json: unknown;
     try {
@@ -110,6 +120,7 @@ export function createApiClient(options: ApiClientOptions) {
       throw new ApiRequestError(0, 'network_error', String(error));
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
     }
 
     if (!res.ok) {
@@ -126,6 +137,12 @@ export function createApiClient(options: ApiClientOptions) {
     }
     return parsed.data;
   }
+
+  const page = (path: string, cursor?: string, signal?: AbortSignal) =>
+    request('GET', cursor ? `${path}?cursor=${encodeURIComponent(cursor)}` : path, {
+      schema: feedPageSchema,
+      ...(signal ? { signal } : {}),
+    });
 
   return {
     health: () => request('GET', '/health', { schema: healthSchema }),
@@ -153,6 +170,16 @@ export function createApiClient(options: ApiClientOptions) {
         }),
       get: (mediaId: string) =>
         request('GET', `/media/${encodeURIComponent(mediaId)}`, { schema: mediaSchema }),
+    },
+    feed: {
+      /** Works logged out. Leave out the cursor for a new list (page 1). */
+      forYou: (cursor?: string, signal?: AbortSignal) => page('/feed/for-you', cursor, signal),
+      following: (cursor?: string, signal?: AbortSignal) => page('/feed/following', cursor, signal),
+    },
+    events: {
+      /** Resending a batch is safe: the server skips event ids it already has. */
+      send: (batch: EventBatch, idempotencyKey: string) =>
+        request('POST', '/events', { schema: eventBatchResultSchema, body: batch, idempotencyKey }),
     },
   };
 }

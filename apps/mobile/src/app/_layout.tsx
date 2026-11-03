@@ -40,6 +40,7 @@ function RootLayout() {
               }}
             >
               <Stack.Screen name="(tabs)" />
+              <Stack.Screen name="look/[id]" />
               <Stack.Screen name="sign-up" options={{ presentation: 'modal' }} />
               <Stack.Screen name="auth-callback" />
             </Stack>

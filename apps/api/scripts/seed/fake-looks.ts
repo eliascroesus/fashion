@@ -34,7 +34,11 @@ const RATIOS = [
   [1, 1],
 ] as const;
 
-/** A plain diagonal gradient (JPEG) standing in for an outfit photo. */
+/**
+ * A diagonal gradient with film grain (JPEG) standing in for an outfit photo.
+ * The grain makes each picture about as heavy as a real photo, so scrolling
+ * tests download and decode realistic amounts.
+ */
 export async function placeholderPhoto(index: number, width = 1200): Promise<Buffer> {
   const [w, h] = RATIOS[index % RATIOS.length] ?? [3, 4];
   const height = Math.round((width * h) / w);
@@ -45,7 +49,14 @@ export async function placeholderPhoto(index: number, width = 1200): Promise<Buf
       <stop offset="1" stop-color="hsl(${String((hue + 40) % 360)},40%,35%)"/>
     </linearGradient></defs>
     <rect width="100%" height="100%" fill="url(#g)"/></svg>`;
-  return sharp(Buffer.from(svg)).jpeg({ quality: 85 }).toBuffer();
+  // Same index, same bytes: the seed loader recognises a photo by its content.
+  const r = random(index + 1_000_003);
+  const grain = Buffer.alloc(width * height);
+  for (let i = 0; i < grain.length; i++) grain[i] = Math.round(64 + 64 * (r() + r()));
+  return sharp(Buffer.from(svg))
+    .composite([{ input: grain, raw: { width, height, channels: 1 }, blend: 'soft-light' }])
+    .jpeg({ quality: 85 })
+    .toBuffer();
 }
 
 /** Small deterministic random numbers, so a re-run makes the same looks. */
@@ -73,7 +84,8 @@ function fakeLook(index: number, pool: readonly string[], now: number) {
   const id = fixedUuid('loadtest-look', String(index));
   const caption = `${pick(COLOURS, r)} ${pick(PIECES, r)} with ${pick(EXTRAS, r)}`;
   const photoCount = 1 + Math.floor(r() * 3);
-  const start = Math.floor(r() * pool.length);
+  // Covers go round the pool in order, so N looks with N pictures all look different.
+  const start = index % pool.length;
   const photos = Array.from(
     { length: photoCount },
     (_, i) => pool[(start + i) % pool.length] ?? '',
@@ -116,7 +128,10 @@ export async function seedFakeLooks(options: FakeLooksOptions): Promise<{ insert
     if (id !== author.id) throw new Error(`@${author.handle} belongs to another profile.`);
   }
 
-  const pool = Array.from({ length: poolSize }, (_, i) => fixedUuid('loadtest-photo', String(i)));
+  // `-v2`: the grainy pictures. New ids, because a photo's links never change content.
+  const pool = Array.from({ length: poolSize }, (_, i) =>
+    fixedUuid('loadtest-photo-v2', String(i)),
+  );
   const stored = await mapLimit(pool, 4, async (mediaId, i) =>
     storeSeedPhoto(db, storage, {
       mediaId,
