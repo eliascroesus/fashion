@@ -8,7 +8,7 @@ import {
 } from '@tanstack/react-query';
 import { randomUUID } from 'expo-crypto';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { api } from '../api';
+import { api, ApiRequestError } from '../api';
 import { useMe } from '../auth/store';
 import { dedupeCards } from '../feed/layout';
 import { useOutboxView } from './index';
@@ -158,6 +158,12 @@ function useActionKey() {
     done: () => {
       key.current = null;
     },
+    /** A refusal (e.g. 409 too many boards) would be replayed for that key: the next try is new. */
+    failed: (error: unknown) => {
+      if (error instanceof ApiRequestError && error.status >= 400 && error.status < 500) {
+        key.current = null;
+      }
+    },
   };
 }
 
@@ -171,6 +177,7 @@ export function useBoardMutations() {
 
   const create = useMutation({
     mutationFn: (name: string): Promise<Board> => api.boards.create(name, createKey.for(name)),
+    onError: createKey.failed,
     onSuccess: () => {
       createKey.done();
       return refreshBoards();
@@ -179,6 +186,7 @@ export function useBoardMutations() {
   const rename = useMutation({
     mutationFn: ({ boardId, name }: { boardId: string; name: string }) =>
       api.boards.rename(boardId, name, renameKey.for(`${boardId}/${name}`)),
+    onError: renameKey.failed,
     onSuccess: () => {
       renameKey.done();
       return refreshBoards();
@@ -186,6 +194,7 @@ export function useBoardMutations() {
   });
   const remove = useMutation({
     mutationFn: (boardId: string) => api.boards.remove(boardId, deleteKey.for(boardId)),
+    onError: deleteKey.failed,
     onSuccess: (_result, boardId) => {
       deleteKey.done();
       queryClient.removeQueries({

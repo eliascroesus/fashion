@@ -30,9 +30,10 @@ export default function LookMenuSheet() {
             router.back();
           } else if (!hasLogin) {
             // The first save while logged out is the sign-up moment, not a board picker.
-            setSaved(card, true, (href) => {
+            const opened = setSaved(card, true, (href) => {
               router.replace(href);
             });
+            if (!opened) router.back();
           } else {
             router.replace({ pathname: '/save-to-board/[id]', params: { id } });
           }

@@ -4,7 +4,7 @@ import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
-import { GestureDetector, useTapGesture } from 'react-native-gesture-handler';
+import { useRef } from 'react';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -21,51 +21,54 @@ import { findCard, saveIfNot } from '../../saves';
 import { radii, Screen, spacing, useColors } from '../../theme';
 
 const POP_SIZE = 96;
+/** Two taps on the photo within this long are a double-tap (a single tap does nothing). */
+const DOUBLE_TAP_MS = 300;
 
 /** The cover photo; double-tap saves it, with a bookmark that pops up in the middle. */
 function Photo({ card, width }: { card: FeedCard; width: number }) {
   const colors = useColors();
   const pop = useSharedValue(0);
-  const doubleTap = useTapGesture({
-    numberOfTaps: 2,
-    runOnJS: true,
-    onActivate: () => {
-      pop.value = withSequence(
-        withSpring(1, { damping: 12 }),
-        withDelay(350, withTiming(0, { duration: 200 })),
-      );
-      saveIfNot(card);
-    },
-  });
+  const lastTap = useRef(0);
+  const onPress = () => {
+    const now = Date.now();
+    if (now - lastTap.current > DOUBLE_TAP_MS) {
+      lastTap.current = now;
+      return;
+    }
+    lastTap.current = 0;
+    pop.value = withSequence(
+      withSpring(1, { damping: 12 }),
+      withDelay(350, withTiming(0, { duration: 200 })),
+    );
+    saveIfNot(card);
+  };
   const popStyle = useAnimatedStyle(() => ({
     opacity: pop.value,
     transform: [{ scale: 0.6 + 0.4 * pop.value }],
   }));
 
   return (
-    <GestureDetector gesture={doubleTap}>
-      <View testID="look-photo" accessible={false}>
-        <Image
-          source={{ uri: card.photo.urls[1080] }}
-          // The grid's smaller copy is already in memory: show it until the sharp one arrives.
-          placeholder={{ uri: card.photo.urls[600] }}
-          placeholderContentFit="cover"
-          contentFit="cover"
-          style={{
-            width,
-            height: photoHeight(card.photo, width),
-            backgroundColor: card.photo.dominantColor,
-          }}
-          accessible={false}
-        />
-        <Animated.View
-          pointerEvents="none"
-          style={[styles.pop, { backgroundColor: colors.surface }, popStyle]}
-        >
-          <Ionicons name="bookmark" size={POP_SIZE / 2} color={colors.accent} />
-        </Animated.View>
-      </View>
-    </GestureDetector>
+    <Pressable testID="look-photo" accessible={false} onPress={onPress}>
+      <Image
+        source={{ uri: card.photo.urls[1080] }}
+        // The grid's smaller copy is already in memory: show it until the sharp one arrives.
+        placeholder={{ uri: card.photo.urls[600] }}
+        placeholderContentFit="cover"
+        contentFit="cover"
+        style={{
+          width,
+          height: photoHeight(card.photo, width),
+          backgroundColor: card.photo.dominantColor,
+        }}
+        accessible={false}
+      />
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.pop, { backgroundColor: colors.surface }, popStyle]}
+      >
+        <Ionicons name="bookmark" size={POP_SIZE / 2} color={colors.accent} />
+      </Animated.View>
+    </Pressable>
   );
 }
 

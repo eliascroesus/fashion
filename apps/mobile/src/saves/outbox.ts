@@ -46,9 +46,9 @@ export interface OutboxDeps {
   startSession: () => Promise<void>;
   newId: () => string;
   timers: Timers;
-  /** An action reached the server. */
+  /** An action reached the server (called before it stops counting as waiting). */
   onSent?: (pending: PendingAction) => void;
-  /** Everything waiting reached the server (after at least one send). */
+  /** Nothing is waiting any more, after at least one action was sent or dropped. */
   onDrained?: () => void;
   /** 0 ≤ n < 1 (tests pass a fixed one). */
   random?: () => number;
@@ -198,8 +198,13 @@ export class Outbox {
     return () => this.listeners.delete(listener);
   }
 
+  /** Resolves once a send in progress (if any) is over, whatever its outcome. */
+  settled(): Promise<void> {
+    return this.sending ?? Promise.resolve();
+  }
+
   private async sendAll(): Promise<void> {
-    let sent = 0;
+    let done = 0;
     while (this.pending.length > 0) {
       if (!this.deps.hasProfile()) {
         // Wait for a login, unless a save is waiting: that starts a guest session.
@@ -233,15 +238,17 @@ export class Outbox {
         }
         // Refused for good (or too often): drop it and go on.
         this.remove(next.id);
+        done += 1;
         continue;
       }
-      this.remove(next.id);
-      sent += 1;
+      // Before it leaves the list, so screens never fall back to an older state in between.
       this.deps.onSent?.(next);
+      this.remove(next.id);
+      done += 1;
     }
     this.failures = 0;
     this.cancelTimer();
-    if (sent > 0) this.deps.onDrained?.();
+    if (done > 0) this.deps.onDrained?.();
   }
 
   private remove(id: string): void {

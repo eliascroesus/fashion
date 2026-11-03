@@ -56,9 +56,8 @@ export default function BoardNameSheet() {
     }
     create.mutate(parsed.data, {
       onSuccess: (board) => {
-        const card = params.lookId ? findCard(params.lookId) : undefined;
-        if (card) {
-          addToBoard(card, board.id);
+        if (params.lookId) {
+          addToBoard(params.lookId, board.id, findCard(params.lookId));
           showToast(t('saveToBoard.savedTo', { name: board.name }));
         }
         router.back();

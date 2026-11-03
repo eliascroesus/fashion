@@ -5,7 +5,7 @@ import { createContext, type ReactNode, useContext, useEffect, useMemo } from 'r
 import { api } from '../api';
 import { carryOverLoggedOutFeed } from '../feed/cache';
 import { queryClient } from '../lib/query';
-import { outbox, setGuestSessionStarter } from '../saves';
+import { forgetLocalSaves, outbox, setGuestSessionStarter } from '../saves';
 import { useCaptchaToken } from './captcha';
 import { type AuthFlows, createAuthFlows } from './flows';
 import { getMe, pendingGuestMerge, setMe } from './store';
@@ -17,7 +17,7 @@ function clearLocalSession(): void {
   setMe(null);
   // Nothing from the previous login may show for the next one, or be sent as it.
   queryClient.clear();
-  outbox.clear();
+  forgetLocalSaves();
 }
 
 function signedIn(me: Me): void {
@@ -45,6 +45,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             onSignedOut: clearLocalSession,
             hasProfile: () => getMe() !== null,
             pendingMerge: pendingGuestMerge,
+            // A save sent as the guest a moment ago lands before the guest's saves move.
+            beforeMerge: () => outbox.settled(),
           })
         : null,
     [getCaptchaToken],

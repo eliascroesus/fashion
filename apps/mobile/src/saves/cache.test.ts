@@ -3,7 +3,7 @@ import { themes } from '@outfitly/ui-tokens';
 import { type InfiniteData, QueryClient } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
 import { feedQueryKey } from '../feed/keys';
-import { removeFromLists, setSavedInLists } from './cache';
+import { addToListTop, removeFromLists, setSavedInLists } from './cache';
 import { boardLooksQueryKey, boardsQueryKey, savesQueryKey } from './keys';
 
 const card = (id: string, saved = false): FeedCard => ({
@@ -54,7 +54,7 @@ describe('saved-look cache helpers', () => {
     expect(client.getQueryData(feedQueryKey('for-you', 'p'))).toBe(forYou);
   });
 
-  it('removes a look from the lists under a key', () => {
+  it('removes a look from the lists under a key, and puts one first', () => {
     const client = new QueryClient();
     client.setQueryData(
       savesQueryKey('p'),
@@ -63,6 +63,12 @@ describe('saved-look cache helpers', () => {
     removeFromLists(client, savesQueryKey('p'), 'b');
     expect(ids(client, savesQueryKey('p'))).toEqual([['a*'], ['c*']]);
     removeFromLists(client, savesQueryKey('other'), 'a'); // not loaded: nothing happens
+    expect(client.getQueryData(savesQueryKey('other'))).toBeUndefined();
+
+    addToListTop(client, savesQueryKey('p'), card('d', true));
+    addToListTop(client, savesQueryKey('p'), card('c', true)); // already there
+    expect(ids(client, savesQueryKey('p'))).toEqual([['d*', 'a*'], ['c*']]);
+    addToListTop(client, savesQueryKey('other'), card('d', true)); // not loaded: left to the server
     expect(client.getQueryData(savesQueryKey('other'))).toBeUndefined();
   });
 });

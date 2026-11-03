@@ -30,9 +30,7 @@ export default function SaveToBoardSheet() {
       showToast(t('saveToBoard.removedFrom', { name: board.name }));
       return;
     }
-    const card = findCard(id);
-    if (!card) return;
-    addToBoard(card, board.id);
+    addToBoard(id, board.id, findCard(id));
     showToast(t('saveToBoard.savedTo', { name: board.name }));
   }
 

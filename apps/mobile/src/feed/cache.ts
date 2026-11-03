@@ -42,7 +42,8 @@ export function findCachedCard(queryClient: QueryClient, lookId: string): FeedCa
  * server lets a logged-out list continue once there is a login.
  */
 export function carryOverLoggedOutFeed(queryClient: QueryClient, from: Me | null, to: Me): void {
-  if (from?.activeProfileId || !to.activeProfileId) return;
+  // Only a brand-new guest: an existing account gets its own feed (its saves, taste, follows).
+  if (from?.activeProfileId || !to.activeProfileId || !to.isAnonymous) return;
   const source = queryClient.getQueryState(feedQueryKey('for-you', null));
   const target = feedQueryKey('for-you', to.activeProfileId);
   if (!source?.data || queryClient.getQueryData(target) !== undefined) return;

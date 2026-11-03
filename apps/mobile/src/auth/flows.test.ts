@@ -305,3 +305,56 @@ describe('password sign-in (test login, developer menu only)', () => {
     });
   });
 });
+
+describe('no guest session in the middle of a sign-in', () => {
+  it('refuses to start a guest while the Google page is open, and works again afterwards', async () => {
+    let returnFromGoogle: (url: string | null) => void = () => undefined;
+    deps.openAuthSession = vi.fn(
+      () =>
+        new Promise<string | null>((resolve) => {
+          returnFromGoogle = resolve;
+        }),
+    );
+    const flows = createAuthFlows(deps);
+    const signIn = flows.signInWithGoogle();
+    await vi.waitFor(() => {
+      expect(deps.openAuthSession).toHaveBeenCalled();
+    });
+    // A save retried meanwhile must not make a guest that would replace the account.
+    await expect(flows.ensureSession()).rejects.toMatchObject({ code: 'signing_in' });
+    expect(fake.auth.signInAnonymously).not.toHaveBeenCalled();
+
+    returnFromGoogle('outfitly://auth-callback?code=abc');
+    expect(await signIn).toBe('signed_in');
+    fake.setSession({ access_token: 'real-token', user: { is_anonymous: false } });
+    hasProfile = true;
+    await expect(flows.ensureSession()).resolves.toBeNull();
+  });
+
+  it('lets a save already on its way as the guest land before the guest content moves', async () => {
+    fake.setSession(guest);
+    const order: string[] = [];
+    deps.beforeMerge = () => {
+      order.push('saves settled');
+      return Promise.resolve();
+    };
+    api.mergeGuest.mockImplementation(() => {
+      order.push('merge');
+      return Promise.resolve({});
+    });
+    await createAuthFlows(deps).signInWithPassword('test@example.com', 'pw');
+    expect(order).toEqual(['saves settled', 'merge']);
+  });
+
+  it('moves a guest made while the email code was being typed', async () => {
+    const flows = createAuthFlows(deps);
+    expect(await flows.startEmail('new@example.com')).toBe('new');
+    fake.setSession(guest); // the first save happened between the two steps
+    fake.auth.verifyOtp.mockImplementationOnce(() => {
+      fake.setSession({ access_token: 'real-token', user: { is_anonymous: false } });
+      return ok();
+    });
+    expect(await flows.verifyEmail('new@example.com', '123456', 'new')).toBe('merged');
+    expectMergedAfterSignIn();
+  });
+});

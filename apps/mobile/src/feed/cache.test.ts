@@ -97,4 +97,11 @@ describe('carryOverLoggedOutFeed', () => {
     carryOverLoggedOutFeed(client, me('p1'), me('p2'));
     expect(client.getQueryData(feedQueryKey('for-you', 'p2'))).toBeUndefined();
   });
+
+  it('gives a sign-in to an existing account its own feed, not the logged-out one', () => {
+    const client = new QueryClient();
+    client.setQueryData(feedQueryKey('for-you', null), feed);
+    carryOverLoggedOutFeed(client, null, { ...me('account'), isAnonymous: false });
+    expect(client.getQueryData(feedQueryKey('for-you', 'account'))).toBeUndefined();
+  });
 });

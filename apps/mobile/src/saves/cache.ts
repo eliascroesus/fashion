@@ -37,3 +37,19 @@ export function removeFromLists(client: QueryClient, queryKey: QueryKey, lookId:
     items.some((c) => c.id === lookId) ? items.filter((c) => c.id !== lookId) : items,
   );
 }
+
+/**
+ * Puts the card first in a cached list (e.g. Saves once a save reached the
+ * server), unless it's already there. A list not cached yet loads from the server.
+ */
+export function addToListTop(client: QueryClient, queryKey: QueryKey, card: FeedCard): void {
+  client.setQueryData<Pages>(queryKey, (data) => {
+    const first = data?.pages[0];
+    if (!data || !first) return data;
+    if (data.pages.some((p) => p.items.some((c) => c.id === card.id))) return data;
+    return {
+      ...data,
+      pages: [{ ...first, items: [card, ...first.items] }, ...data.pages.slice(1)],
+    };
+  });
+}

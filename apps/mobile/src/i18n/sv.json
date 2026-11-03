@@ -97,7 +97,10 @@
     "devMenu": "Utvecklarmeny",
     "pretendOffline": "Låtsas vara offline",
     "waiting_one": "Väntar på att synka: {{count}}",
-    "waiting_other": "Väntar på att synka: {{count}}"
+    "waiting_other": "Väntar på att synka: {{count}}",
+    "unsyncedTitle": "Allt har inte synkats",
+    "unsyncedBody_one": "{{count}} ändring har inte nått Outfitly än (du verkar vara offline). Om du loggar ut nu försvinner den.",
+    "unsyncedBody_other": "{{count}} ändringar har inte nått Outfitly än (du verkar vara offline). Om du loggar ut nu försvinner de."
   },
   "board": {
     "options": "Val för tavlan",

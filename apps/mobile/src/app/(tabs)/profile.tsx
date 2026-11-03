@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Pressable, StyleSheet, Switch, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Switch, View } from 'react-native';
 import { useAuth } from '../../auth/AuthProvider';
 import { useMe } from '../../auth/store';
 import { Button } from '../../components/button';
@@ -12,7 +12,7 @@ import {
   useDevMenu,
   usePretendOffline,
 } from '../../lib/dev';
-import { sendWaiting, useWaitingCount } from '../../saves';
+import { outbox, sendWaiting, useWaitingCount } from '../../saves';
 import { Screen, spacing, ThemedText, useColors } from '../../theme';
 
 /** Before signing out, saves still on the phone get this long to reach the server. */
@@ -70,13 +70,36 @@ export default function ProfileScreen() {
             loading={busy}
             onPress={() => {
               setBusy(true);
-              // Local state is cleared even when offline; nothing else to show.
-              void sendWaiting(SEND_BEFORE_SIGN_OUT_MS)
-                .then(() => auth.signOut())
-                .catch(() => undefined)
-                .finally(() => {
-                  setBusy(false);
-                });
+              const signOut = () => {
+                // Local state is cleared even when offline; nothing else to show.
+                void auth
+                  .signOut()
+                  .catch(() => undefined)
+                  .finally(() => {
+                    setBusy(false);
+                  });
+              };
+              void sendWaiting(SEND_BEFORE_SIGN_OUT_MS).then(() => {
+                if (outbox.size === 0) {
+                  signOut();
+                  return;
+                }
+                // Offline: what hasn't reached the server would be lost.
+                Alert.alert(
+                  t('profile.unsyncedTitle'),
+                  t('profile.unsyncedBody', { count: outbox.size }),
+                  [
+                    {
+                      text: t('board.cancel'),
+                      style: 'cancel',
+                      onPress: () => {
+                        setBusy(false);
+                      },
+                    },
+                    { text: t('profile.signOut'), style: 'destructive', onPress: signOut },
+                  ],
+                );
+              });
             }}
           />
         ) : null}

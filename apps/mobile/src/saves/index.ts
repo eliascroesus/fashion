@@ -12,12 +12,13 @@ import { FEED_QUERY_ROOT } from '../feed/keys';
 import { queryClient } from '../lib/query';
 import { storage } from '../lib/storage';
 import { realTimers } from '../lib/timers';
-import { removeFromLists, setSavedInLists } from './cache';
+import { addToListTop, removeFromLists, setSavedInLists } from './cache';
 import {
   BOARD_LOOKS_QUERY_ROOT,
   boardLooksQueryKey,
   BOARDS_QUERY_ROOT,
   SAVES_QUERY_ROOT,
+  savesQueryKey,
 } from './keys';
 import { Outbox, type OutboxView, type PendingAction } from './outbox';
 
@@ -70,6 +71,12 @@ function send({ id, action }: PendingAction): Promise<unknown> {
 
 let startGuestSession: (() => Promise<unknown>) | null = null;
 
+/**
+ * Saved or not, as the server confirmed this launch: newer than any card
+ * loaded before it, and it survives screens that hold an old copy of a card.
+ */
+const confirmed = new Map<string, boolean>();
+
 /** Saves, board changes and "see less", kept on the phone until the server has them. */
 export const outbox = new Outbox({
   load,
@@ -87,15 +94,23 @@ export const outbox = new Outbox({
   newId: randomUUID,
   timers: realTimers,
   onSent: ({ action }) => {
-    // What the server has now: corrects any list that loaded while it was on its way.
+    // What the server has now: corrects any list that loaded while it was on its way,
+    // and keeps the look in Saved (and its board) until those lists load again.
+    const profileId = getActiveProfileId();
     if (action.kind === 'save' || action.kind === 'board-add') {
+      confirmed.set(action.lookId, true);
       setSavedInLists(queryClient, action.lookId, true);
+      if (action.card) addToListTop(queryClient, savesQueryKey(profileId), action.card);
+      if (action.kind === 'board-add' && action.card) {
+        addToListTop(queryClient, boardLooksQueryKey(profileId, action.boardId), action.card);
+      }
     } else if (action.kind === 'unsave') {
+      confirmed.set(action.lookId, false);
       setSavedInLists(queryClient, action.lookId, false);
     }
   },
   onDrained: () => {
-    // Saves and boards loaded while actions were waiting may lack them.
+    // Saves and boards loaded while actions were waiting (or dropped) may be off.
     for (const root of [SAVES_QUERY_ROOT, BOARDS_QUERY_ROOT, BOARD_LOOKS_QUERY_ROOT]) {
       void queryClient.invalidateQueries({ queryKey: [root] });
     }
@@ -125,9 +140,20 @@ subscribeMe(() => {
 
 const subscribe = (listener: () => void) => outbox.subscribe(listener);
 
+/** What this phone knows beyond the card: a waiting action, else what the server confirmed. */
+function localSavedState(lookId: string): boolean | undefined {
+  return outbox.savedState(lookId) ?? confirmed.get(lookId);
+}
+
 /** Whether the look shows as saved: a waiting action wins over what the server said. */
 export function useIsSaved(lookId: string, fromServer: boolean): boolean {
-  return useSyncExternalStore(subscribe, () => outbox.savedState(lookId)) ?? fromServer;
+  return useSyncExternalStore(subscribe, () => localSavedState(lookId)) ?? fromServer;
+}
+
+/** Sign-out: nothing waiting or remembered may be sent or shown as the next login. */
+export function forgetLocalSaves(): void {
+  confirmed.clear();
+  outbox.clear();
 }
 
 /** What is waiting on the phone; a new object whenever that changes (lists merge it in). */
@@ -153,10 +179,11 @@ type Navigate = (href: '/sign-up') => void;
  * The sign-up moment: a save while logged out makes a guest session (via the
  * outbox) and opens the sign-up sheet. Once there is a login, saves just save.
  */
-function promptSignUp(navigate: Navigate): void {
-  if (getMe() !== null || promptedThisLaunch) return;
+function promptSignUp(navigate: Navigate): boolean {
+  if (getMe() !== null || promptedThisLaunch) return false;
   promptedThisLaunch = true;
   navigate('/sign-up');
+  return true;
 }
 
 /** A look's card from any cached list, or from a save still waiting on the phone. */
@@ -166,7 +193,8 @@ export function findCard(lookId: string): FeedCard | undefined {
 
 /**
  * Saves or unsaves a look (save button). Unsaving also takes it off every
- * board. The first save while logged out opens the sign-up sheet with `navigate`.
+ * board. The first save while logged out opens the sign-up sheet with
+ * `navigate`; returns whether it did.
  */
 export function setSaved(
   card: FeedCard,
@@ -174,34 +202,39 @@ export function setSaved(
   navigate: Navigate = (href) => {
     router.push(href);
   },
-): void {
+): boolean {
   if (saved) {
     tap();
     outbox.add({ kind: 'save', lookId: card.id, card: { ...card, saved: true } });
     setSavedInLists(queryClient, card.id, true);
-    promptSignUp(navigate);
-    return;
+    return promptSignUp(navigate);
   }
   outbox.add({ kind: 'unsave', lookId: card.id });
   setSavedInLists(queryClient, card.id, false);
   removeFromLists(queryClient, [SAVES_QUERY_ROOT], card.id);
   removeFromLists(queryClient, [BOARD_LOOKS_QUERY_ROOT], card.id);
+  return false;
 }
 
 /** Double-tap on a photo: only ever saves (like Instagram's double-tap like). */
 export function saveIfNot(card: FeedCard): void {
-  if (outbox.savedState(card.id) ?? card.saved) {
+  if (localSavedState(card.id) ?? card.saved) {
     tap();
     return;
   }
-  setSaved(card, true);
+  void setSaved(card, true);
 }
 
-/** Puts the look on a board (which saves it too). */
-export function addToBoard(card: FeedCard, boardId: string): void {
+/** Puts the look on a board (which saves it too). The card, if known, shows in Saved meanwhile. */
+export function addToBoard(lookId: string, boardId: string, card?: FeedCard): void {
   tap();
-  outbox.add({ kind: 'board-add', boardId, lookId: card.id, card: { ...card, saved: true } });
-  setSavedInLists(queryClient, card.id, true);
+  outbox.add({
+    kind: 'board-add',
+    boardId,
+    lookId,
+    ...(card ? { card: { ...card, saved: true } } : {}),
+  });
+  setSavedInLists(queryClient, lookId, true);
 }
 
 /** Takes the look off one board; it stays saved. */

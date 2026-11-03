@@ -87,6 +87,9 @@ export function CaptchaProvider({ children }: { children: ReactNode }) {
         >
           <WebView
             source={{ html: turnstilePage(siteKey), baseUrl: pageOrigin }}
+            // Turnstile runs its check in an `about:srcdoc` frame. The default (http/https
+            // only) hands that frame to the system to open, and the check hangs until timeout.
+            originWhitelist={['https://*', 'about:*']}
             onMessage={onMessage}
             onError={() => {
               finish({ error: 'webview' });

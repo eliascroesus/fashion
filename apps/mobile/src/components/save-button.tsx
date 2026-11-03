@@ -44,7 +44,7 @@ export function SaveButton({ card, size = 34, testID = 'save-button' }: SaveButt
       accessibilityState={{ selected: saved }}
       hitSlop={spacing.sm}
       onPress={() => {
-        setSaved(card, !saved);
+        void setSaved(card, !saved);
       }}
       style={[
         styles.button,

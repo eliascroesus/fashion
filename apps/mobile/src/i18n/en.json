@@ -97,7 +97,10 @@
     "devMenu": "Developer menu",
     "pretendOffline": "Pretend offline",
     "waiting_one": "Waiting to sync: {{count}}",
-    "waiting_other": "Waiting to sync: {{count}}"
+    "waiting_other": "Waiting to sync: {{count}}",
+    "unsyncedTitle": "Some saves haven't synced",
+    "unsyncedBody_one": "{{count}} change hasn't reached Outfitly yet (you seem to be offline). If you sign out now, it will be lost.",
+    "unsyncedBody_other": "{{count}} changes haven't reached Outfitly yet (you seem to be offline). If you sign out now, they will be lost."
   },
   "board": {
     "options": "Board options",

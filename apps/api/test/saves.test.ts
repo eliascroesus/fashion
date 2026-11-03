@@ -362,6 +362,26 @@ describe('boards', () => {
     expect(await boardList(me.token)).toHaveLength(MAX_BOARDS_PER_PROFILE);
   });
 
+  it('replays board changes and "see less" retried with the same Idempotency-Key', async () => {
+    const me = await viewer();
+    const look = await createLook(ctx.db, { authorId: author });
+    const board = await newBoard(me.token);
+    const requests = [
+      ['PUT', `/v1/boards/${board}/looks/${look}`, undefined],
+      ['DELETE', `/v1/boards/${board}/looks/${look}`, undefined],
+      ['PUT', `/v1/swipes/${look}`, { kind: 'see_less' }],
+    ] as const;
+    for (const [method, url, payload] of requests) {
+      const key = crypto.randomUUID();
+      const first = await call(method, url, me.token, payload, key);
+      const retry = await call(method, url, me.token, payload, key);
+      expect(first.statusCode, first.body).toBe(200);
+      expect(retry.statusCode).toBe(200);
+      expect(retry.headers[IDEMPOTENT_REPLAY_HEADER]).toBe('true');
+      expect(retry.body).toBe(first.body);
+    }
+  });
+
   it('refuses looks that cannot be shown', async () => {
     const me = await viewer();
     const board = await newBoard(me.token);
