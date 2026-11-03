@@ -1,0 +1,2 @@
+CREATE INDEX "board_items_board_recent_idx" ON "board_items" USING btree ("board_id","updated_at" DESC NULLS FIRST,"id" DESC NULLS FIRST) WHERE "board_items"."deleted_at" is null;--> statement-breakpoint
+CREATE INDEX "saves_profile_recent_idx" ON "saves" USING btree ("profile_id","updated_at" DESC NULLS FIRST,"id" DESC NULLS FIRST) WHERE "saves"."deleted_at" is null;

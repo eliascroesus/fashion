@@ -1,0 +1,10 @@
+# Waits on the Profile tab until nothing is waiting to be sent (developer menu on).
+appId: ${APP_ID || 'com.outfitly.app'}
+---
+- tapOn:
+    id: tab-profile
+- extendedWaitUntil:
+    visible:
+      id: dev-waiting
+      text: '.*: 0'
+    timeout: ${SYNC_TIMEOUT || 15000}

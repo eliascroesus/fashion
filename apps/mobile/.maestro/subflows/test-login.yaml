@@ -1,0 +1,20 @@
+# Signs in with the test login from the open sign-up sheet (developer menu on).
+# TEST_EMAIL / TEST_PASSWORD come from the command line (-e), never from a file in git.
+appId: ${APP_ID || 'com.outfitly.app'}
+---
+- assertVisible:
+    id: dev-sign-in
+- tapOn:
+    id: dev-email
+- inputText: ${TEST_EMAIL}
+- tapOn:
+    id: dev-password
+- inputText: ${TEST_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: dev-sign-in-submit
+# The CAPTCHA and the sign-in take a few seconds; the sheet closes when done.
+- extendedWaitUntil:
+    notVisible:
+      id: sign-up-sheet
+    timeout: 30000

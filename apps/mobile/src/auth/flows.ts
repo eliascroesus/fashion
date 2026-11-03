@@ -8,6 +8,7 @@ export type AuthClient = Pick<
   | 'signInAnonymously'
   | 'signInWithIdToken'
   | 'signInWithOtp'
+  | 'signInWithPassword'
   | 'signInWithOAuth'
   | 'linkIdentity'
   | 'updateUser'
@@ -72,6 +73,16 @@ export function createAuthFlows(deps: FlowDeps) {
   }
 
   /**
+   * The session a sign-in starts from. A guest session still being made (the
+   * first save, a moment ago) is finished first, so its saves move along and
+   * its profile can't replace the account's afterwards.
+   */
+  async function startingSession() {
+    if (ensuring) await ensuring.catch(() => null);
+    return currentSession();
+  }
+
+  /**
    * Moves a guest's content into the signed-in account. Never throws: the
    * sign-in already worked. Kept for a retry if our server was unreachable;
    * dropped if the server says it can never work (e.g. the guest token expired).
@@ -132,7 +143,7 @@ export function createAuthFlows(deps: FlowDeps) {
      */
     async signInWithIdToken(provider: 'apple' | 'google', token: string, nonce?: string) {
       const credentials = { provider, token, ...(nonce ? { nonce } : {}) };
-      const session = await currentSession();
+      const session = await startingSession();
       if (session?.user.is_anonymous) {
         // Linking returns a fresh session in which the user is no longer anonymous.
         const linked = await auth.linkIdentity(credentials);
@@ -149,7 +160,7 @@ export function createAuthFlows(deps: FlowDeps) {
     /** Google (web sign-in page in the system browser), with the same guest rules as Apple. */
     async signInWithGoogle(): Promise<SignInResult> {
       const options = { redirectTo: deps.redirectTo, skipBrowserRedirect: true };
-      const session = await currentSession();
+      const session = await startingSession();
 
       const runOAuth = async (
         start: () => Promise<{
@@ -188,9 +199,22 @@ export function createAuthFlows(deps: FlowDeps) {
       return finish(guestToken ? 'merged' : 'signed_in', guestToken);
     },
 
+    /**
+     * Email + password, for the automated tests' test login only (the
+     * developer menu; people use Apple, Google or an emailed code). Same guest
+     * rules as the others: a guest's content moves into the account.
+     */
+    async signInWithPassword(email: string, password: string): Promise<SignInResult> {
+      const session = await startingSession();
+      const guestToken = session?.user.is_anonymous ? session.access_token : null;
+      const captchaToken = await deps.getCaptchaToken();
+      fail((await auth.signInWithPassword({ email, password, options: { captchaToken } })).error);
+      return finish(guestToken ? 'merged' : 'signed_in', guestToken);
+    },
+
     /** Step 1 of email sign-in: send a 6-digit code. */
     async startEmail(email: string): Promise<EmailMode> {
-      const session = await currentSession();
+      const session = await startingSession();
       pendingGuestToken = null;
       if (session?.user.is_anonymous) {
         // Give the guest account this email (keeps the same user id)…

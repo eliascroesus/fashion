@@ -57,6 +57,10 @@ export const saves = pgTable(
   (t) => [
     uniqueIndex('saves_profile_look_key').on(t.profileId, t.lookId),
     index('saves_look_id_idx').on(t.lookId),
+    // The Saves list, newest first (a re-save counts as new: it sets updated_at).
+    index('saves_profile_recent_idx')
+      .on(t.profileId, t.updatedAt.desc().nullsFirst(), t.id.desc().nullsFirst())
+      .where(sql`${t.deletedAt} is null`),
   ],
 ).enableRLS();
 
@@ -93,6 +97,10 @@ export const boardItems = pgTable(
   (t) => [
     uniqueIndex('board_items_board_look_key').on(t.boardId, t.lookId),
     index('board_items_look_id_idx').on(t.lookId),
+    // A board's looks, newest first.
+    index('board_items_board_recent_idx')
+      .on(t.boardId, t.updatedAt.desc().nullsFirst(), t.id.desc().nullsFirst())
+      .where(sql`${t.deletedAt} is null`),
   ],
 ).enableRLS();
 

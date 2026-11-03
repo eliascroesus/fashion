@@ -1,21 +1,32 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Switch, View } from 'react-native';
 import { useAuth } from '../../auth/AuthProvider';
 import { useMe } from '../../auth/store';
 import { Button } from '../../components/button';
-import { storage } from '../../lib/storage';
-import { Screen, spacing, ThemedText } from '../../theme';
+import {
+  DEV_TOOLS,
+  setDevMenu,
+  setPretendOffline,
+  useDevMenu,
+  usePretendOffline,
+} from '../../lib/dev';
+import { sendWaiting, useWaitingCount } from '../../saves';
+import { Screen, spacing, ThemedText, useColors } from '../../theme';
 
-const DEV_MENU_KEY = 'dev.menu';
+/** Before signing out, saves still on the phone get this long to reach the server. */
+const SEND_BEFORE_SIGN_OUT_MS = 3_000;
 
 export default function ProfileScreen() {
   const { t } = useTranslation();
+  const colors = useColors();
   const me = useMe();
   const auth = useAuth();
-  const [devMenu, setDevMenu] = useState(() => storage.getBoolean(DEV_MENU_KEY) ?? false);
-  const [busy, setBusy] = useState<'signOut' | 'testSave' | null>(null);
+  const devMenu = useDevMenu();
+  const pretendOffline = usePretendOffline();
+  const waiting = useWaitingCount();
+  const [busy, setBusy] = useState(false);
   const profile = me?.profiles.find((p) => p.id === me.activeProfileId);
 
   return (
@@ -25,7 +36,6 @@ export default function ProfileScreen() {
         testID="profile-title"
         delayLongPress={800}
         onLongPress={() => {
-          storage.set(DEV_MENU_KEY, !devMenu);
           setDevMenu(!devMenu);
         }}
       >
@@ -45,6 +55,7 @@ export default function ProfileScreen() {
         {!me || me.isAnonymous ? (
           <Button
             label={t('profile.signIn')}
+            testID="profile-sign-in"
             onPress={() => {
               router.push('/sign-up');
             }}
@@ -55,15 +66,16 @@ export default function ProfileScreen() {
           <Button
             variant="secondary"
             label={t('profile.signOut')}
-            loading={busy === 'signOut'}
+            testID="profile-sign-out"
+            loading={busy}
             onPress={() => {
-              setBusy('signOut');
+              setBusy(true);
               // Local state is cleared even when offline; nothing else to show.
-              void auth
-                .signOut()
+              void sendWaiting(SEND_BEFORE_SIGN_OUT_MS)
+                .then(() => auth.signOut())
                 .catch(() => undefined)
                 .finally(() => {
-                  setBusy(null);
+                  setBusy(false);
                 });
             }}
           />
@@ -73,22 +85,24 @@ export default function ProfileScreen() {
       {devMenu ? (
         <View style={styles.actions} testID="dev-menu">
           <ThemedText variant="title">{t('profile.devMenu')}</ThemedText>
-          {/* What the first save will do in Phase 2: make a guest session, then offer sign-up. */}
-          <Button
-            variant="secondary"
-            label={t('profile.testSave')}
-            testID="dev-test-save"
-            loading={busy === 'testSave'}
-            onPress={() => {
-              setBusy('testSave');
-              void (auth?.ensureSession() ?? Promise.resolve())
-                .catch(() => undefined)
-                .finally(() => {
-                  setBusy(null);
-                  router.push('/sign-up');
-                });
-            }}
-          />
+          <ThemedText tone="muted" testID="dev-waiting">
+            {t('profile.waiting', { count: waiting })}
+          </ThemedText>
+          {DEV_TOOLS ? (
+            <View style={styles.row}>
+              <ThemedText nativeID="pretend-offline-label">
+                {t('profile.pretendOffline')}
+              </ThemedText>
+              <Switch
+                testID="dev-pretend-offline"
+                accessibilityLabelledBy="pretend-offline-label"
+                value={pretendOffline}
+                onValueChange={setPretendOffline}
+                trackColor={{ false: colors.surfaceMuted, true: colors.accent }}
+                thumbColor={colors.surface}
+              />
+            </View>
+          ) : null}
         </View>
       ) : null}
     </Screen>
@@ -98,4 +112,5 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   screen: { padding: spacing.xl, paddingTop: spacing.xxxl, gap: spacing.md },
   actions: { gap: spacing.md, marginTop: spacing.lg },
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
 });

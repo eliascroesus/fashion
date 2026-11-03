@@ -1,6 +1,7 @@
 import type { PersistedClient } from '@tanstack/react-query-persist-client';
 import { describe, expect, it } from 'vitest';
 import { feedQueryKey } from '../feed/keys';
+import { boardLooksQueryKey, savesQueryKey } from '../saves/keys';
 import { trimFeedsForStorage } from './persist';
 
 function query(queryKey: readonly unknown[], data: unknown) {
@@ -34,6 +35,18 @@ describe('trimFeedsForStorage', () => {
       ],
       pageParams: [null, 'c1'],
     });
+  });
+
+  it('trims Saves and board lists the same way', () => {
+    const trimmed = trimFeedsForStorage(
+      client([
+        query(savesQueryKey('p1'), pages(5)),
+        query(boardLooksQueryKey('p1', 'b'), pages(3)),
+      ]),
+    );
+    for (const q of trimmed.clientState.queries) {
+      expect((q.state.data as { pages: unknown[] }).pages).toHaveLength(2);
+    }
   });
 
   it('leaves short feeds and other queries alone', () => {

@@ -1,7 +1,7 @@
 import { InfiniteQueryObserver, QueryClient } from '@tanstack/react-query';
 import { themes } from '@outfitly/ui-tokens';
 import { describe, expect, it } from 'vitest';
-import { findCachedCard, replaceFeed } from './cache';
+import { carryOverLoggedOutFeed, findCachedCard, replaceFeed } from './cache';
 import { feedQueryKey } from './keys';
 
 const card = (id: string) => ({
@@ -15,6 +15,7 @@ const card = (id: string) => ({
     urls: { 1080: 'https://a/1', 600: 'https://a/6', 300: 'https://a/3' },
   },
   itemCount: 0,
+  saved: false,
 });
 
 describe('findCachedCard', () => {
@@ -66,5 +67,34 @@ describe('replaceFeed', () => {
     expect(data?.pages.map((p) => p.items[0]?.id)).toEqual(['new-1']);
     expect(observer.getCurrentResult().hasNextPage).toBe(true);
     unsubscribe();
+  });
+});
+
+describe('carryOverLoggedOutFeed', () => {
+  const me = (profileId: string | null) => ({
+    userId: '00000000-0000-4000-8000-000000000001',
+    isAnonymous: true,
+    activeProfileId: profileId,
+    profiles: [],
+  });
+  const feed = { pages: [{ items: [card('a')], nextCursor: 'x' }], pageParams: [null] };
+
+  it('moves the logged-out For You to the first profile, unchanged', () => {
+    const client = new QueryClient();
+    client.setQueryData(feedQueryKey('for-you', null), feed, { updatedAt: 1234 });
+    carryOverLoggedOutFeed(client, null, me('p1'));
+    expect(client.getQueryData(feedQueryKey('for-you', 'p1'))).toBe(feed);
+    expect(client.getQueryState(feedQueryKey('for-you', 'p1'))?.dataUpdatedAt).toBe(1234);
+  });
+
+  it('leaves profiles that already had a feed, or came from another profile, alone', () => {
+    const client = new QueryClient();
+    client.setQueryData(feedQueryKey('for-you', null), feed);
+    const own = { pages: [], pageParams: [] };
+    client.setQueryData(feedQueryKey('for-you', 'p1'), own);
+    carryOverLoggedOutFeed(client, null, me('p1'));
+    expect(client.getQueryData(feedQueryKey('for-you', 'p1'))).toBe(own);
+    carryOverLoggedOutFeed(client, me('p1'), me('p2'));
+    expect(client.getQueryData(feedQueryKey('for-you', 'p2'))).toBeUndefined();
   });
 });

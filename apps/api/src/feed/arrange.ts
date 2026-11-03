@@ -24,6 +24,8 @@ export const FEED_RULES = {
   sharedListMinutes: 15,
   /** A profile keeps its newest few lists (one per refresh); older ones go. */
   listsPerProfile: 5,
+  /** Looks similar to the profile's newest this-many "see less like this" go to the back. */
+  seeLessRemembered: 50,
 } as const;
 
 /** Where a For You candidate came from. */
@@ -50,6 +52,19 @@ export function similarityKey(
 ): string | null {
   if (occasions.length === 0 && seasons.length === 0) return null;
   return `${[...occasions].sort().join(',')}|${[...seasons].sort().join(',')}`;
+}
+
+/**
+ * "See less like this": looks similar to ones the viewer marked move to the
+ * back of their pool (order otherwise kept), so they come up late or not at all.
+ */
+export function demoteSimilar<T extends Pick<Candidate, 'similarityKey'>>(
+  items: readonly T[],
+  lessLike: ReadonlySet<string>,
+): T[] {
+  if (lessLike.size === 0) return [...items];
+  const similar = (c: T) => c.similarityKey !== null && lessLike.has(c.similarityKey);
+  return [...items.filter((c) => !similar(c)), ...items.filter(similar)];
 }
 
 /**

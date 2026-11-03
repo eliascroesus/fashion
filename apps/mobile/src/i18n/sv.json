@@ -17,7 +17,21 @@
     },
     "saved": {
       "title": "Sparat",
-      "comingSoon": "Looks du sparar hamnar här."
+      "saves": "Sparade",
+      "boards": "Tavlor",
+      "emptyTitle": "Inget sparat än",
+      "empty": "Tryck på bokmärket på en look för att spara den här.",
+      "loggedOutTitle": "Spara looks du gillar",
+      "loggedOut": "Tryck på bokmärket på en look. Det du sparar hamnar här.",
+      "guest": "Skapa ett konto för att behålla det du sparat på alla dina enheter.",
+      "guestAction": "Skapa konto",
+      "boardsEmpty": "Skapa en tavla för att sortera det du sparat, till exempel \"Sommar\" eller \"Jobb\".",
+      "newBoard": "Ny tavla",
+      "lookCount_one": "{{count}} look",
+      "lookCount_other": "{{count}} looks",
+      "boardsLoadFailed": "Det gick inte att ladda dina tavlor.",
+      "boardLabel_one": "{{name}}, {{count}} look",
+      "boardLabel_other": "{{name}}, {{count}} looks"
     },
     "profile": {
       "title": "Profil",
@@ -40,7 +54,9 @@
     "loadFailedTitle": "Det gick inte att ladda looks",
     "loadFailed": "Kontrollera din anslutning och försök igen.",
     "loadMoreFailed": "Det gick inte att ladda fler looks.",
-    "allCaughtUp": "Du har sett allt. Dra nedåt för nya looks."
+    "allCaughtUp": "Du har sett allt. Dra nedåt för nya looks.",
+    "unsave": "Ta bort från sparade",
+    "moreOptions": "Tryck och håll för fler val"
   },
   "look": {
     "back": "Tillbaka",
@@ -66,7 +82,10 @@
     "notConfigured": "Inloggning är inte konfigurerad i den här versionen.",
     "errorGeneric": "Det gick inte att logga in. Försök igen.",
     "errorEmail": "Ange en giltig e-postadress.",
-    "errorCode": "Koden fungerade inte. Kontrollera den och försök igen."
+    "errorCode": "Koden fungerade inte. Kontrollera den och försök igen.",
+    "devSignIn": "Testinloggning (utvecklare)",
+    "devPassword": "Lösenord",
+    "devSignInButton": "Logga in med lösenord"
   },
   "profile": {
     "guest": "Gäst",
@@ -76,6 +95,45 @@
     "signIn": "Logga in",
     "signOut": "Logga ut",
     "devMenu": "Utvecklarmeny",
-    "testSave": "Testa spara"
+    "pretendOffline": "Låtsas vara offline",
+    "waiting_one": "Väntar på att synka: {{count}}",
+    "waiting_other": "Väntar på att synka: {{count}}"
+  },
+  "board": {
+    "options": "Val för tavlan",
+    "rename": "Byt namn på tavlan",
+    "delete": "Ta bort tavlan",
+    "deleteTitle": "Ta bort \"{{name}}\"?",
+    "deleteBody": "Looksen på den finns kvar bland det du sparat.",
+    "cancel": "Avbryt",
+    "deleteConfirm": "Ta bort",
+    "emptyTitle": "Inga looks på den här tavlan än",
+    "empty": "Tryck och håll på en look och välj \"Spara på tavla\".",
+    "failed": "Det gick inte. Kontrollera din anslutning och försök igen."
+  },
+  "boardName": {
+    "createTitle": "Ny tavla",
+    "renameTitle": "Byt namn på tavlan",
+    "label": "Namn",
+    "placeholder": "t.ex. Sommarkvällar",
+    "create": "Skapa",
+    "save": "Spara",
+    "failed": "Det gick inte att spara tavlan. Kontrollera din anslutning och försök igen.",
+    "tooMany": "Du har så många tavlor som går. Ta bort en för att skapa en ny."
+  },
+  "lookMenu": {
+    "title": "Val för looken",
+    "saveToBoard": "Spara på tavla",
+    "seeLess": "Visa färre sådana här",
+    "seeLessDone": "Uppfattat. Du kommer att se färre looks som den här."
+  },
+  "saveToBoard": {
+    "title": "Spara på tavla",
+    "newBoard": "Ny tavla",
+    "savedTo": "Sparad på {{name}}",
+    "removedFrom": "Borttagen från {{name}}",
+    "empty": "Inga tavlor än. Skapa din första.",
+    "loadFailed": "Det gick inte att ladda dina tavlor. Kontrollera din anslutning och försök igen.",
+    "done": "Klar"
   }
 }

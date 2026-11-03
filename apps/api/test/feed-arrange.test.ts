@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyDiversity,
   type Candidate,
+  demoteSimilar,
   interleave,
   jitter,
   similarityKey,
@@ -19,6 +20,19 @@ describe('similarityKey', () => {
     );
     expect(similarityKey(['work'], ['autumn'])).not.toBe(similarityKey(['work'], ['winter']));
     expect(similarityKey([], [])).toBeNull();
+  });
+});
+
+describe('demoteSimilar', () => {
+  it('moves looks similar to "see less" ones to the back, keeping the order otherwise', () => {
+    const pool = [
+      look('a', 'x', 'k1'),
+      look('b', 'x', 'k2'),
+      look('c', 'x', null),
+      look('d', 'x', 'k1'),
+    ];
+    expect(demoteSimilar(pool, new Set(['k1'])).map((c) => c.id)).toEqual(['b', 'c', 'a', 'd']);
+    expect(demoteSimilar(pool, new Set()).map((c) => c.id)).toEqual(['a', 'b', 'c', 'd']);
   });
 });
 

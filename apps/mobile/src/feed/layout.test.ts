@@ -29,6 +29,7 @@ function card(n: number, width = 1080, height = 1440): FeedCard {
       },
     },
     itemCount: 0,
+    saved: false,
   };
 }
 

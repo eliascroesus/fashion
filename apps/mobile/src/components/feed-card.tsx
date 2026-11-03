@@ -1,10 +1,15 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { FeedCard as Card } from '@outfitly/shared';
+import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { radii, spacing, ThemedText, useColors } from '../theme';
+import { SaveButton } from './save-button';
+
+/** Press and hold this long for the look's menu (a little quicker than the system default). */
+const MENU_DELAY_MS = 350;
 
 interface FeedCardProps {
   card: Card;
@@ -13,17 +18,17 @@ interface FeedCardProps {
   /** The photo size that fits this card (see pickPhotoUrl). */
   uri: string;
   onOpen: (lookId: string) => void;
-}
-
-/** Saving arrives in Step 2.4; until then the tap is caught here so it doesn't open the look. */
-function saveNotReadyYet() {
-  return undefined;
+  /** Press and hold: the look's menu (save to board, see less). */
+  onMenu: (lookId: string) => void;
+  /** The save button gets `-save` added. */
+  testID?: string;
 }
 
 /**
  * A look in the grid: only the photo, a save button and (once products exist)
  * the number of pieces. Its size is known before the photo loads; a blurred
- * preview and the photo's main colour fill it meanwhile.
+ * preview and the photo's main colour fill it meanwhile. Tap opens the look;
+ * press and hold opens its menu.
  */
 export const FeedCard = memo(function FeedCard({
   card,
@@ -31,16 +36,28 @@ export const FeedCard = memo(function FeedCard({
   height,
   uri,
   onOpen,
+  onMenu,
+  testID = 'feed-card',
 }: FeedCardProps) {
   const { t } = useTranslation();
   const colors = useColors();
   return (
     <Pressable
-      testID="feed-card"
+      testID={testID}
       accessibilityRole="button"
       accessibilityLabel={t('feed.openLook')}
+      accessibilityHint={t('feed.moreOptions')}
+      accessibilityActions={[{ name: 'longpress', label: t('lookMenu.title') }]}
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === 'longpress') onMenu(card.id);
+      }}
       onPress={() => {
         onOpen(card.id);
+      }}
+      delayLongPress={MENU_DELAY_MS}
+      onLongPress={() => {
+        Haptics.selectionAsync().catch(() => undefined);
+        onMenu(card.id);
       }}
       style={({ pressed }) => [
         styles.card,
@@ -67,16 +84,9 @@ export const FeedCard = memo(function FeedCard({
           </ThemedText>
         </View>
       ) : null}
-      <Pressable
-        testID="feed-card-save"
-        accessibilityRole="button"
-        accessibilityLabel={t('feed.save')}
-        hitSlop={spacing.sm}
-        onPress={saveNotReadyYet}
-        style={[styles.save, { backgroundColor: colors.surface }]}
-      >
-        <Ionicons name="bookmark-outline" size={18} color={colors.text} />
-      </Pressable>
+      <View style={styles.save}>
+        <SaveButton card={card} testID={`${testID}-save`} />
+      </View>
     </Pressable>
   );
 });
@@ -94,14 +104,5 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xxs,
     borderRadius: radii.pill,
   },
-  save: {
-    position: 'absolute',
-    right: spacing.sm,
-    bottom: spacing.sm,
-    width: 34,
-    height: 34,
-    borderRadius: radii.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  save: { position: 'absolute', right: spacing.sm, bottom: spacing.sm },
 });

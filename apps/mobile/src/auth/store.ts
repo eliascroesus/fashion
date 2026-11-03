@@ -37,13 +37,14 @@ export function getActiveProfileId(): string | null {
   return current?.activeProfileId ?? null;
 }
 
-function subscribe(listener: () => void): () => void {
+/** Runs `listener` whenever the signed-in login or its profiles change. */
+export function subscribeMe(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
 
 export function useMe(): Me | null {
-  return useSyncExternalStore(subscribe, getMe);
+  return useSyncExternalStore(subscribeMe, getMe);
 }
 
 /** A guest token whose content still has to move into the signed-in account. */
