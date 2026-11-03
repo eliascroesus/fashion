@@ -219,6 +219,7 @@ This is the full list of tables the MVP needs, so Claude Code designs Phase 1 wi
 | `swipes`, `seen` | Every skip and "see less"; what was shown in the last 7 days | Better feed now, AI ranking later | 2 |
 | `events` | Every impression (with feed position), open, save, share, click, split by month (one partition per month, made ahead by a daily job; no foreign keys: events stay with the profile that made them) | Growth metrics and stats now, ad sales later | 2 |
 | `follows` | Which profile follows which | Following feed, stats | 2 |
+| `feed_snapshots` | The ranked list behind a For You scroll (up to 400 look ids): a profile's newest 5, or a few shared logged-out ones; deleted after a day | Pages never repeat or skip a look, even when scores change mid-scroll | 2 |
 | `garments` | Each item the AI spotted in a photo: box, category, colour, attributes, fingerprint vector | Dots on garments, search words, "more like this" | 3 |
 | `products` | The item itself: brand, name, category, main image, fingerprint vector, owning business profile (if any) | "The same jacket" across shops; brands' Products tab | 3 |
 | `offers` | Which shop sells a product: URL (poster's affiliate tag kept), price, currency, stock, last checked, price history | Prices, link checks, later commissions and checkout | 3 |

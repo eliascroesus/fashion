@@ -1,6 +1,7 @@
 import { type Db, ensureEventPartitions, idempotencyKeys, lt, sql } from '@outfitly/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { PgBoss } from 'pg-boss';
+import { deleteOldFeedSnapshots, recomputePopularity } from './feed/popularity.ts';
 import { ImageRejectedError } from './media/image.ts';
 import { markMediaFailed, processUploadedMedia } from './media/pipeline.ts';
 import type { PhotoStorage } from './storage.ts';
@@ -15,6 +16,10 @@ export const QUEUES = {
   mediaProcess: 'media-process',
   /** Photos whose processing ran out of retries (or crashed); marks them failed. */
   mediaProcessFailed: 'media-process-failed',
+  /** Recomputes every look's popularity score (saves per view). */
+  feedPopularity: 'feed-popularity',
+  /** Deletes For You lists older than a day (hourly). */
+  feedSnapshotCleanup: 'feed-snapshot-cleanup',
 } as const;
 
 /** What routes need to enqueue work. */
@@ -79,6 +84,22 @@ export async function startJobs(boss: PgBoss, options: WorkerDeps): Promise<void
   });
   // Also sent at every startup: a sleeping staging machine misses the daily run.
   await boss.schedule(QUEUES.eventPartitions, '7 2 * * *');
+
+  await boss.createQueue(QUEUES.feedPopularity);
+  await boss.work(QUEUES.feedPopularity, workOptions, async () => {
+    const changed = await recomputePopularity(db);
+    log.info({ changed }, 'popularity scores recomputed');
+    return { changed };
+  });
+  await boss.schedule(QUEUES.feedPopularity, '*/15 * * * *');
+
+  await boss.createQueue(QUEUES.feedSnapshotCleanup);
+  await boss.work(QUEUES.feedSnapshotCleanup, workOptions, async () => {
+    const deleted = await deleteOldFeedSnapshots(db);
+    log.info({ deleted }, 'old feed lists removed');
+    return { deleted };
+  });
+  await boss.schedule(QUEUES.feedSnapshotCleanup, '37 * * * *');
 
   await boss.createQueue(QUEUES.mediaProcessFailed);
   await boss.work<{ mediaId: string }>(QUEUES.mediaProcessFailed, workOptions, async (jobs) => {

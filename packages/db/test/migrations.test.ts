@@ -11,6 +11,7 @@ const EXPECTED_TABLES = [
   'events',
   'events_default',
   'feature_flags',
+  'feed_snapshots',
   'follows',
   'idempotency_keys',
   'look_media',

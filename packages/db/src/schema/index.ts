@@ -1,5 +1,6 @@
 export * from './events.ts';
 export * from './feature-flags.ts';
+export * from './feed.ts';
 export * from './idempotency-keys.ts';
 export * from './looks.ts';
 export * from './media.ts';

@@ -1,0 +1,1 @@
+CREATE INDEX "feed_snapshots_profile_created_at_idx" ON "feed_snapshots" USING btree ("profile_id","created_at");

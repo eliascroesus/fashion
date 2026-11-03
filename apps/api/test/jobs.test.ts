@@ -82,6 +82,23 @@ describe('background jobs (pg-boss)', () => {
     );
   });
 
+  it('recompute popularity every 15 minutes and clear old feed lists hourly', async () => {
+    const id = await boss.send(QUEUES.feedPopularity, {});
+    if (!id) throw new Error('job was not created');
+    await waitForState(QUEUES.feedPopularity, id, 'completed');
+    const cleanup = await boss.send(QUEUES.feedSnapshotCleanup, {});
+    if (!cleanup) throw new Error('job was not created');
+    await waitForState(QUEUES.feedSnapshotCleanup, cleanup, 'completed');
+
+    const schedules = await boss.getSchedules();
+    expect(schedules).toContainEqual(
+      expect.objectContaining({ name: QUEUES.feedPopularity, cron: '*/15 * * * *' }),
+    );
+    expect(schedules).toContainEqual(
+      expect.objectContaining({ name: QUEUES.feedSnapshotCleanup, cron: '37 * * * *' }),
+    );
+  });
+
   it('keep their tables away from the public app key', async () => {
     const { rows } = await ctx.db.execute(
       sql`SELECT r AS role, has_schema_privilege(r, 'pgboss', 'USAGE') AS usage
