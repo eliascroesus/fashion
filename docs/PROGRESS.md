@@ -3,7 +3,7 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-Phase 2, Step 2.5 — The look page: built and checked in the iPhone simulator (2026-11-03), branch `phase-2-step-2-5` stacked on Step 2.4 (PR #11, waiting for Elias's OK to merge). Tapping a look zooms its photo into the look page: swipeable photos, the poster with Follow, the caption, a place for the pieces (Phase 3), and "More like this". Back lands on the same spot. Still open from earlier steps: "mid-range Android, no blank cards or stutter" (2.3) and "300 real looks in dev" (2.1), waiting on the phone and the photos. Phase 1 gate: everything passed except "app on both phones with login" (no Android phone yet; a real iPhone needs the Apple Developer membership); Elias chose to go on and do that check when the hardware is ready. Next: Step 2.6 — taste picker.
+Phase 2, Step 2.5 — The look page: built and checked in the iPhone simulator (2026-11-03), PR #12, stacked on Step 2.4 (PR #11, waiting for Elias's OK to merge). Tapping a look zooms its photo into the look page: swipeable photos, the poster with Follow, the caption, a place for the pieces (Phase 3), and "More like this". Back lands on the same spot. Still open from earlier steps: "mid-range Android, no blank cards or stutter" (2.3) and "300 real looks in dev" (2.1), waiting on the phone and the photos. Phase 1 gate: everything passed except "app on both phones with login" (no Android phone yet; a real iPhone needs the Apple Developer membership); Elias chose to go on and do that check when the hardware is ready. Next: Step 2.6 — taste picker.
 
 ## Done
 - Step 1.1 — Project skeleton and safety net (PR #1). Monorepo (pnpm + Turborepo), strict TypeScript, ESLint + Prettier, Vitest, GitHub Actions CI on every pull request. CI green.
@@ -30,7 +30,7 @@ Phase 2, Step 2.5 — The look page: built and checked in the iPhone simulator (
     - `save-sign-up.yaml` passes: it empties the test login's saves, saves a look as a logged-out visitor (guest + sign-up sheet), signs in to the test login (guest merge), and finds the look in Saved. Afterwards the database shows exactly that one save on the account, and the guest profile closed.
     - All three flows pass on the same build.
   - **Fixed along the way:** a guest account could never be made in the app. The CAPTCHA web view blocked Cloudflare's inner `about:srcdoc` frame, so the check hung until its 30 s timeout. The old "Test save" check only looked for the sheet. Only one login existed in Supabase (Elias's Google).
-- Step 2.5 — The look page — **done in the iPhone simulator (2026-11-03).**
+- Step 2.5 — The look page (PR #12) — **done in the iPhone simulator (2026-11-03).**
   - **Server:** `GET /v1/looks/:id` (public): the look's ready photos in order, the poster (name, @handle, photo or none, verified), caption, and saved / following for the viewer. `GET /v1/looks/:id/similar`: "More like this", 20 per page, up to 200 looks. `PUT/DELETE /v1/follows/:profileId`. No migration. Live on staging.
   - **App:**
     - On iPhone (iOS 18+) the card's photo zooms into the look page (Apple's own transition, via Expo Router).
