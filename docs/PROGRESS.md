@@ -3,7 +3,7 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-Phase 2, Step 2.4 — Saving, boards and the sign-up moment: built and checked in the iPhone simulator, PR #11 open (2026-11-03). Saving works everywhere: one tap, offline, without duplicates. Saved has Saves + Boards. The first save as a visitor makes a guest account and opens the sign-up sheet. Both "Done when" checks pass on the simulator. Still open from earlier steps: "mid-range Android, no blank cards or stutter" (2.3) and "300 real looks in dev" (2.1), waiting on the phone and the photos. Phase 1 gate: everything passed except "app on both phones with login" (no Android phone yet; a real iPhone needs the Apple Developer membership). Elias chose to go on and do that check when the hardware is ready. Next: Step 2.5 — the look page.
+Phase 2, Step 2.5 — The look page: built and checked in the iPhone simulator (2026-11-03), branch `phase-2-step-2-5` stacked on Step 2.4 (PR #11, waiting for Elias's OK to merge). Tapping a look zooms its photo into the look page: swipeable photos, the poster with Follow, the caption, a place for the pieces (Phase 3), and "More like this". Back lands on the same spot. Still open from earlier steps: "mid-range Android, no blank cards or stutter" (2.3) and "300 real looks in dev" (2.1), waiting on the phone and the photos. Phase 1 gate: everything passed except "app on both phones with login" (no Android phone yet; a real iPhone needs the Apple Developer membership); Elias chose to go on and do that check when the hardware is ready. Next: Step 2.6 — taste picker.
 
 ## Done
 - Step 1.1 — Project skeleton and safety net (PR #1). Monorepo (pnpm + Turborepo), strict TypeScript, ESLint + Prettier, Vitest, GitHub Actions CI on every pull request. CI green.
@@ -30,9 +30,28 @@ Phase 2, Step 2.4 — Saving, boards and the sign-up moment: built and checked i
     - `save-sign-up.yaml` passes: it empties the test login's saves, saves a look as a logged-out visitor (guest + sign-up sheet), signs in to the test login (guest merge), and finds the look in Saved. Afterwards the database shows exactly that one save on the account, and the guest profile closed.
     - All three flows pass on the same build.
   - **Fixed along the way:** a guest account could never be made in the app. The CAPTCHA web view blocked Cloudflare's inner `about:srcdoc` frame, so the check hung until its 30 s timeout. The old "Test save" check only looked for the sheet. Only one login existed in Supabase (Elias's Google).
+- Step 2.5 — The look page — **done in the iPhone simulator (2026-11-03).**
+  - **Server:** `GET /v1/looks/:id` (public): the look's ready photos in order, the poster (name, @handle, photo or none, verified), caption, and saved / following for the viewer. `GET /v1/looks/:id/similar`: "More like this", 20 per page, up to 200 looks. `PUT/DELETE /v1/follows/:profileId`. No migration. Live on staging.
+  - **App:**
+    - On iPhone (iOS 18+) the card's photo zooms into the look page (Apple's own transition, via Expo Router).
+    - Photos swipe sideways with dots, and double-tap saves.
+    - A poster row with Follow / Following (optimistic and offline-safe like saves; logged out it opens the sign-up sheet).
+    - The caption, a "Shop the look" placeholder, and "More like this" as a two-column grid under the look (one list, so it scrolls as one page). Tapping a look there opens its page; Back goes back up.
+  - **Tests:**
+    - Maestro `look-page.yaml` passes on the iPhone 18 Pro simulator (Release build, staging): scroll Home, open a look, check poster / Follow / caption / photos / shop placeholder / "More like this", open a look from "More like this", Back twice. Then the developer menu must show "Last look open" under 400 ms.
+    - `same-place.sh` checks that Home before and after is pixel-identical (status bar and scroll indicator left out).
+    - The other three flows still pass.
 
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
+- 2026-11-03 — Look page (Step 2.5):
+  - **Opening:** the grid card's photo zooms into the look page with Apple's zoom transition (`Link.AppleZoom` in Expo Router, iOS 18+). On Android and older iOS it's the normal slide, because a grow effect there needs an experimental library. The zoom wraps only the photo (with its own size): wrapping the whole card broke the masonry layout (the wrapper takes no space of its own).
+  - **Layout:** all photos are as tall as the cover (cropped to fit), so swiping never changes the height.
+  - **Follow:** following needs a login; logged out, Follow opens the sign-up sheet and never makes a guest (only the first save does). Follow / unfollow go through the same outbox as saves.
+  - **More like this:** looks sharing the most occasion + season tags, then the most popular, then the newest, up to 200 (AI similarity replaces the tags in Phase 3). Popularity can change between pages, so a look may rarely repeat; the app drops repeats.
+  - **Open time:** measured from the tap to the cover photo being displayed (expo-image's display event). The cover first shows the very copy the grid card loaded, at the same size for the same column width, so it comes from memory; the sharp 1080 copy fades in on top. Shown in the developer menu as "Last look open".
+  - **Pages:** the look page has no pull-to-refresh, because pulling down may close an iOS zoom. A visitor's first save on a look page keeps the page as it is: the loaded look and its "More like this" carry over to the new guest, like For You.
+  - **Card styles:** a card's style must be one flat object, because Link hands props to it through a slot that drops style arrays in release builds and throws in development. Found in review: the cards had lost their rounded corners and background.
 - 2026-11-03 — Saving rules (Step 2.4, Pinterest-like):
   - A look on a board is always saved too: adding it to a board saves it, and unsaving takes it off every board.
   - Removing a look from one board keeps it saved. Deleting a board keeps its looks saved.
@@ -132,11 +151,12 @@ Phase 2, Step 2.4 — Saving, boards and the sign-up moment: built and checked i
 - `pnpm audit`: one moderate advisory in minimatch, pulled in only by ESLint (dev tool reading our own config) — not exploitable here; wait for upstream fix.
 
 ## Measured numbers
+- Look page open (Step 2.5, iPhone 18 Pro simulator, Release build, staging, 2026-11-03): from the tap to the cached cover photo displayed, 19–40 ms over 5 opens of different looks (40, 26, 22, 20, 19). The zoom animation is over about 0.3 s after the tap (screen recording: changes from 9.55 s to 9.84 s), so the look is fully open in under 400 ms. Not measured on a real phone yet.
+- "More like this" (Step 2.5, reviewer's local test, 10,000 looks): first page 45 ms, next page 57 ms. It reads every published look for each page (a full table scan), so it grows with the catalogue (For You: ~13 ms). See "Later".
 - Offline saves (Step 2.4, iPhone simulator, staging, 2026-11-03): back online at 20:32:55 UTC, the 2 offline saves were on the server at 20:33:03 (≈ 8 s, on the 2 s → 4 s → 8 s retry). The first save made the guest account in about 0.5 s (account 20:32:41.05, save 20:32:41.57).
 - Home grid (Step 2.3, iPhone 18 Pro simulator, Release build, staging, 300 stand-in looks, 2026-11-03): 30 fast flings went through all 300 looks (positions 0–299) with no blank cards in any mid-fling screenshot; 124 of the 300 cards stayed half visible for a second and were logged as impressions. Not a mid-range Android phone: stutter not measured yet.
 - 300 stand-in looks with 300 different pictures, from the Mac: 398.7 s (2026-11-03)
 - Feed p95 (Step 2.2, staging, 10,000 looks, 2026-11-03, after review fixes): For You logged out over HTTP from the Mac — page 1 p95 51 ms (p50 43), next pages p95 44 ms (40 runs, final deploy); server's own time page 1 ~29 ms, next pages ~21 ms (Fly logs). Logged in, feed code on the Mac against the staging database (≈ 16 ms per round trip, so mostly network): `@loadtest.01` (5 follows, taste, 300 seen) page 1 p95 114 ms, next pages 41 ms; Following p95 66 ms; worst case `@loadtest.07` (taste no look matches, so the taste pool reads the whole catalogue) page 1 p95 165 ms. Before fixing the query shape: logged-in page 1 600 ms.
-- Look page open: —
 - Cold start to cached feed: —
 - AI cost per 1,000 photos: —
 - Link-resolve success rate: —
@@ -155,6 +175,9 @@ Phase 2, Step 2.4 — Saving, boards and the sign-up moment: built and checked i
 - Idempotency: answers below 500 are stored and replayed for 24 h, including a 403 that might pass later; consider freeing the key for 403/409/429 like 5xx (the outbox drops an action after 10 refusals).
 - Guest merge: a save sent as the guest that reaches the database after the merge started could stay on the closed guest profile (the app now waits for its in-flight save first, so the window is tiny). A server-side fix: the merge locks the guest's memberships and save/board writes take a share lock on the acting membership.
 - "See less like this" has no undo yet (Pinterest shows one in the message).
+- "More like this" reads the whole catalogue for each page. Before the catalogue grows (or with Step 3.8's AI similarity, which replaces it), rank only the top few hundred candidates, e.g. from `looks_feed_popular_idx`, or add a GIN index on the tags.
+- "More like this" cards log no impressions yet (positions there could feed ads and stats later). Chained look pages (look → more like this → look …) all stay open underneath; consider a depth limit if memory becomes a problem on Android.
+- What the app remembers the server confirmed (saved, following) is cleared when the active profile changes. After a guest merges into an account, a look the guest saved can show as unsaved in feeds loaded before the merge until they reload (Saves and Boards reload at once).
 - The install id sent with logged-out events is a lasting identifier sent before any consent: review with the legal step (5.5).
 - Phones whose clock is more than 10 minutes ahead lose their events (dropped by the server) and the app doesn't notice; report to Sentry when far fewer are accepted than sent.
 - A failed pull to refresh is silent (the old list stays); show a short message once there's a toast pattern.

@@ -1,5 +1,6 @@
 import type { FeedCard, FeedPage, Me } from '@outfitly/shared';
 import type { InfiniteData, QueryClient, QueryKey } from '@tanstack/react-query';
+import { LOOK_QUERY_ROOT, SIMILAR_QUERY_ROOT } from '../looks/keys';
 import { CARD_LIST_ROOTS } from '../saves/keys';
 import { feedQueryKey } from './keys';
 
@@ -36,17 +37,29 @@ export function findCachedCard(queryClient: QueryClient, lookId: string): FeedCa
   return undefined;
 }
 
+/** Copies cached data to another key, keeping its age (a stale copy still refreshes as before). */
+function copyQuery(queryClient: QueryClient, from: QueryKey, to: QueryKey): void {
+  const source = queryClient.getQueryState(from);
+  if (!source?.data || queryClient.getQueryData(to) !== undefined) return;
+  queryClient.setQueryData(to, source.data, { updatedAt: source.dataUpdatedAt });
+}
+
 /**
- * The first save logs a visitor in (a guest): their For You carries on under
- * the new profile instead of starting over, so the grid doesn't jump. The
- * server lets a logged-out list continue once there is a login.
+ * The first save logs a visitor in (a guest): what they are looking at
+ * carries on under the new profile instead of reloading, so nothing jumps.
+ * That's the For You being scrolled (the server lets a logged-out list
+ * continue once there is a login) and any open look page with its "More
+ * like this". Only for a brand-new guest: an existing account gets its own.
  */
-export function carryOverLoggedOutFeed(queryClient: QueryClient, from: Me | null, to: Me): void {
-  // Only a brand-new guest: an existing account gets its own feed (its saves, taste, follows).
-  if (from?.activeProfileId || !to.activeProfileId || !to.isAnonymous) return;
-  const source = queryClient.getQueryState(feedQueryKey('for-you', null));
-  const target = feedQueryKey('for-you', to.activeProfileId);
-  if (!source?.data || queryClient.getQueryData(target) !== undefined) return;
-  // Same age as the original, so a stored feed still gets its cold-start refresh.
-  queryClient.setQueryData(target, source.data, { updatedAt: source.dataUpdatedAt });
+export function carryOverLoggedOutData(queryClient: QueryClient, from: Me | null, to: Me): void {
+  const profileId = to.activeProfileId;
+  if (from?.activeProfileId || !profileId || !to.isAnonymous) return;
+  copyQuery(queryClient, feedQueryKey('for-you', null), feedQueryKey('for-you', profileId));
+  for (const root of [LOOK_QUERY_ROOT, SIMILAR_QUERY_ROOT]) {
+    for (const query of queryClient.getQueryCache().findAll({ queryKey: [root, 'anon'] })) {
+      const [, , lookId] = query.queryKey;
+      if (typeof lookId === 'string')
+        copyQuery(queryClient, query.queryKey, [root, profileId, lookId]);
+    }
+  }
 }

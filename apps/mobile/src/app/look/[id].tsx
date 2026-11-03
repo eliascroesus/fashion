@@ -2,6 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import type { FeedCard, LookDetail } from '@outfitly/shared';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
+import { ApiRequestError } from '../../api';
 import { ActivityIndicator, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthorRow } from '../../components/author-row';
@@ -44,6 +45,9 @@ export default function LookScreen() {
   const similar = useSimilarLooks(id);
   // The card from the grid shows at once; the look's own data fills in the rest.
   const card = findCard(id) ?? (detail.data ? cardOf(detail.data) : undefined);
+  // Removed or hidden since (404), versus no connection or a server problem (worth a retry).
+  const gone = detail.error instanceof ApiRequestError && detail.error.status === 404;
+  const retry = { label: t('errors.retry'), onPress: () => void detail.refetch() };
 
   let body = <ActivityIndicator style={styles.loading} color={colors.textMuted} />;
   if (detail.data) {
@@ -55,13 +59,10 @@ export default function LookScreen() {
         ) : null}
       </>
     );
+  } else if (gone) {
+    body = <FeedMessage body={t('look.notFound')} />;
   } else if (detail.isError) {
-    body = (
-      <FeedMessage
-        body={t('look.loadFailed')}
-        action={{ label: t('errors.retry'), onPress: () => void detail.refetch() }}
-      />
-    );
+    body = <FeedMessage body={t('look.loadFailed')} action={retry} />;
   }
 
   const header = card ? (
@@ -92,14 +93,17 @@ export default function LookScreen() {
           cardTestID="similar-card"
           header={header}
           endMessage={null}
+          refreshable={false}
           empty={
             <ThemedText tone="muted" style={styles.none}>
               {t('look.noSimilar')}
             </ThemedText>
           }
         />
-      ) : detail.isError ? (
+      ) : gone ? (
         <FeedMessage body={t('look.notFound')} />
+      ) : detail.isError ? (
+        <FeedMessage body={t('look.loadFailed')} action={retry} />
       ) : (
         <ActivityIndicator style={styles.loading} color={colors.textMuted} />
       )}

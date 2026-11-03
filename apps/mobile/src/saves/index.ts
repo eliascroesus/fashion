@@ -171,6 +171,9 @@ subscribeMe(() => {
   const profileId = getActiveProfileId();
   if (profileId === lastProfileId) return;
   lastProfileId = profileId;
+  // What the server confirmed was for the previous profile (a guest merge, sign-out, later switching).
+  confirmed.clear();
+  confirmedFollows.clear();
   if (profileId) void outbox.flush();
 });
 

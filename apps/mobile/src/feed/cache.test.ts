@@ -1,7 +1,8 @@
 import { InfiniteQueryObserver, QueryClient } from '@tanstack/react-query';
 import { themes } from '@outfitly/ui-tokens';
 import { describe, expect, it } from 'vitest';
-import { carryOverLoggedOutFeed, findCachedCard, replaceFeed } from './cache';
+import { lookQueryKey, similarQueryKey } from '../looks/keys';
+import { carryOverLoggedOutData, findCachedCard, replaceFeed } from './cache';
 import { feedQueryKey } from './keys';
 
 const card = (id: string) => ({
@@ -70,7 +71,7 @@ describe('replaceFeed', () => {
   });
 });
 
-describe('carryOverLoggedOutFeed', () => {
+describe('carryOverLoggedOutData', () => {
   const me = (profileId: string | null) => ({
     userId: '00000000-0000-4000-8000-000000000001',
     isAnonymous: true,
@@ -82,7 +83,7 @@ describe('carryOverLoggedOutFeed', () => {
   it('moves the logged-out For You to the first profile, unchanged', () => {
     const client = new QueryClient();
     client.setQueryData(feedQueryKey('for-you', null), feed, { updatedAt: 1234 });
-    carryOverLoggedOutFeed(client, null, me('p1'));
+    carryOverLoggedOutData(client, null, me('p1'));
     expect(client.getQueryData(feedQueryKey('for-you', 'p1'))).toBe(feed);
     expect(client.getQueryState(feedQueryKey('for-you', 'p1'))?.dataUpdatedAt).toBe(1234);
   });
@@ -92,16 +93,27 @@ describe('carryOverLoggedOutFeed', () => {
     client.setQueryData(feedQueryKey('for-you', null), feed);
     const own = { pages: [], pageParams: [] };
     client.setQueryData(feedQueryKey('for-you', 'p1'), own);
-    carryOverLoggedOutFeed(client, null, me('p1'));
+    carryOverLoggedOutData(client, null, me('p1'));
     expect(client.getQueryData(feedQueryKey('for-you', 'p1'))).toBe(own);
-    carryOverLoggedOutFeed(client, me('p1'), me('p2'));
+    carryOverLoggedOutData(client, me('p1'), me('p2'));
     expect(client.getQueryData(feedQueryKey('for-you', 'p2'))).toBeUndefined();
   });
 
   it('gives a sign-in to an existing account its own feed, not the logged-out one', () => {
     const client = new QueryClient();
     client.setQueryData(feedQueryKey('for-you', null), feed);
-    carryOverLoggedOutFeed(client, null, { ...me('account'), isAnonymous: false });
+    carryOverLoggedOutData(client, null, { ...me('account'), isAnonymous: false });
     expect(client.getQueryData(feedQueryKey('for-you', 'account'))).toBeUndefined();
+  });
+
+  it('keeps an open look page and its "More like this" through the first save', () => {
+    const client = new QueryClient();
+    const detail = { id: 'look-1' };
+    client.setQueryData(lookQueryKey(null, 'look-1'), detail, { updatedAt: 99 });
+    client.setQueryData(similarQueryKey(null, 'look-1'), feed);
+    carryOverLoggedOutData(client, null, me('guest'));
+    expect(client.getQueryData(lookQueryKey('guest', 'look-1'))).toBe(detail);
+    expect(client.getQueryState(lookQueryKey('guest', 'look-1'))?.dataUpdatedAt).toBe(99);
+    expect(client.getQueryData(similarQueryKey('guest', 'look-1'))).toBe(feed);
   });
 });

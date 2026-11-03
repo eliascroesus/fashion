@@ -1,6 +1,7 @@
 #!/bin/sh
 # After look-page.yaml: Home before opening a look and after Back must look the same
-# (status bar and scroll indicator left out). Usage: apps/mobile/.maestro/same-place.sh <maestro test output folder>
+# (status bar and scroll indicator left out). The crop is sized for the iPhone 18 Pro
+# simulator (1206 × 2622 screenshots) and uses macOS tools (sips, md5). Usage: apps/mobile/.maestro/same-place.sh <maestro test output folder>
 set -eu
 dir=$(dirname "$(find "$1" -name home-before.png | head -1)")
 # Status bar and the right edge (the scroll indicator fades out after scrolling) left out.

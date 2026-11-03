@@ -17,6 +17,7 @@ import Animated, {
 import { photoHeight } from '../feed/layout';
 import { saveIfNot } from '../saves';
 import { radii, spacing, useColors } from '../theme';
+import { gridPhotoUrl } from './look-grid';
 
 type Photo = FeedCard['photo'];
 
@@ -30,7 +31,7 @@ interface LookPhotosProps {
   /** All the look's photos once loaded; until then only the cover. */
   photos: readonly Photo[];
   width: number;
-  /** The cover is on screen: its first frame after layout (open-time measurement). */
+  /** The cover photo is displayed (open-time measurement). */
   onCoverShown?: () => void;
 }
 
@@ -65,32 +66,47 @@ export function LookPhotos({ card, photos, width, onCoverShown }: LookPhotosProp
     transform: [{ scale: 0.6 + 0.4 * pop.value }],
   }));
 
+  const sharp = (photo: Photo, placeholder: boolean) => (
+    <Image
+      source={{ uri: photo.urls[1080] }}
+      {...(placeholder ? { placeholder: { thumbhash: photo.thumbhash } } : {})}
+      placeholderContentFit="cover"
+      contentFit="cover"
+      cachePolicy="memory-disk"
+      transition={placeholder ? 0 : 150}
+      style={StyleSheet.absoluteFill}
+      accessible={false}
+    />
+  );
+
   const renderPhoto = ({ item, index }: { item: Photo; index: number }) => {
-    const image = (
-      <Image
-        source={{ uri: item.urls[1080] }}
-        // The cover's smaller copy is already in memory from the grid: show it until the sharp one arrives.
-        placeholder={index === 0 ? { uri: item.urls[600] } : { thumbhash: item.thumbhash }}
-        placeholderContentFit="cover"
-        contentFit="cover"
-        cachePolicy="memory-disk"
-        style={{ width, height, backgroundColor: item.dominantColor }}
-        accessible={false}
-      />
-    );
+    const frame = { width, height, backgroundColor: item.dominantColor };
+    // The cover first shows the very copy the grid card loaded (in memory, so at once),
+    // with the sharp 1080 fading in on top.
+    const image =
+      index === 0 ? (
+        <View style={frame}>
+          <Image
+            source={{ uri: gridPhotoUrl(item.urls, width) }}
+            placeholder={{ thumbhash: item.thumbhash }}
+            placeholderContentFit="cover"
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            style={StyleSheet.absoluteFill}
+            accessible={false}
+            {...(onCoverShown ? { onDisplay: onCoverShown } : {})}
+          />
+          {sharp(item, false)}
+        </View>
+      ) : (
+        <View style={frame}>{sharp(item, true)}</View>
+      );
     return (
       <Pressable
         testID={`look-photo-${String(index)}`}
         accessibilityLabel={t('look.photoOf', { index: index + 1, count: photos.length })}
+        accessibilityRole="image"
         onPress={onPress}
-        // The cover shows the grid's copy at once (the sharp one follows): that frame is "open".
-        {...(index === 0 && onCoverShown
-          ? {
-              onLayout: () => {
-                requestAnimationFrame(onCoverShown);
-              },
-            }
-          : {})}
       >
         {index === 0 ? <Link.AppleZoomTarget>{image}</Link.AppleZoomTarget> : image}
       </Pressable>
@@ -117,13 +133,18 @@ export function LookPhotos({ card, photos, width, onCoverShown }: LookPhotosProp
         <Ionicons name="bookmark" size={POP_SIZE / 2} color={colors.accent} />
       </Animated.View>
       {photos.length > 1 ? (
-        <View style={styles.dots} pointerEvents="none" testID="look-photo-dots">
+        // On a small pill of their own, so they show on light and dark photos alike.
+        <View
+          style={[styles.dots, { backgroundColor: colors.surface }]}
+          pointerEvents="none"
+          testID="look-photo-dots"
+        >
           {photos.map((photo, index) => (
             <View
               key={`${String(index)}-${photo.urls[300]}`}
               style={[
                 styles.dot,
-                { backgroundColor: index === page ? colors.surface : colors.textMuted },
+                { backgroundColor: index === page ? colors.text : colors.border },
               ]}
             />
           ))}
@@ -151,6 +172,9 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     flexDirection: 'row',
     gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.pill,
   },
   dot: { width: 6, height: 6, borderRadius: radii.pill },
 });

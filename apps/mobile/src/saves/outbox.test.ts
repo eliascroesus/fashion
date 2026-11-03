@@ -218,6 +218,15 @@ describe('Outbox', () => {
     expect(outbox.waitingCards().map((c) => c.id)).toEqual(['a', 'b']);
   });
 
+  it('never starts a guest session for a follow (only a save does)', async () => {
+    profile = false;
+    const outbox = new Outbox(deps());
+    outbox.add({ kind: 'follow', profileId: 'author' });
+    await vi.runAllTimersAsync();
+    expect(sessionStarts).toBe(0);
+    expect(sent).toHaveLength(0);
+  });
+
   it('tells whether a profile will be followed once everything waiting is sent', () => {
     fail = offline();
     const outbox = new Outbox(deps());

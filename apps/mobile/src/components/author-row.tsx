@@ -20,7 +20,10 @@ export function AuthorRow({ author }: { author: LookAuthor }) {
   const colors = useColors();
   const me = useMe();
   const following = useIsFollowing(author.id, author.isFollowing);
-  const name = author.displayName ?? author.handle;
+  // An empty display name falls back to the handle too.
+  const name = author.displayName?.trim() ? author.displayName : author.handle;
+  // The first character as people see it (an emoji is one, not half of one).
+  const initial = (Array.from(name)[0] ?? '').toUpperCase();
   const isMe = me?.profiles.some((p) => p.id === author.id) ?? false;
 
   return (
@@ -36,7 +39,7 @@ export function AuthorRow({ author }: { author: LookAuthor }) {
             accessible={false}
           />
         ) : (
-          <ThemedText variant="bodyStrong">{name.charAt(0).toUpperCase()}</ThemedText>
+          <ThemedText variant="bodyStrong">{initial}</ThemedText>
         )}
       </View>
       <View style={styles.names} accessible accessibilityLabel={t('look.authorLabel', { name })}>
@@ -48,7 +51,7 @@ export function AuthorRow({ author }: { author: LookAuthor }) {
             <Ionicons name="checkmark-circle" size={14} color={colors.accent} />
           ) : null}
         </View>
-        {author.displayName ? (
+        {name !== author.handle ? (
           <ThemedText variant="caption" tone="muted" numberOfLines={1}>
             {t('profile.handle', { handle: author.handle })}
           </ThemedText>
@@ -58,9 +61,8 @@ export function AuthorRow({ author }: { author: LookAuthor }) {
         <Pressable
           testID="look-follow"
           accessibilityRole="button"
-          accessibilityLabel={
-            following ? t('look.unfollowLabel', { name }) : t('look.followLabel', { name })
-          }
+          // One label; whether you follow is the "selected" state (announced once).
+          accessibilityLabel={t('look.followLabel', { name })}
           accessibilityState={{ selected: following }}
           hitSlop={spacing.sm}
           onPress={() => {

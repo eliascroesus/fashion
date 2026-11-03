@@ -61,37 +61,47 @@ export const FeedCard = memo(function FeedCard({
           Haptics.selectionAsync().catch(() => undefined);
           onMenu(card.id);
         }}
-        // A plain style (not a function of `pressed`): Link passes its props through a
-        // slot that can't merge a style function.
-        style={[styles.card, { width, height, backgroundColor: card.photo.dominantColor }]}
+        // One flat style object: Link hands its props to the card through a slot that
+        // can't merge style arrays or functions (dropped in release, an error in development).
+        style={{ ...styles.card, width, height, backgroundColor: card.photo.dominantColor }}
       >
-        {/* The photo is what zooms into the look page (iOS 18+). Its wrapper takes no
-              space of its own, so the photo needs its own size. */}
-        <Link.AppleZoom>
-          <Image
-            source={{ uri }}
-            placeholder={{ thumbhash: card.photo.thumbhash }}
-            placeholderContentFit="cover"
-            contentFit="cover"
-            // Cells are reused while scrolling: never show the previous look's photo.
-            recyclingKey={card.id}
-            cachePolicy="memory-disk"
-            transition={120}
-            style={{ width, height }}
-            accessible={false}
-          />
-        </Link.AppleZoom>
-        {card.itemCount > 0 ? (
-          <View style={[styles.badge, { backgroundColor: colors.surface }]}>
-            <Ionicons name="pricetag-outline" size={12} color={colors.text} />
-            <ThemedText variant="caption">
-              {t('feed.itemCount', { count: card.itemCount })}
-            </ThemedText>
-          </View>
-        ) : null}
-        <View style={styles.save}>
-          <SaveButton card={card} testID={`${testID}-save`} />
-        </View>
+        {({ pressed }) => (
+          <>
+            {/* The photo is what zooms into the look page (iOS 18+). Its wrapper takes no
+                space of its own, so the photo needs its own size. */}
+            <Link.AppleZoom>
+              <Image
+                source={{ uri }}
+                placeholder={{ thumbhash: card.photo.thumbhash }}
+                placeholderContentFit="cover"
+                contentFit="cover"
+                // Cells are reused while scrolling: never show the previous look's photo.
+                recyclingKey={card.id}
+                cachePolicy="memory-disk"
+                transition={120}
+                style={{ width, height }}
+                accessible={false}
+              />
+            </Link.AppleZoom>
+            {card.itemCount > 0 ? (
+              <View style={[styles.badge, { backgroundColor: colors.surface }]}>
+                <Ionicons name="pricetag-outline" size={12} color={colors.text} />
+                <ThemedText variant="caption">
+                  {t('feed.itemCount', { count: card.itemCount })}
+                </ThemedText>
+              </View>
+            ) : null}
+            <View style={styles.save}>
+              <SaveButton card={card} testID={`${testID}-save`} />
+            </View>
+            {pressed ? (
+              <View
+                pointerEvents="none"
+                style={[StyleSheet.absoluteFill, styles.pressed, { backgroundColor: colors.text }]}
+              />
+            ) : null}
+          </>
+        )}
       </Pressable>
     </Link>
   );
@@ -99,6 +109,8 @@ export const FeedCard = memo(function FeedCard({
 
 const styles = StyleSheet.create({
   card: { borderRadius: radii.md, overflow: 'hidden' },
+  // Dims the card a little while it's held.
+  pressed: { opacity: 0.12 },
   badge: {
     position: 'absolute',
     left: spacing.sm,

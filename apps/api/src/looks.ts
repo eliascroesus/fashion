@@ -73,7 +73,7 @@ export async function lookDetail(
              EXISTS (SELECT 1 FROM follows f WHERE f.follower_profile_id = ${viewer}
                         AND f.followed_profile_id = a.id AND f.deleted_at IS NULL) AS following
         FROM looks l JOIN profiles a ON a.id = l.author_profile_id
-       WHERE l.id = ${lookId} AND ${showableLook(sql`l`)}`),
+       WHERE l.id = ${lookId} AND ${showableLook(sql`l`)} AND l.published_at <= now()`),
     db.execute<PhotoRow>(sql`
       SELECT m.width, m.height, m.thumbhash, m.dominant_color, m.key_1080, m.key_600, m.key_300
         FROM look_media lm JOIN media m ON m.id = lm.media_id
@@ -129,8 +129,9 @@ interface SimilarRow extends Record<string, unknown> {
 /**
  * "More like this": other looks ranked by how many occasion and season tags
  * they share with this one, then popularity, then newest (AI similarity
- * replaces the tags in Phase 3). At most MAX_SIMILAR_LOOKS in all. Scores can
- * change between pages, so a look may rarely repeat (the app drops repeats).
+ * replaces the tags in Phase 3). At most MAX_SIMILAR_LOOKS in all. Popularity
+ * can change between pages, so a look may rarely repeat (the app drops
+ * repeats) or be skipped.
  */
 export async function similarPage(
   deps: FeedDeps,
@@ -141,7 +142,8 @@ export async function similarPage(
   const after = cursor === undefined ? undefined : decodeCursor(similarCursorSchema, cursor);
   const shown = after?.n ?? 0;
   const { rows: base } = await deps.db.execute(sql`
-    SELECT 1 FROM looks l WHERE l.id = ${lookId} AND ${showableLook(sql`l`)}`);
+    SELECT 1 FROM looks l
+     WHERE l.id = ${lookId} AND ${showableLook(sql`l`)} AND l.published_at <= now()`);
   if (base.length === 0) throw notFound();
   const left = MAX_SIMILAR_LOOKS - shown;
   if (left <= 0) return { items: [], nextCursor: null };

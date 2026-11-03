@@ -40,6 +40,11 @@ import { FeedMessage } from './feed-message';
 
 const METRICS: GridMetrics = { columns: grid.columns, gap: grid.gap, inset: grid.inset };
 
+/** The photo a grid card on this screen loads (so a look page can reuse the cached copy). */
+export function gridPhotoUrl(urls: FeedCard['photo']['urls'], screenWidth: number): string {
+  return pickPhotoUrl(urls, PixelRatio.getPixelSizeForLayoutSize(cardWidth(screenWidth, METRICS)));
+}
+
 /**
  * "On screen" = at least half of the card visible, reported as soon as it
  * changes (impressions and prefetching run off it; the handler is cheap).
@@ -72,6 +77,8 @@ interface LookGridProps {
   onScrollBeginDrag?: () => void;
   /** Under the last card once the list has ended (default "You're all caught up"); null for none. */
   endMessage?: string | null;
+  /** Pull to refresh (off on the look page, where pulling down may close an iOS zoom). */
+  refreshable?: boolean;
 }
 
 /**
@@ -91,6 +98,7 @@ export function LookGrid({
   onReset,
   onScrollBeginDrag,
   endMessage,
+  refreshable = true,
 }: LookGridProps) {
   const { t } = useTranslation();
   const colors = useColors();
@@ -224,13 +232,15 @@ export function LookGrid({
         viewport.current = e.nativeEvent.layout.height;
       }}
       refreshControl={
-        <RefreshControl
-          refreshing={list.refreshing}
-          onRefresh={() => void list.refresh()}
-          tintColor={colors.textMuted}
-          colors={[colors.accent]}
-          progressBackgroundColor={colors.surface}
-        />
+        refreshable ? (
+          <RefreshControl
+            refreshing={list.refreshing}
+            onRefresh={() => void list.refresh()}
+            tintColor={colors.textMuted}
+            colors={[colors.accent]}
+            progressBackgroundColor={colors.surface}
+          />
+        ) : undefined
       }
       // iOS: keeps the last cards clear of the floating tab bar.
       contentInsetAdjustmentBehavior="automatic"

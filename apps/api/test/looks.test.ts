@@ -10,6 +10,7 @@ import {
 } from '@outfitly/shared';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { showableLook } from '../src/feed/cards.ts';
 import { createAuthor, createLogin, createLook, createLooks } from './feed-fixtures.ts';
 import { buildTestApp, createTestContext, type TestContext } from './helpers.ts';
 
@@ -125,6 +126,13 @@ describe('GET /v1/looks/:lookId', () => {
     expect(detail.saved).toBe(true);
     expect(detail.author.isFollowing).toBe(true);
     expect(detail.author.avatar?.urls[300]).toBe(`https://img.test/m/${avatar}/300.webp`);
+    // Someone else sees neither.
+    const other = await viewer();
+    const theirs = lookDetailSchema.parse(
+      (await call('GET', `/v1/looks/${look}`, other.token)).json(),
+    );
+    expect(theirs.saved).toBe(false);
+    expect(theirs.author.isFollowing).toBe(false);
     await ctx.db.execute(sql`UPDATE profiles SET avatar_media_id = NULL WHERE id = ${author}`);
   });
 
@@ -198,7 +206,25 @@ describe('GET /v1/looks/:lookId/similar', () => {
     const all = pages.flatMap((p) => p.items.map((c) => c.id));
     expect(pages[0]?.items).toHaveLength(FEED_PAGE_SIZE);
     expect(all).toHaveLength(MAX_SIMILAR_LOOKS);
-    expect(new Set(all).size).toBe(all.length);
+    // Page by page gives exactly the top of the full ranking: nothing skipped or repeated.
+    const { rows } = await ctx.db.execute<{ id: string }>(sql`
+      SELECT l.id FROM looks l, looks b
+       WHERE b.id = ${base} AND l.id <> b.id AND ${showableLook(sql`l`)}
+       ORDER BY cardinality(ARRAY(SELECT unnest(l.occasion_tags::text[] || l.season_tags::text[])
+                                  INTERSECT SELECT unnest(b.occasion_tags::text[] || b.season_tags::text[]))) DESC,
+                l.popularity_score DESC, l.published_at DESC, l.id DESC
+       LIMIT ${MAX_SIMILAR_LOOKS}`);
+    expect(all).toEqual(rows.map((r) => r.id));
+  });
+
+  it('refuses a cursor that is broken or past the end', async () => {
+    const forged = Buffer.from(
+      JSON.stringify({ s: 0, p: 0, t: '2026-01-01T00:00:00.000000Z', id: base, n: 999 }),
+    ).toString('base64url');
+    for (const cursor of ['nonsense', forged]) {
+      const res = await call('GET', `/v1/looks/${base}/similar?cursor=${cursor}`);
+      expect(res.statusCode).toBe(400);
+    }
   });
 });
 
@@ -232,8 +258,11 @@ describe('PUT / DELETE /v1/follows/:profileId', () => {
     expect(rows[0]?.deletedAt).toBeNull();
   });
 
-  it('refuses yourself, unknown profiles and logged-out callers; replays a retry', async () => {
+  it('refuses yourself, unknown or deleted profiles and logged-out callers; replays a retry', async () => {
     const me = await viewer();
+    const closed = await createAuthor(ctx.db, 'follow.closed');
+    await ctx.db.execute(sql`UPDATE profiles SET deleted_at = now() WHERE id = ${closed}`);
+    expect((await call('PUT', `/v1/follows/${closed}`, me.token)).statusCode).toBe(404);
     expect((await call('PUT', `/v1/follows/${me.profileId}`, me.token)).statusCode).toBe(400);
     expect((await call('PUT', `/v1/follows/${crypto.randomUUID()}`, me.token)).statusCode).toBe(
       404,
