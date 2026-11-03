@@ -12,6 +12,7 @@ import type { JobQueue } from './jobs.ts';
 import { boardsRoutes } from './routes/boards.ts';
 import { eventsRoutes } from './routes/events.ts';
 import { feedRoutes } from './routes/feed.ts';
+import { looksRoutes } from './routes/looks.ts';
 import { mediaRoutes } from './routes/media.ts';
 import { savesRoutes } from './routes/saves.ts';
 import { sessionRoutes } from './routes/session.ts';
@@ -75,6 +76,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       eventsRoutes(v1, deps);
       savesRoutes(v1, deps);
       boardsRoutes(v1, deps);
+      looksRoutes(v1, deps);
       done();
     },
     { prefix: API_PREFIX },

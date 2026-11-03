@@ -60,7 +60,18 @@
   },
   "look": {
     "back": "Back",
-    "notFound": "This look isn't available."
+    "notFound": "This look isn't available.",
+    "photoOf": "Photo {{index}} of {{count}}",
+    "follow": "Follow",
+    "following": "Following",
+    "followLabel": "Follow {{name}}",
+    "unfollowLabel": "Stop following {{name}}",
+    "authorLabel": "Posted by {{name}}",
+    "shopTitle": "Shop the look",
+    "shopSoon": "The pieces in this look will show here soon.",
+    "moreLikeThis": "More like this",
+    "noSimilar": "No similar looks yet.",
+    "loadFailed": "Couldn't load the rest of this look."
   },
   "errors": {
     "generic": "Something went wrong. Please try again.",
@@ -100,7 +111,8 @@
     "waiting_other": "Waiting to sync: {{count}}",
     "unsyncedTitle": "Some saves haven't synced",
     "unsyncedBody_one": "{{count}} change hasn't reached Outfitly yet (you seem to be offline). If you sign out now, it will be lost.",
-    "unsyncedBody_other": "{{count}} changes haven't reached Outfitly yet (you seem to be offline). If you sign out now, they will be lost."
+    "unsyncedBody_other": "{{count}} changes haven't reached Outfitly yet (you seem to be offline). If you sign out now, they will be lost.",
+    "lastLookOpen": "Last look open: {{ms}} ms"
   },
   "board": {
     "options": "Board options",

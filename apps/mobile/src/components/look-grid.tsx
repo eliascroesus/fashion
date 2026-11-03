@@ -33,7 +33,7 @@ import {
   pickPhotoUrl,
   shouldLoadMore,
 } from '../feed/layout';
-import type { CardList } from '../saves/queries';
+import type { CardList } from '../feed/card-list';
 import { grid, spacing, ThemedText, useColors } from '../theme';
 import { FeedCard as FeedCardView } from './feed-card';
 import { FeedMessage } from './feed-message';
@@ -77,8 +77,8 @@ interface LookGridProps {
 /**
  * Looks as a two-column masonry grid: sizes known before photos load, the
  * next page 60% of the way into the current one, photos for the next two
- * screens fetched ahead, pull to refresh. Tap opens a look; press and hold
- * opens its menu.
+ * screens fetched ahead, pull to refresh. Tap opens a look (FeedCard); press
+ * and hold opens its menu.
  */
 export function LookGrid({
   list,
@@ -153,9 +153,6 @@ export function LookGrid({
     if (shouldLoadMore(furthest, cards.length)) loadMore();
   };
 
-  const openLook = useCallback((id: string) => {
-    router.push({ pathname: '/look/[id]', params: { id } });
-  }, []);
   const openMenu = useCallback((id: string) => {
     router.push({ pathname: '/look-menu/[id]', params: { id } });
   }, []);
@@ -168,13 +165,12 @@ export function LookGrid({
           width={width}
           height={photoHeight(item.photo, width)}
           uri={pickPhotoUrl(item.photo.urls, widthPx)}
-          onOpen={openLook}
           onMenu={openMenu}
           testID={cardTestID}
         />
       </View>
     ),
-    [width, widthPx, openLook, openMenu, cardTestID],
+    [width, widthPx, openMenu, cardTestID],
   );
 
   let footer: ReactElement | null = null;

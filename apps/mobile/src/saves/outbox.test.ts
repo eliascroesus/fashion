@@ -47,6 +47,8 @@ function deps(initial: PendingAction[] = [], overrides: Partial<OutboxDeps> = {}
 }
 
 const offline = () => new ApiRequestError(0, 'network_error', 'offline');
+const lookOf = (p: PendingAction | undefined) =>
+  p && 'lookId' in p.action ? p.action.lookId : undefined;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -127,7 +129,7 @@ describe('Outbox', () => {
       deps([], {
         send: (pending) => {
           sent.push(pending);
-          return pending.action.lookId === LOOK
+          return lookOf(pending) === LOOK
             ? Promise.reject(new ApiRequestError(404, 'not_found', 'Look not found.'))
             : Promise.resolve();
         },
@@ -136,7 +138,7 @@ describe('Outbox', () => {
     outbox.add({ kind: 'save', lookId: LOOK });
     outbox.add({ kind: 'save', lookId: OTHER });
     await vi.runAllTimersAsync();
-    expect(sent.map((p) => p.action.lookId)).toEqual([LOOK, OTHER]);
+    expect(sent.map(lookOf)).toEqual([LOOK, OTHER]);
     expect(outbox.size).toBe(0);
   });
 
@@ -216,6 +218,18 @@ describe('Outbox', () => {
     expect(outbox.waitingCards().map((c) => c.id)).toEqual(['a', 'b']);
   });
 
+  it('tells whether a profile will be followed once everything waiting is sent', () => {
+    fail = offline();
+    const outbox = new Outbox(deps());
+    expect(outbox.followState('author')).toBeUndefined();
+    outbox.add({ kind: 'follow', profileId: 'author' });
+    expect(outbox.followState('author')).toBe(true);
+    outbox.add({ kind: 'unfollow', profileId: 'author' });
+    expect(outbox.followState('author')).toBe(false);
+    expect(outbox.followState('someone-else')).toBeUndefined();
+    expect(outbox.view.followState('author')).toBe(false);
+  });
+
   it('keeps at most 500 actions and forgets everything on clear', () => {
     fail = offline();
     const outbox = new Outbox(deps());
@@ -225,7 +239,7 @@ describe('Outbox', () => {
       outbox.add({ kind: 'save', lookId: `look-${String(i)}` });
     }
     expect(outbox.size).toBe(OUTBOX_RULES.maxKept);
-    expect(stored[0]?.action.lookId).toBe('look-5');
+    expect(lookOf(stored[0])).toBe('look-5');
     outbox.clear();
     expect(outbox.size).toBe(0);
     expect(stored).toEqual([]);

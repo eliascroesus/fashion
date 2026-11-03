@@ -10,8 +10,10 @@ import {
   type EventBatch,
   eventBatchResultSchema,
   feedPageSchema,
+  followStateSchema,
   healthSchema,
   IDEMPOTENCY_KEY_HEADER,
+  lookDetailSchema,
   mediaSchema,
   meSchema,
   mergeGuestResultSchema,
@@ -183,6 +185,30 @@ export function createApiClient(options: ApiClientOptions) {
       /** Works logged out. Leave out the cursor for a new list (page 1). */
       forYou: (cursor?: string, signal?: AbortSignal) => page('/feed/for-you', cursor, signal),
       following: (cursor?: string, signal?: AbortSignal) => page('/feed/following', cursor, signal),
+    },
+    looks: {
+      /** Works logged out; logged in it also says saved / following for the active profile. */
+      get: (lookId: string, signal?: AbortSignal) =>
+        request('GET', `/looks/${id(lookId)}`, {
+          schema: lookDetailSchema,
+          ...(signal ? { signal } : {}),
+        }),
+      /** "More like this", 20 per page. */
+      similar: (lookId: string, cursor?: string, signal?: AbortSignal) =>
+        page(`/looks/${id(lookId)}/similar`, cursor, signal),
+    },
+    follows: {
+      follow: (profileId: string, idempotencyKey: string) =>
+        request('PUT', `/follows/${id(profileId)}`, {
+          schema: followStateSchema,
+          body: {},
+          idempotencyKey,
+        }),
+      unfollow: (profileId: string, idempotencyKey: string) =>
+        request('DELETE', `/follows/${id(profileId)}`, {
+          schema: followStateSchema,
+          idempotencyKey,
+        }),
     },
     /** Writes take the user action's key: a retry of the same action must reuse it. */
     saves: {

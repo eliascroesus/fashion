@@ -60,7 +60,18 @@
   },
   "look": {
     "back": "Tillbaka",
-    "notFound": "Den här looken är inte tillgänglig."
+    "notFound": "Den här looken är inte tillgänglig.",
+    "photoOf": "Bild {{index}} av {{count}}",
+    "follow": "Följ",
+    "following": "Följer",
+    "followLabel": "Följ {{name}}",
+    "unfollowLabel": "Sluta följa {{name}}",
+    "authorLabel": "Upplagd av {{name}}",
+    "shopTitle": "Shoppa looken",
+    "shopSoon": "Plaggen i den här looken visas här snart.",
+    "moreLikeThis": "Mer som det här",
+    "noSimilar": "Inga liknande looks än.",
+    "loadFailed": "Det gick inte att ladda resten av looken."
   },
   "errors": {
     "generic": "Något gick fel. Försök igen.",
@@ -100,7 +111,8 @@
     "waiting_other": "Väntar på att synka: {{count}}",
     "unsyncedTitle": "Allt har inte synkats",
     "unsyncedBody_one": "{{count}} ändring har inte nått Outfitly än (du verkar vara offline). Om du loggar ut nu försvinner den.",
-    "unsyncedBody_other": "{{count}} ändringar har inte nått Outfitly än (du verkar vara offline). Om du loggar ut nu försvinner de."
+    "unsyncedBody_other": "{{count}} ändringar har inte nått Outfitly än (du verkar vara offline). Om du loggar ut nu försvinner de.",
+    "lastLookOpen": "Senaste öppning av look: {{ms}} ms"
   },
   "board": {
     "options": "Val för tavlan",

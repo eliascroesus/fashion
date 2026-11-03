@@ -1,4 +1,4 @@
-import { feedCardSchema, type FeedCard } from '@outfitly/shared';
+import { feedCardSchema, type FeedCard, type LookDetail } from '@outfitly/shared';
 import { randomUUID } from 'expo-crypto';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
@@ -9,6 +9,7 @@ import { api } from '../api';
 import { getActiveProfileId, getMe, subscribeMe } from '../auth/store';
 import { findCachedCard } from '../feed/cache';
 import { FEED_QUERY_ROOT } from '../feed/keys';
+import { LOOK_QUERY_ROOT } from '../looks/keys';
 import { queryClient } from '../lib/query';
 import { storage } from '../lib/storage';
 import { realTimers } from '../lib/timers';
@@ -38,6 +39,8 @@ const pendingSchema = z.object({
     }),
     z.object({ kind: z.literal('board-remove'), boardId: z.string(), lookId: z.string() }),
     z.object({ kind: z.literal('see-less'), lookId: z.string() }),
+    z.object({ kind: z.literal('follow'), profileId: z.string() }),
+    z.object({ kind: z.literal('unfollow'), profileId: z.string() }),
   ]),
 });
 
@@ -66,7 +69,18 @@ function send({ id, action }: PendingAction): Promise<unknown> {
       return api.boards.removeLook(action.boardId, action.lookId, id);
     case 'see-less':
       return api.saves.seeLess(action.lookId, id);
+    case 'follow':
+      return api.follows.follow(action.profileId, id);
+    case 'unfollow':
+      return api.follows.unfollow(action.profileId, id);
   }
+}
+
+/** Updates cached look pages (saved flag, following the poster) to what the server now has. */
+function editLookPages(edit: (look: LookDetail) => LookDetail): void {
+  queryClient.setQueriesData<LookDetail>({ queryKey: [LOOK_QUERY_ROOT] }, (look) =>
+    look ? edit(look) : look,
+  );
 }
 
 let startGuestSession: (() => Promise<unknown>) | null = null;
@@ -76,6 +90,8 @@ let startGuestSession: (() => Promise<unknown>) | null = null;
  * loaded before it, and it survives screens that hold an old copy of a card.
  */
 const confirmed = new Map<string, boolean>();
+/** Following or not, as the server confirmed this launch (same idea, by profile). */
+const confirmedFollows = new Map<string, boolean>();
 
 /** Saves, board changes and "see less", kept on the phone until the server has them. */
 export const outbox = new Outbox({
@@ -97,8 +113,19 @@ export const outbox = new Outbox({
     // What the server has now: corrects any list that loaded while it was on its way,
     // and keeps the look in Saved (and its board) until those lists load again.
     const profileId = getActiveProfileId();
+    if (action.kind === 'follow' || action.kind === 'unfollow') {
+      const following = action.kind === 'follow';
+      confirmedFollows.set(action.profileId, following);
+      editLookPages((look) =>
+        look.author.id === action.profileId
+          ? { ...look, author: { ...look.author, isFollowing: following } }
+          : look,
+      );
+      return;
+    }
     if (action.kind === 'save' || action.kind === 'board-add') {
       confirmed.set(action.lookId, true);
+      editLookPages((look) => (look.id === action.lookId ? { ...look, saved: true } : look));
       setSavedInLists(queryClient, action.lookId, true);
       if (action.card) addToListTop(queryClient, savesQueryKey(profileId), action.card);
       if (action.kind === 'board-add' && action.card) {
@@ -106,6 +133,7 @@ export const outbox = new Outbox({
       }
     } else if (action.kind === 'unsave') {
       confirmed.set(action.lookId, false);
+      editLookPages((look) => (look.id === action.lookId ? { ...look, saved: false } : look));
       setSavedInLists(queryClient, action.lookId, false);
     }
   },
@@ -158,9 +186,26 @@ export function useIsSaved(lookId: string, fromServer: boolean): boolean {
   return useSyncExternalStore(subscribe, () => localSavedState(lookId)) ?? fromServer;
 }
 
+/** Whether the viewer follows the profile: a waiting follow/unfollow wins over what the server said. */
+export function useIsFollowing(profileId: string, fromServer: boolean): boolean {
+  return (
+    useSyncExternalStore(
+      subscribe,
+      () => outbox.followState(profileId) ?? confirmedFollows.get(profileId),
+    ) ?? fromServer
+  );
+}
+
+/** Follows or unfollows (needs a login: logged out, the author row opens the sign-up sheet). */
+export function setFollowing(profileId: string, following: boolean): void {
+  if (following) tap();
+  outbox.add({ kind: following ? 'follow' : 'unfollow', profileId });
+}
+
 /** Sign-out: nothing waiting or remembered may be sent or shown as the next login. */
 export function forgetLocalSaves(): void {
   confirmed.clear();
+  confirmedFollows.clear();
   outbox.clear();
 }
 

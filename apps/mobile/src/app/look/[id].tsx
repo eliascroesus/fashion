@@ -1,81 +1,38 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import type { FeedCard } from '@outfitly/shared';
-import { Image } from 'expo-image';
+import type { FeedCard, LookDetail } from '@outfitly/shared';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
-import { useRef } from 'react';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withDelay,
-  withSequence,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
+import { ActivityIndicator, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { AuthorRow } from '../../components/author-row';
 import { FeedMessage } from '../../components/feed-message';
+import { LookGrid } from '../../components/look-grid';
+import { LookPhotos } from '../../components/look-photos';
 import { SaveButton } from '../../components/save-button';
-import { photoHeight } from '../../feed/layout';
-import { findCard, saveIfNot } from '../../saves';
-import { radii, Screen, spacing, useColors } from '../../theme';
+import { ShopPlaceholder } from '../../components/shop-placeholder';
+import { markLookShown } from '../../looks/open-timing';
+import { useLookDetail, useSimilarLooks } from '../../looks/queries';
+import { findCard } from '../../saves';
+import { grid, radii, Screen, spacing, ThemedText, useColors } from '../../theme';
 
-const POP_SIZE = 96;
-/** Two taps on the photo within this long are a double-tap (a single tap does nothing). */
-const DOUBLE_TAP_MS = 300;
-
-/** The cover photo; double-tap saves it, with a bookmark that pops up in the middle. */
-function Photo({ card, width }: { card: FeedCard; width: number }) {
-  const colors = useColors();
-  const pop = useSharedValue(0);
-  const lastTap = useRef(0);
-  const onPress = () => {
-    const now = Date.now();
-    if (now - lastTap.current > DOUBLE_TAP_MS) {
-      lastTap.current = now;
-      return;
-    }
-    lastTap.current = 0;
-    pop.value = withSequence(
-      withSpring(1, { damping: 12 }),
-      withDelay(350, withTiming(0, { duration: 200 })),
-    );
-    saveIfNot(card);
+/** The look as a grid card (to save it), when it isn't in any cached list. */
+function cardOf(look: LookDetail): FeedCard | undefined {
+  const [cover] = look.photos;
+  if (!cover) return undefined;
+  return {
+    id: look.id,
+    authorId: look.author.id,
+    photo: cover,
+    itemCount: look.itemCount,
+    saved: look.saved,
   };
-  const popStyle = useAnimatedStyle(() => ({
-    opacity: pop.value,
-    transform: [{ scale: 0.6 + 0.4 * pop.value }],
-  }));
-
-  return (
-    <Pressable testID="look-photo" accessible={false} onPress={onPress}>
-      <Image
-        source={{ uri: card.photo.urls[1080] }}
-        // The grid's smaller copy is already in memory: show it until the sharp one arrives.
-        placeholder={{ uri: card.photo.urls[600] }}
-        placeholderContentFit="cover"
-        contentFit="cover"
-        style={{
-          width,
-          height: photoHeight(card.photo, width),
-          backgroundColor: card.photo.dominantColor,
-        }}
-        accessible={false}
-      />
-      <Animated.View
-        pointerEvents="none"
-        style={[styles.pop, { backgroundColor: colors.surface }, popStyle]}
-      >
-        <Ionicons name="bookmark" size={POP_SIZE / 2} color={colors.accent} />
-      </Animated.View>
-    </Pressable>
-  );
 }
 
 /**
- * A look, opened from a grid. For now its cover photo (already cached from
- * the grid, so it shows at once) and the save button; double-tap the photo to
- * save. The full look page is Step 2.5.
+ * A look: its photos (the grid card zooms into the first), who posted it with
+ * a Follow button, the caption, where the pieces will be listed (Phase 3), and
+ * "More like this" underneath. The screen it was opened from stays as it was,
+ * so Back lands on the same spot.
  */
 export default function LookScreen() {
   const { t } = useTranslation();
@@ -83,11 +40,69 @@ export default function LookScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const card = findCard(id);
+  const detail = useLookDetail(id);
+  const similar = useSimilarLooks(id);
+  // The card from the grid shows at once; the look's own data fills in the rest.
+  const card = findCard(id) ?? (detail.data ? cardOf(detail.data) : undefined);
 
+  let body = <ActivityIndicator style={styles.loading} color={colors.textMuted} />;
+  if (detail.data) {
+    body = (
+      <>
+        <AuthorRow author={detail.data.author} />
+        {detail.data.caption ? (
+          <ThemedText testID="look-caption">{detail.data.caption}</ThemedText>
+        ) : null}
+      </>
+    );
+  } else if (detail.isError) {
+    body = (
+      <FeedMessage
+        body={t('look.loadFailed')}
+        action={{ label: t('errors.retry'), onPress: () => void detail.refetch() }}
+      />
+    );
+  }
+
+  const header = card ? (
+    <View style={styles.header}>
+      <LookPhotos
+        card={card}
+        photos={detail.data?.photos ?? [card.photo]}
+        width={width}
+        onCoverShown={markLookShown}
+      />
+      <View style={styles.body}>
+        {body}
+        <ShopPlaceholder />
+        <ThemedText variant="title" accessibilityRole="header" style={styles.more}>
+          {t('look.moreLikeThis')}
+        </ThemedText>
+      </View>
+    </View>
+  ) : null;
+
+  const roundButton = { top: insets.top + spacing.sm, backgroundColor: colors.surface };
   return (
     <Screen testID="screen-look" style={{ paddingTop: insets.top }}>
-      {card ? <Photo card={card} width={width} /> : <FeedMessage body={t('look.notFound')} />}
+      {card ? (
+        <LookGrid
+          list={similar}
+          testID="look-page"
+          cardTestID="similar-card"
+          header={header}
+          endMessage={null}
+          empty={
+            <ThemedText tone="muted" style={styles.none}>
+              {t('look.noSimilar')}
+            </ThemedText>
+          }
+        />
+      ) : detail.isError ? (
+        <FeedMessage body={t('look.notFound')} />
+      ) : (
+        <ActivityIndicator style={styles.loading} color={colors.textMuted} />
+      )}
       <Pressable
         testID="look-back"
         accessibilityRole="button"
@@ -96,7 +111,7 @@ export default function LookScreen() {
         onPress={() => {
           router.back();
         }}
-        style={[styles.back, { top: insets.top + spacing.sm, backgroundColor: colors.surface }]}
+        style={[styles.round, styles.back, roundButton]}
       >
         <Ionicons name="chevron-back" size={22} color={colors.text} />
       </Pressable>
@@ -110,25 +125,24 @@ export default function LookScreen() {
 }
 
 const styles = StyleSheet.create({
-  back: {
+  // The grid pads its content; the photos go edge to edge.
+  header: {
+    marginHorizontal: -(grid.inset - grid.gap / 2),
+    marginTop: -grid.inset,
+    marginBottom: spacing.sm,
+  },
+  body: { padding: spacing.lg, gap: spacing.lg },
+  more: { marginTop: spacing.sm },
+  loading: { paddingVertical: spacing.xl },
+  none: { textAlign: 'center', padding: spacing.xl },
+  round: {
     position: 'absolute',
-    left: spacing.md,
     width: 40,
     height: 40,
     borderRadius: radii.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  back: { left: spacing.md },
   save: { position: 'absolute', right: spacing.md },
-  pop: {
-    position: 'absolute',
-    alignSelf: 'center',
-    top: '50%',
-    marginTop: -POP_SIZE / 2,
-    width: POP_SIZE,
-    height: POP_SIZE,
-    borderRadius: radii.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 });
