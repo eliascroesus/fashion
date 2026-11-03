@@ -36,6 +36,20 @@
       "when": 1793654399356,
       "tag": "0004_looks",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793663121742,
+      "tag": "0005_feed",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793664591913,
+      "tag": "0006_feed_snapshot_profile_idx",
+      "breakpoints": true
     }
   ]
 }

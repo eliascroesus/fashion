@@ -108,7 +108,20 @@ const profileIdHeader = z.uuid();
  * done as this profile.
  */
 export async function requireActiveProfile(db: Db, request: FastifyRequest): Promise<string> {
-  const { userId } = requireAuth(request);
+  requireAuth(request);
+  const profileId = await findActiveProfile(db, request);
+  if (!profileId) throw new ApiError(403, 'forbidden', 'This login has no active profile yet.');
+  return profileId;
+}
+
+/**
+ * Like requireActiveProfile, for routes that also work logged out: null when
+ * there is no login or the login has no active profile. A bad X-Profile-Id
+ * still fails.
+ */
+export async function findActiveProfile(db: Db, request: FastifyRequest): Promise<string | null> {
+  if (!request.auth) return null;
+  const { userId } = request.auth;
   const header = request.headers[ACTIVE_PROFILE_HEADER];
   if (header !== undefined) {
     const parsed = profileIdHeader.safeParse(header);
@@ -141,8 +154,7 @@ export async function requireActiveProfile(db: Db, request: FastifyRequest): Pro
         isNull(profiles.deletedAt),
       ),
     );
-  if (!row) throw new ApiError(403, 'forbidden', 'This login has no active profile yet.');
-  return row.profileId;
+  return row?.profileId ?? null;
 }
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];

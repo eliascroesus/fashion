@@ -9,6 +9,7 @@ import type { Config } from './config.ts';
 import { ApiError, notFoundHandler, registerErrorHandler } from './errors.ts';
 import { registerIdempotency } from './idempotency.ts';
 import type { JobQueue } from './jobs.ts';
+import { feedRoutes } from './routes/feed.ts';
 import { mediaRoutes } from './routes/media.ts';
 import { sessionRoutes } from './routes/session.ts';
 import { systemRoutes } from './routes/system.ts';
@@ -67,6 +68,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       systemRoutes(v1);
       sessionRoutes(v1, { db, auth });
       mediaRoutes(v1, deps);
+      feedRoutes(v1, deps);
       done();
     },
     { prefix: API_PREFIX },

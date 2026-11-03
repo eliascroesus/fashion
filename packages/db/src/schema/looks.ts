@@ -55,6 +55,21 @@ export const looks = pgTable(
   (t) => [
     uniqueIndex('looks_slug_key').on(t.slug),
     index('looks_author_profile_id_idx').on(t.authorProfileId),
+    // Feeds only read published looks; each pool walks one of these in order.
+    // NULLS FIRST is what a plain `ORDER BY ... DESC` sorts, so queries match the index.
+    index('looks_feed_recent_idx')
+      .on(t.publishedAt.desc().nullsFirst(), t.id.desc().nullsFirst())
+      .where(sql`${t.status} = 'published' and ${t.deletedAt} is null`),
+    index('looks_feed_popular_idx')
+      .on(
+        t.popularityScore.desc().nullsFirst(),
+        t.publishedAt.desc().nullsFirst(),
+        t.id.desc().nullsFirst(),
+      )
+      .where(sql`${t.status} = 'published' and ${t.deletedAt} is null`),
+    index('looks_feed_author_idx')
+      .on(t.authorProfileId, t.publishedAt.desc().nullsFirst(), t.id.desc().nullsFirst())
+      .where(sql`${t.status} = 'published' and ${t.deletedAt} is null`),
     check(
       'looks_published_has_time',
       sql`${t.status} <> 'published' or ${t.publishedAt} is not null`,
