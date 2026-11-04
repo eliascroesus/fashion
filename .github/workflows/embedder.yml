@@ -1,0 +1,76 @@
+name: Embedder
+
+# The fingerprint service (services/embedder). Only runs when it changes.
+on:
+  pull_request:
+    paths: ['services/embedder/**', '.github/workflows/embedder.yml']
+  push:
+    branches: [main]
+    paths: ['services/embedder/**', '.github/workflows/embedder.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: embedder-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Embedder tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: services/embedder
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # No major-version tag (v10) exists for this action: pinned to v10.3.3's commit.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.13.1'
+          enable-cache: true
+          cache-dependency-glob: services/embedder/uv.lock
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - name: Model files (pinned; cached between runs)
+        uses: actions/cache@v6
+        with:
+          path: services/embedder/models
+          key: embedder-model-${{ hashFiles('services/embedder/src/embedder/download_model.py') }}
+      - run: uv run python -m embedder.download_model
+      - name: Tests, including the real model
+        run: |
+          uv run pytest -v -rs
+          # The real-model tests must run here, not be skipped.
+          uv run pytest -m model -q | tee "$RUNNER_TEMP/model.log"
+          grep -qE '^[0-9]+ passed' "$RUNNER_TEMP/model.log"
+
+  image:
+    name: Embedder image builds and answers
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: docker build -t outfitly-embedder services/embedder
+      - name: Starts with downloads off (model baked in), answers health, refuses a missing secret, makes a text fingerprint
+        run: |
+          secret="$(openssl rand -hex 32)"
+          docker run -d --name embedder -p 8080:8080 \
+            -e EMBEDDER_SECRET="$secret" -e EMBEDDER_IMAGE_HOSTS=img.example.com outfitly-embedder
+          for i in $(seq 1 90); do curl -sf localhost:8080/health >/dev/null && break; sleep 1; done
+          curl -sf localhost:8080/health | grep -q '"dimensions":768'
+          test "$(docker exec embedder id -u)" = 10001
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8080/embed-text \
+            -H 'content-type: application/json' -d '{"text":"red"}')" = 401
+          curl -sf -X POST localhost:8080/embed-text -H "authorization: Bearer $secret" \
+            -H 'content-type: application/json' -d '{"text":"beige trench"}' \
+            | python3 -c 'import json,sys; v=json.load(sys.stdin)["embedding"]; assert len(v) == 768, len(v)'
+          docker logs embedder 2>&1 | grep 'ready in'
+      - if: failure()
+        run: docker logs embedder || true

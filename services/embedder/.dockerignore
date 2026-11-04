@@ -1,0 +1,10 @@
+.env*
+.venv
+models
+tests
+scripts
+.pytest_cache
+.ruff_cache
+**/__pycache__
+fly.toml
+README.md
