@@ -51,6 +51,27 @@ export interface PhotoColumns {
   key300: string | null;
 }
 
+/** A photo's columns as raw SQL returns them (`m.width, m.height, …, m.key_300`). */
+export interface PhotoRow extends Record<string, unknown> {
+  width: number | null;
+  height: number | null;
+  thumbhash: string | null;
+  dominant_color: string | null;
+  key_1080: string | null;
+  key_600: string | null;
+  key_300: string | null;
+}
+
+export const photoColumns = (row: PhotoRow): PhotoColumns => ({
+  width: row.width,
+  height: row.height,
+  thumbhash: row.thumbhash,
+  dominantColor: row.dominant_color,
+  key1080: row.key_1080,
+  key600: row.key_600,
+  key300: row.key_300,
+});
+
 /** The public photo (sizes and links) of a ready photo; null if it isn't complete. */
 export function toPhoto(storage: PhotoStorage, columns: PhotoColumns): FeedCard['photo'] | null {
   const { width, height, thumbhash, dominantColor, key1080, key600, key300 } = columns;

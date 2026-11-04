@@ -64,6 +64,13 @@
       "when": 1793791335778,
       "tag": "0008_taste_styles",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793810251310,
+      "tag": "0009_search",
+      "breakpoints": true
     }
   ]
 }

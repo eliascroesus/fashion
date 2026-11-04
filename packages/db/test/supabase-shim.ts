@@ -22,10 +22,15 @@ END
 $$;
 `;
 
-/** Per database: auth schema stub, Supabase's search_path and default grants. */
+/**
+ * Per database: auth schema stub, Supabase's search_path and default grants.
+ * Supabase connections also print floats with 15 significant digits
+ * (extra_float_digits = 0), so a float read back is not always the same number.
+ */
 export function supabaseDatabaseSql(database: string): string {
   return `
 ALTER DATABASE "${database}" SET search_path TO "$user", public, extensions;
+ALTER DATABASE "${database}" SET extra_float_digits = 0;
 CREATE SCHEMA auth;
 CREATE TABLE auth.users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

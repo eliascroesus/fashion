@@ -50,6 +50,7 @@ export async function createLogin(db: Db): Promise<{ userId: string; token: stri
 
 export interface LookSpec {
   authorId: string;
+  caption?: string;
   occasions?: Occasion[];
   seasons?: Season[];
   styles?: Style[];
@@ -72,7 +73,8 @@ export async function createLooks(db: Db, specs: readonly LookSpec[]): Promise<s
       look: {
         id: lookId,
         authorProfileId: spec.authorId,
-        slug: lookSlug(null, lookId),
+        caption: spec.caption ?? null,
+        slug: lookSlug(spec.caption, lookId),
         status,
         occasionTags: spec.occasions ?? [],
         seasonTags: spec.seasons ?? [],

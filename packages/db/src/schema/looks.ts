@@ -4,6 +4,7 @@ import {
   type AnyPgColumn,
   boolean,
   check,
+  customType,
   doublePrecision,
   index,
   pgEnum,
@@ -22,6 +23,9 @@ export const lookStatus = pgEnum('look_status', LOOK_STATUSES);
 export const lookOccasion = pgEnum('look_occasion', OCCASIONS);
 export const lookSeason = pgEnum('look_season', SEASONS);
 export const lookStyle = pgEnum('look_style', STYLES);
+
+/** Postgres full-text search words (lexemes with weights). Read in raw SQL only. */
+const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' });
 
 /**
  * A posted outfit: the core content unit. Photos are in `look_media`.
@@ -56,6 +60,13 @@ export const looks = pgTable(
     isSponsored: boolean('is_sponsored').notNull().default(false),
     /** When the look first went public; feeds sort on it. */
     publishedAt: timestamp('published_at', { withTimezone: true }),
+    /**
+     * What search finds: the tags, caption and AI description as words
+     * (`look_search_vector`, migration 0009). Postgres keeps it up to date.
+     */
+    searchVector: tsvector('search_vector').generatedAlwaysAs(
+      sql`look_search_vector(caption, ai_description, occasion_tags, season_tags, style_tags)`,
+    ),
     ...softDelete(),
   },
   (t) => [
@@ -76,6 +87,9 @@ export const looks = pgTable(
     // For You's taste pool: looks with any of the picked styles.
     index('looks_feed_style_idx')
       .using('gin', t.styleTags)
+      .where(sql`${t.status} = 'published' and ${t.deletedAt} is null`),
+    index('looks_search_idx')
+      .using('gin', t.searchVector)
       .where(sql`${t.status} = 'published' and ${t.deletedAt} is null`),
     index('looks_feed_author_idx')
       .on(t.authorProfileId, t.publishedAt.desc().nullsFirst(), t.id.desc().nullsFirst())

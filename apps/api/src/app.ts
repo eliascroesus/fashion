@@ -13,9 +13,11 @@ import { boardsRoutes } from './routes/boards.ts';
 import { eventsRoutes } from './routes/events.ts';
 import { feedRoutes } from './routes/feed.ts';
 import { looksRoutes } from './routes/looks.ts';
+import { profilesRoutes } from './routes/profiles.ts';
 import { tasteRoutes } from './routes/taste.ts';
 import { mediaRoutes } from './routes/media.ts';
 import { savesRoutes } from './routes/saves.ts';
+import { searchRoutes } from './routes/search.ts';
 import { sessionRoutes } from './routes/session.ts';
 import { systemRoutes } from './routes/system.ts';
 import type { PhotoStorage } from './storage.ts';
@@ -79,6 +81,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       boardsRoutes(v1, deps);
       looksRoutes(v1, deps);
       tasteRoutes(v1, deps);
+      searchRoutes(v1, deps);
+      profilesRoutes(v1, deps);
       done();
     },
     { prefix: API_PREFIX },

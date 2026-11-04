@@ -204,6 +204,40 @@ describe('looks', () => {
     });
   });
 
+  it('keeps its search words up to date: tags and caption weigh more than the AI description', async () => {
+    await withDb(testDb.url, async (db) => {
+      const [look] = await db
+        .insert(looks)
+        .values({
+          authorProfileId: SEED_PROFILE_IDS.creator,
+          slug: 'search-words-1',
+          caption: 'Linen shirt, wide-leg trousers',
+          occasionTags: ['work'],
+          seasonTags: ['summer'],
+          styleTags: ['minimal'],
+        })
+        .returning({ id: looks.id });
+      if (!look) throw new Error('look insert returned no row');
+      const words = async () => {
+        const { rows } = await db.execute<{ v: string }>(
+          sql`SELECT search_vector::text AS v FROM looks WHERE id = ${look.id}`,
+        );
+        return rows[0]?.v ?? '';
+      };
+      expect(await words()).toBe(
+        "'leg':8A 'linen':4A 'minimal':3A 'shirt':5A 'summer':2A 'trousers':9A 'wide':7A 'wide-leg':6A 'work':1A",
+      );
+
+      await db
+        .update(looks)
+        .set({ caption: 'Leather jacket', aiDescription: 'A black biker jacket', styleTags: [] })
+        .where(eq(looks.id, look.id));
+      expect(await words()).toBe(
+        "'a':5B 'biker':7B 'black':6B 'jacket':4A,8B 'leather':3A 'summer':2A 'work':1A",
+      );
+    });
+  });
+
   it('holds at most 10 photos, each once, in a fixed order', async () => {
     await withDb(testDb.url, async (db) => {
       const [look] = await db

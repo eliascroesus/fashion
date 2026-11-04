@@ -4,6 +4,7 @@ import { PgBoss } from 'pg-boss';
 import { deleteOldSeen } from './events.ts';
 import { deleteOldFeedSnapshots, recomputePopularity } from './feed/popularity.ts';
 import { ImageRejectedError } from './media/image.ts';
+import { refreshSearchTerms } from './search.ts';
 import { markMediaFailed, processUploadedMedia } from './media/pipeline.ts';
 import type { PhotoStorage } from './storage.ts';
 
@@ -23,6 +24,8 @@ export const QUEUES = {
   feedSnapshotCleanup: 'feed-snapshot-cleanup',
   /** Deletes "seen" rows older than a week (daily); the feed only looks back 7 days. */
   seenCleanup: 'seen-cleanup',
+  /** Rebuilds search's vocabulary (typos, suggestions, popular tags) from the looks. */
+  searchTerms: 'search-terms',
 } as const;
 
 /** What routes need to enqueue work. */
@@ -111,6 +114,15 @@ export async function startJobs(boss: PgBoss, options: WorkerDeps): Promise<void
     return { deleted };
   });
   await boss.schedule(QUEUES.seenCleanup, '47 3 * * *');
+
+  await boss.createQueue(QUEUES.searchTerms);
+  await boss.work(QUEUES.searchTerms, workOptions, async () => {
+    const result = await refreshSearchTerms(db);
+    log.info(result, 'search words refreshed');
+    return result;
+  });
+  // Also sent at every startup, like the event partitions.
+  await boss.schedule(QUEUES.searchTerms, '*/15 * * * *');
 
   await boss.createQueue(QUEUES.mediaProcessFailed);
   await boss.work<{ mediaId: string }>(QUEUES.mediaProcessFailed, workOptions, async (jobs) => {

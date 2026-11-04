@@ -14,8 +14,9 @@ import { z } from 'zod';
 import { api } from '../api';
 import { getActiveProfileId, getMe, subscribeMe } from '../auth/store';
 import { findCachedCard } from '../feed/cache';
-import { FEED_QUERY_ROOT } from '../feed/keys';
+import { FEED_QUERY_ROOT, feedQueryKey } from '../feed/keys';
 import { LOOK_QUERY_ROOT } from '../looks/keys';
+import { PROFILE_QUERY_ROOT } from '../profiles/keys';
 import { queryClient } from '../lib/query';
 import { storage } from '../lib/storage';
 import { realTimers } from '../lib/timers';
@@ -141,6 +142,10 @@ export const outbox = new Outbox({
           ? { ...look, author: { ...look.author, isFollowing: following } }
           : look,
       );
+      // Their looks join (or leave) Following: a fresh list, loaded now if it's open, else when shown.
+      void queryClient.resetQueries({ queryKey: feedQueryKey('following', profileId) });
+      // Follower and following counts.
+      void queryClient.invalidateQueries({ queryKey: [PROFILE_QUERY_ROOT] });
       return;
     }
     if (action.kind === 'save' || action.kind === 'board-add') {

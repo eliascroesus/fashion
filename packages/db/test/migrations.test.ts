@@ -20,6 +20,7 @@ const EXPECTED_TABLES = [
   'profile_members',
   'profiles',
   'saves',
+  'search_terms',
   'seen',
   'swipes',
   'taste_profiles',

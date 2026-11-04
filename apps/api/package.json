@@ -10,7 +10,8 @@
     "try-upload": "node --env-file-if-exists=../../.env scripts/try-upload.ts",
     "seed-looks": "node --env-file-if-exists=../../.env scripts/seed-looks.ts",
     "fake-looks": "node --env-file-if-exists=../../.env scripts/fake-looks.ts",
-    "feed-speed": "node --env-file-if-exists=../../.env scripts/feed-speed.ts"
+    "feed-speed": "node --env-file-if-exists=../../.env scripts/feed-speed.ts",
+    "search-speed": "node scripts/search-speed.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

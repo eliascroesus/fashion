@@ -47,6 +47,7 @@ export default function HomeScreen() {
               testID="feed-following"
               empty={
                 <FeedMessage
+                  testID="following-empty"
                   title={t('feed.followingEmptyTitle')}
                   body={t('feed.followingEmpty')}
                 />

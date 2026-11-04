@@ -3,6 +3,7 @@ import {
   type AnyPgColumn,
   boolean,
   check,
+  index,
   pgEnum,
   pgTable,
   text,
@@ -41,6 +42,9 @@ export const profiles = pgTable(
   },
   (t) => [
     uniqueIndex('profiles_handle_key').on(t.handle),
+    // People in search suggestions: similar handles, and names containing what's typed.
+    index('profiles_handle_trgm_idx').using('gin', t.handle.op('gin_trgm_ops')),
+    index('profiles_display_name_trgm_idx').using('gin', sql`lower(${t.displayName}) gin_trgm_ops`),
     check('profiles_handle_format', sql`${t.handle} ~ '^[a-z0-9._]{3,30}$'`),
   ],
 ).enableRLS();

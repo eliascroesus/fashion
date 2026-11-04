@@ -109,6 +109,16 @@ describe('background jobs (pg-boss)', () => {
     );
   });
 
+  it('rebuild the search words every 15 minutes', async () => {
+    const id = await boss.send(QUEUES.searchTerms, {});
+    if (!id) throw new Error('job was not created');
+    await waitForState(QUEUES.searchTerms, id, 'completed');
+    const schedules = await boss.getSchedules();
+    expect(schedules).toContainEqual(
+      expect.objectContaining({ name: QUEUES.searchTerms, cron: '*/15 * * * *' }),
+    );
+  });
+
   it('keep their tables away from the public app key', async () => {
     const { rows } = await ctx.db.execute(
       sql`SELECT r AS role, has_schema_privilege(r, 'pgboss', 'USAGE') AS usage

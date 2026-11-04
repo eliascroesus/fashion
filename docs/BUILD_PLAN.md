@@ -212,7 +212,7 @@ This is the full list of tables the MVP needs, so Claude Code designs Phase 1 wi
 | `media` | Each uploaded photo: storage keys for original + 3 sizes, width, height, thumbhash, dominant colour, status, content type, size, error | Grid never jumps; originals never shown | 1 |
 | `feature_flags` | On/off switches per feature, optionally on only for listed tester profiles | Turn features on for testers first | 1 |
 | `idempotency_keys` | Each client write's key (per login), request fingerprint and stored response; expires after 24 h | A double-tap or retry never creates duplicates | 1 |
-| `looks` | A posted outfit: author profile, caption, status (draft / pending / published / hidden), slug, occasion, season and style tags (styles: `docs/STYLE_GUIDE.md`), AI description, popularity score, **is\_sponsored**, published time (feeds sort on it) | The core content unit; sponsored flag ready for ads later | 2 |
+| `looks` | A posted outfit: author profile, caption, status (draft / pending / published / hidden), slug, occasion, season and style tags (styles: `docs/STYLE_GUIDE.md`), AI description, popularity score, **is\_sponsored**, published time (feeds sort on it), search words (tags, caption and AI description; kept up to date by Postgres) | The core content unit; sponsored flag ready for ads later | 2 |
 | `look_media` | Which photos belong to a look, in what order (up to 10) | Multi-photo looks | 2 |
 | `taste_profiles` | Styles and brands picked in onboarding | Tunes the first feed | 2 |
 | `saves`, `boards`, `board_items` | What each profile saved and how it organised it | The main habit metric | 2 |
@@ -220,6 +220,7 @@ This is the full list of tables the MVP needs, so Claude Code designs Phase 1 wi
 | `events` | Every impression (with feed position), open, save, share, click, split by month (one partition per month, made ahead by a daily job; no foreign keys: events stay with the profile that made them) | Growth metrics and stats now, ad sales later | 2 |
 | `follows` | Which profile follows which | Following feed, stats | 2 |
 | `feed_snapshots` | The ranked list behind a For You scroll (up to 400 look ids): a profile's newest 5, or a few shared logged-out ones (per style choice picked on the phone: `taste_key`); deleted after a day | Pages never repeat or skip a look, even when scores change mid-scroll | 2 |
+| `search_terms` | Search's vocabulary: every word in the looks that can be shown, with how many looks have it, plus Swedish words for tags (e.g. sommar → summer); rebuilt from the looks every 15 minutes | Typo tolerance ("linnen" finds linen), suggestions while typing, popular tags | 2 |
 | `garments` | Each item the AI spotted in a photo: box, category, colour, attributes, fingerprint vector | Dots on garments, search words, "more like this" | 3 |
 | `products` | The item itself: brand, name, category, main image, fingerprint vector, owning business profile (if any) | "The same jacket" across shops; brands' Products tab | 3 |
 | `offers` | Which shop sells a product: URL (poster's affiliate tag kept), price, currency, stock, last checked, price history | Prices, link checks, later commissions and checkout | 3 |
