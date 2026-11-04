@@ -1,4 +1,4 @@
-import { sql } from '@outfitly/db';
+import { type SQL, sql } from '@outfitly/db';
 import { FEED_PAGE_SIZE, type FeedPage } from '@outfitly/shared';
 import { z } from 'zod';
 import {
@@ -14,12 +14,14 @@ import {
 const cursorSchema = z.object({ t: microsTime, id: z.uuid() });
 
 /**
- * One page of the Following feed: everything the people this profile follows
- * have published, newest first (no reshuffling, no "seen" filter).
+ * One page of the looks `where` picks (`l` is the look), newest first, as
+ * `viewerProfileId` sees them (null when logged out): no reshuffling, no
+ * "seen" filter. The Following feed and profile grids.
  */
-export async function followingPage(
+export async function newestPage(
   deps: FeedDeps,
-  profileId: string,
+  viewerProfileId: string | null,
+  where: SQL,
   cursor: string | undefined,
 ): Promise<FeedPage> {
   const after = cursor === undefined ? undefined : decodeCursor(cursorSchema, cursor);
@@ -29,8 +31,7 @@ export async function followingPage(
       FROM looks l
      WHERE ${showableLook(sql`l`)}
        AND l.published_at <= now()
-       AND l.author_profile_id IN (SELECT f.followed_profile_id FROM follows f
-                                    WHERE f.follower_profile_id = ${profileId} AND f.deleted_at IS NULL)
+       AND ${where}
        ${after ? sql`AND (l.published_at, l.id) < (${after.t}::timestamptz, ${after.id}::uuid)` : sql``}
      ORDER BY l.published_at DESC, l.id DESC
      LIMIT ${FEED_PAGE_SIZE + 1}`);
@@ -39,7 +40,7 @@ export async function followingPage(
   const cards = await loadCards(
     deps,
     page.map((r) => r.id),
-    profileId,
+    viewerProfileId,
   );
   const last = page.at(-1);
   return {
@@ -50,4 +51,19 @@ export async function followingPage(
         ? encodeCursor({ t: last.published_at, id: last.id })
         : null,
   };
+}
+
+/** One page of the Following feed: everything the people this profile follows have published. */
+export function followingPage(
+  deps: FeedDeps,
+  profileId: string,
+  cursor: string | undefined,
+): Promise<FeedPage> {
+  return newestPage(
+    deps,
+    profileId,
+    sql`l.author_profile_id IN (SELECT f.followed_profile_id FROM follows f
+                                 WHERE f.follower_profile_id = ${profileId} AND f.deleted_at IS NULL)`,
+    cursor,
+  );
 }

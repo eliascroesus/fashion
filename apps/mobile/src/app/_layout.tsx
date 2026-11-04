@@ -64,6 +64,7 @@ function RootLayout() {
                 </Stack.Protected>
                 <Stack.Screen name="look/[id]" />
                 <Stack.Screen name="board/[id]" />
+                <Stack.Screen name="profile/[id]" />
                 <Stack.Screen name="look-menu/[id]" options={SHEET} />
                 <Stack.Screen
                   name="save-to-board/[id]"

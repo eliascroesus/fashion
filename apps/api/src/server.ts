@@ -19,6 +19,7 @@ const app = await buildApp({
 await startJobs(boss, { db, storage, log: app.log });
 await boss.send(QUEUES.ping, { reason: 'startup' });
 await boss.send(QUEUES.eventPartitions, {});
+await boss.send(QUEUES.searchTerms, {});
 await app.listen({ host: config.HOST, port: config.PORT });
 
 let shuttingDown = false;

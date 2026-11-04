@@ -523,7 +523,11 @@ describe('GET /v1/feed/for-you, when few unseen looks are left', () => {
     // Seen longest ago comes first (the diversity rules may move a few).
     const firstPage = pages[0]?.items.map((i) => i.id) ?? [];
     expect(firstPage.filter((id) => longAgo.has(id)).length).toBeGreaterThanOrEqual(14);
-    expect(diversityViolations(await candidatesFor(ctx.db, shown))).toEqual([]);
+    // The rules hold except at the very end, where the arranger may only have similar looks
+    // left and lets the similarity rule give way (applyDiversity); which looks end up there
+    // depends on the random reshuffle.
+    const beforeLastPage = shown.slice(0, shown.length - FEED_PAGE_SIZE);
+    expect(diversityViolations(await candidatesFor(ctx.db, beforeLastPage))).toEqual([]);
   });
 });
 

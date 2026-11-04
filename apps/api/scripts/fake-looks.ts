@@ -5,6 +5,7 @@
 //   pnpm seed:fake-looks --remove     deletes every fake look, picture and poster
 import { createDb } from '@outfitly/db';
 import { loadConfig, r2Config } from '../src/config.ts';
+import { refreshSearchTerms } from '../src/search.ts';
 import { R2Storage } from '../src/storage.ts';
 import { countFakeLooks, removeFakeLooks, seedFakeLooks } from './seed/fake-looks.ts';
 
@@ -45,6 +46,11 @@ try {
     );
     if (restyled > 0) console.log(`Gave a style to ${String(restyled)} older fake looks.`);
   }
+  // Search's vocabulary follows the looks now, not at the next 15-minute run.
+  const words = await refreshSearchTerms(db);
+  console.log(
+    `Search words: ${String(words.changed)} new or changed, ${String(words.removed)} gone.`,
+  );
 } finally {
   await db.$client.end();
 }

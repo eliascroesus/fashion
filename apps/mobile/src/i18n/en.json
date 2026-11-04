@@ -113,7 +113,8 @@
     "unsyncedBody_other": "{{count}} changes haven't reached Outfitly yet (you seem to be offline). If you sign out now, they will be lost.",
     "lastLookOpen": "Last look open: {{ms}} ms",
     "tasteTime": "Last taste picker: {{seconds}} s",
-    "tasteAgain": "Show the taste picker again"
+    "tasteAgain": "Show the taste picker again",
+    "lastSuggest": "Last suggestions: {{ms}} ms"
   },
   "board": {
     "options": "Board options",
@@ -174,5 +175,46 @@
     "romantic": "Romantic",
     "edgy": "Edgy",
     "colorful": "Colourful"
+  },
+  "tags": {
+    "everyday": "Everyday",
+    "work": "Work",
+    "date": "Date",
+    "party": "Party",
+    "wedding": "Wedding",
+    "travel": "Travel",
+    "sport": "Sport",
+    "festival": "Festival",
+    "spring": "Spring",
+    "summer": "Summer",
+    "autumn": "Autumn",
+    "winter": "Winter"
+  },
+  "search": {
+    "placeholder": "Search looks, pieces and people",
+    "clear": "Clear search",
+    "cancel": "Cancel",
+    "popular": "Popular",
+    "recent": "Recent searches",
+    "clearRecent": "Clear",
+    "removeRecent": "Remove \"{{text}}\" from recent searches",
+    "searchFor": "Search for \"{{text}}\"",
+    "people": "People",
+    "noResultsTitle": "No looks found",
+    "noResults": "Nothing matches \"{{text}}\" yet. Try other words.",
+    "loadFailed": "Couldn't load suggestions."
+  },
+  "profilePage": {
+    "looks_one": "look",
+    "looks_other": "looks",
+    "followers_one": "follower",
+    "followers_other": "followers",
+    "following": "following",
+    "countLabel": "{{count}} {{label}}",
+    "noLooksTitle": "No looks yet",
+    "noLooks": "Looks @{{handle}} posts will show here.",
+    "ownNoLooks": "Looks you post will show here.",
+    "notFound": "This profile isn't available.",
+    "openLabel": "Open {{name}}'s profile"
   }
 }

@@ -1,4 +1,4 @@
-import { STYLES } from '@outfitly/shared';
+import { LOOK_TAGS, STYLES, TAG_SEARCH_WORDS } from '@outfitly/shared';
 import { describe, expect, it } from 'vitest';
 import { pickLanguage, resources } from './resources';
 
@@ -29,6 +29,19 @@ describe('translations', () => {
 
   it('names every look style (the taste picker chips)', () => {
     expect(Object.keys(resources.en.translation.styles).sort()).toEqual([...STYLES].sort());
+  });
+
+  it('names every occasion and season (search chips)', () => {
+    const tags = LOOK_TAGS.filter((tag) => !(STYLES as readonly string[]).includes(tag));
+    expect(Object.keys(resources.en.translation.tags).sort()).toEqual([...tags].sort());
+  });
+
+  it.each(Object.keys(resources))('%s: searching a tag label finds that tag', (language) => {
+    const { styles, tags } = resources[language as keyof typeof resources].translation;
+    const labels: Record<string, string> = { ...styles, ...tags };
+    for (const tag of LOOK_TAGS) {
+      expect([tag, ...TAG_SEARCH_WORDS[tag]]).toContain(labels[tag]?.toLowerCase());
+    }
   });
 
   it('picks the first device language we have, else English', () => {

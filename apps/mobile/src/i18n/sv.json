@@ -113,7 +113,8 @@
     "unsyncedBody_other": "{{count}} ändringar har inte nått Outfitly än (du verkar vara offline). Om du loggar ut nu försvinner de.",
     "lastLookOpen": "Senaste öppning av look: {{ms}} ms",
     "tasteTime": "Senaste smakväljaren: {{seconds}} s",
-    "tasteAgain": "Visa smakväljaren igen"
+    "tasteAgain": "Visa smakväljaren igen",
+    "lastSuggest": "Senaste förslag: {{ms}} ms"
   },
   "board": {
     "options": "Val för tavlan",
@@ -174,5 +175,46 @@
     "romantic": "Romantisk",
     "edgy": "Edgy",
     "colorful": "Färgglad"
+  },
+  "tags": {
+    "everyday": "Vardag",
+    "work": "Jobb",
+    "date": "Dejt",
+    "party": "Fest",
+    "wedding": "Bröllop",
+    "travel": "Resa",
+    "sport": "Träning",
+    "festival": "Festival",
+    "spring": "Vår",
+    "summer": "Sommar",
+    "autumn": "Höst",
+    "winter": "Vinter"
+  },
+  "search": {
+    "placeholder": "Sök looks, plagg och personer",
+    "clear": "Rensa sökningen",
+    "cancel": "Avbryt",
+    "popular": "Populärt",
+    "recent": "Senaste sökningar",
+    "clearRecent": "Rensa",
+    "removeRecent": "Ta bort \"{{text}}\" från senaste sökningar",
+    "searchFor": "Sök efter \"{{text}}\"",
+    "people": "Personer",
+    "noResultsTitle": "Inga looks hittades",
+    "noResults": "Inget matchar \"{{text}}\" än. Prova andra ord.",
+    "loadFailed": "Kunde inte ladda förslag."
+  },
+  "profilePage": {
+    "looks_one": "look",
+    "looks_other": "looks",
+    "followers_one": "följare",
+    "followers_other": "följare",
+    "following": "följer",
+    "countLabel": "{{count}} {{label}}",
+    "noLooksTitle": "Inga looks än",
+    "noLooks": "Looks som @{{handle}} lägger upp visas här.",
+    "ownNoLooks": "Looks du lägger upp visas här.",
+    "notFound": "Den här profilen är inte tillgänglig.",
+    "openLabel": "Öppna profilen för {{name}}"
   }
 }

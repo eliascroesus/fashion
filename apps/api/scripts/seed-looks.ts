@@ -4,6 +4,7 @@
 import { resolve } from 'node:path';
 import { createDb } from '@outfitly/db';
 import { loadConfig, r2Config } from '../src/config.ts';
+import { refreshSearchTerms } from '../src/search.ts';
 import { R2Storage } from '../src/storage.ts';
 import { SEED_FILE, SeedFileError, seedLooks, writeSeedTemplate } from './seed/looks.ts';
 
@@ -45,6 +46,11 @@ try {
         `${String(result.looksUpdated)} updated, ${String(result.looksRetired)} retired; ` +
         `${String(result.photosProcessed)} photos processed, ` +
         `${String(result.photosSkipped)} already there.`,
+    );
+    // Search's vocabulary takes in the new captions now, not at the next 15-minute run.
+    const words = await refreshSearchTerms(db);
+    console.log(
+      `Search words: ${String(words.changed)} new or changed, ${String(words.removed)} gone.`,
     );
     if (result.failures.length > 0) {
       console.error(`${String(result.failures.length)} photos failed (their looks were skipped):`);

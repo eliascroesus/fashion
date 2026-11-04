@@ -6,6 +6,7 @@ import { api } from '../api';
 import { carryOverLoggedOutData } from '../feed/cache';
 import { queryClient } from '../lib/query';
 import { forgetLocalSaves, outbox, refreshSavedLists, setGuestSessionStarter } from '../saves';
+import { clearRecentSearches } from '../search';
 import { forgetTaste } from '../taste';
 import { useCaptchaToken } from './captcha';
 import { type AuthFlows, createAuthFlows } from './flows';
@@ -20,6 +21,7 @@ function clearLocalSession(): void {
   queryClient.clear();
   forgetLocalSaves();
   forgetTaste();
+  clearRecentSearches();
 }
 
 function signedIn(me: Me): void {

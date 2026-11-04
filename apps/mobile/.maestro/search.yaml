@@ -1,0 +1,99 @@
+# Search, logged out: popular tags before typing; a typo turns into the real word in the
+# suggestions; the results grid; a look opened and Back to the same results; the search kept
+# in recent searches; Cancel goes back to the results, also after the keyboard was dragged away.
+# Then the developer menu must show how long the last suggestions took.
+#   maestro test -e APP_ID=com.outfitly.app.dev apps/mobile/.maestro/search.yaml
+# SEARCH_TYPO / SEARCH_WORD: the typo to type and the word it should suggest.
+appId: ${APP_ID || 'com.outfitly.app'}
+---
+- launchApp:
+    clearState: true
+- runFlow: subflows/skip-taste.yaml
+- tapOn:
+    id: tab-profile
+- longPressOn:
+    id: profile-title
+- tapOn:
+    id: tab-search
+
+# Before typing: the popular tags.
+- extendedWaitUntil:
+    visible:
+      id: search-chip
+    timeout: 20000
+
+# A typo: the suggestions offer the real word.
+- tapOn:
+    id: search-input
+- inputText: ${SEARCH_TYPO || 'minimel'}
+- extendedWaitUntil:
+    visible:
+      id: search-suggestion
+      text: ${SEARCH_WORD || 'minimal'}
+    timeout: 10000
+- tapOn:
+    id: search-suggestion
+    text: ${SEARCH_WORD || 'minimal'}
+
+# The results, and a look opened from them; Back lands on the same results.
+- extendedWaitUntil:
+    visible:
+      id: search-card
+    timeout: 20000
+- takeScreenshot: search/results
+- tapOn:
+    id: search-card
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: look-author
+    timeout: 10000
+- tapOn:
+    id: look-back
+- extendedWaitUntil:
+    visible:
+      id: search-card
+    timeout: 5000
+- assertNotVisible:
+    id: search-suggestions
+
+# Typing again shows recent searches once the field is cleared; Cancel goes back to the results.
+- tapOn:
+    id: search-input
+- tapOn:
+    id: search-clear
+- assertVisible:
+    id: search-recent
+    text: ${SEARCH_WORD || 'minimal'}
+- tapOn:
+    id: search-cancel
+- assertVisible:
+    id: search-card
+
+# Typing more and dragging the suggestions (which closes the keyboard) keeps the suggestions
+# up, not the old results under the new text; Cancel still goes back.
+- tapOn:
+    id: search-input
+- inputText: ' coat'
+- extendedWaitUntil:
+    visible:
+      id: search-suggestions
+    timeout: 5000
+- swipe:
+    start: 50%, 60%
+    end: 50%, 40%
+- assertVisible:
+    id: search-suggestions
+- assertNotVisible:
+    id: search-card
+- tapOn:
+    id: search-cancel
+- assertVisible:
+    id: search-card
+
+# The developer menu: keystroke → suggestions on screen.
+- tapOn:
+    id: tab-profile
+- assertVisible:
+    id: dev-suggest
+- takeScreenshot: search/dev-menu

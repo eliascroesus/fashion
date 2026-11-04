@@ -17,9 +17,12 @@ import {
   mediaSchema,
   meSchema,
   mergeGuestResultSchema,
+  popularTagsSchema,
+  profilePageSchema,
   saveStateSchema,
   type Style,
   stylesParam,
+  suggestionsSchema,
   swipeStateSchema,
   type Taste,
   tastePickerSchema,
@@ -214,6 +217,34 @@ export function createApiClient(options: ApiClientOptions) {
       /** "More like this", 20 per page. */
       similar: (lookId: string, cursor?: string, signal?: AbortSignal) =>
         page(`/looks/${id(lookId)}/similar`, cursor, signal),
+    },
+    search: {
+      /** Looks matching the words (typos too), 20 per page. Works logged out. */
+      looks: (text: string, cursor?: string, signal?: AbortSignal) =>
+        page('/search/looks', cursor, signal, { q: text }),
+      /** While typing: whole searches and people. */
+      suggest: (text: string, signal?: AbortSignal) =>
+        request('GET', `/search/suggest?q=${encodeURIComponent(text)}`, {
+          schema: suggestionsSchema,
+          ...(signal ? { signal } : {}),
+        }),
+      /** The tags most looks carry, most first. */
+      popular: (signal?: AbortSignal) =>
+        request('GET', '/search/popular', {
+          schema: popularTagsSchema,
+          ...(signal ? { signal } : {}),
+        }),
+    },
+    profiles: {
+      /** The top of a profile screen (counts; whether the active profile follows it). */
+      get: (profileId: string, signal?: AbortSignal) =>
+        request('GET', `/profiles/${id(profileId)}`, {
+          schema: profilePageSchema,
+          ...(signal ? { signal } : {}),
+        }),
+      /** Their looks, newest first, 20 per page. */
+      looks: (profileId: string, cursor?: string, signal?: AbortSignal) =>
+        page(`/profiles/${id(profileId)}/looks`, cursor, signal),
     },
     taste: {
       /** The taste picker's looks (works logged out). */

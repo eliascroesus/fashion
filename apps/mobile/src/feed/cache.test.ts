@@ -3,7 +3,9 @@ import { type InfiniteData, InfiniteQueryObserver, QueryClient } from '@tanstack
 import { themes } from '@outfitly/ui-tokens';
 import { describe, expect, it } from 'vitest';
 import { lookQueryKey, similarQueryKey } from '../looks/keys';
+import { profileLooksQueryKey, profileQueryKey } from '../profiles/keys';
 import { removeFromLists, setSavedInLists } from '../saves/cache';
+import { searchQueryKey } from '../search/keys';
 import {
   carryOverLoggedOutData,
   findCachedCard,
@@ -123,6 +125,18 @@ describe('carryOverLoggedOutData', () => {
     expect(client.getQueryData(lookQueryKey('guest', 'look-1'))).toBe(detail);
     expect(client.getQueryState(lookQueryKey('guest', 'look-1'))?.dataUpdatedAt).toBe(99);
     expect(client.getQueryData(similarQueryKey('guest', 'look-1'))).toBe(feed);
+  });
+
+  it('keeps search results and an open profile through the first save', () => {
+    const client = new QueryClient();
+    const page = { id: 'poster' };
+    client.setQueryData(searchQueryKey(null, 'linen'), feed);
+    client.setQueryData(profileQueryKey(null, 'poster'), page);
+    client.setQueryData(profileLooksQueryKey(null, 'poster'), feed);
+    carryOverLoggedOutData(client, null, me('guest'));
+    expect(client.getQueryData(searchQueryKey('guest', 'linen'))).toBe(feed);
+    expect(client.getQueryData(profileQueryKey('guest', 'poster'))).toBe(page);
+    expect(client.getQueryData(profileLooksQueryKey('guest', 'poster'))).toBe(feed);
   });
 });
 

@@ -14,6 +14,8 @@ import {
   loadCards,
   microsText,
   microsTime,
+  photoColumns,
+  type PhotoRow,
   showableLook,
   toPhoto,
 } from './feed/cards.ts';
@@ -32,26 +34,6 @@ interface LookRow extends Record<string, unknown> {
   saved: boolean;
   following: boolean;
 }
-
-interface PhotoRow extends Record<string, unknown> {
-  width: number | null;
-  height: number | null;
-  thumbhash: string | null;
-  dominant_color: string | null;
-  key_1080: string | null;
-  key_600: string | null;
-  key_300: string | null;
-}
-
-const photoColumns = (row: PhotoRow) => ({
-  width: row.width,
-  height: row.height,
-  thumbhash: row.thumbhash,
-  dominantColor: row.dominant_color,
-  key1080: row.key_1080,
-  key600: row.key_600,
-  key300: row.key_300,
-});
 
 /**
  * One look as the look page shows it, for `viewerProfileId` (null when logged

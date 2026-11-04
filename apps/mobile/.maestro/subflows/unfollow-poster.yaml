@@ -1,0 +1,35 @@
+# Unfollows the poster (POSTER, default outfitly) through search's people suggestions and waits
+# until the server has it (developer menu on). Leaves the search field empty.
+appId: ${APP_ID || 'com.outfitly.app'}
+---
+- tapOn:
+    id: tab-search
+- tapOn:
+    id: search-input
+- tapOn:
+    id: search-clear
+    optional: true
+- inputText: ${POSTER || 'outfitly'}
+- extendedWaitUntil:
+    visible:
+      id: search-person
+    timeout: 10000
+- tapOn:
+    id: search-person
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: profile-follow
+      selected: true
+    timeout: 10000
+- tapOn:
+    id: profile-follow
+- assertVisible:
+    id: profile-follow
+    selected: false
+# Cancel empties the field and closes the keyboard (which would cover the tab bar).
+- tapOn:
+    id: profile-back
+- tapOn:
+    id: search-cancel
+- runFlow: wait-synced.yaml

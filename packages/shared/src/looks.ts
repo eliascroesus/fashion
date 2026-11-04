@@ -1,4 +1,8 @@
-/** What a look is for. Stored as tags on the look; labels live in the app's i18n files. */
+/**
+ * What a look is for. Stored as tags on the look; labels live in the app's
+ * i18n files. The ids are permanent (database enum, search words): add new
+ * ones but never rename.
+ */
 export const OCCASIONS = [
   'everyday',
   'work',
@@ -11,6 +15,7 @@ export const OCCASIONS = [
 ] as const;
 export type Occasion = (typeof OCCASIONS)[number];
 
+/** When a look is worn. Permanent ids, like OCCASIONS. */
 export const SEASONS = ['spring', 'summer', 'autumn', 'winter'] as const;
 export type Season = (typeof SEASONS)[number];
 
