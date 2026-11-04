@@ -20,6 +20,26 @@ export async function replaceFeed(
   });
 }
 
+/** A feed's first page, tagged with the list it starts (see startList). */
+export type FirstPage = FeedPage & { listId?: string };
+
+let listsStarted = 0;
+
+/**
+ * Tags the first page of a new list (first load, refresh, cold-start swap),
+ * even when it holds the same looks as before. Saving a look or "see less"
+ * rewrites the page but keeps the tag, so the grid only starts over for a new list.
+ */
+export function startList(first: FeedPage): FirstPage {
+  listsStarted += 1;
+  return { ...first, listId: `${String(Date.now())}-${String(listsStarted)}` };
+}
+
+/** Which list a feed shows (see startList); stored lists keep it across launches. */
+export function listIdentity(firstPage: FirstPage | undefined): string | undefined {
+  return firstPage?.listId;
+}
+
 /**
  * A card already in one of the cached lists (feeds, Saves, boards), so the
  * look screen shows its photo at once.

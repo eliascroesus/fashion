@@ -65,7 +65,7 @@ export function FeedGrid({ kind, active, empty, testID }: FeedGridProps) {
       testID={testID}
       onVisibleChange={onVisibleChange}
       // A new list replaced the old one: every card may count again.
-      resetKey={feed.firstPage}
+      resetKey={feed.listId}
       onReset={() => {
         tracker.reset();
       }}

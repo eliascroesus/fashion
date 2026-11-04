@@ -3,7 +3,7 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useMe } from '../auth/store';
-import { replaceFeed } from './cache';
+import { listIdentity, replaceFeed, startList } from './cache';
 import { type FeedKind, feedQueryKey } from './keys';
 import { dedupeCards } from './layout';
 
@@ -12,9 +12,17 @@ const LAUNCHED_AT = Date.now();
 /** Feeds already refreshed once after the cold start. */
 const refreshedThisLaunch = new Set<string>();
 
-function fetchPage(kind: FeedKind, cursor: string | null, signal?: AbortSignal): Promise<FeedPage> {
+async function fetchPage(
+  kind: FeedKind,
+  cursor: string | null,
+  signal?: AbortSignal,
+): Promise<FeedPage> {
   const page = cursor ?? undefined;
-  return kind === 'for-you' ? api.feed.forYou(page, signal) : api.feed.following(page, signal);
+  const result = await (kind === 'for-you'
+    ? api.feed.forYou(page, signal)
+    : api.feed.following(page, signal));
+  // A first page starts a new list (the grid starts over for it).
+  return cursor === null ? startList(result) : result;
 }
 
 interface Options {
@@ -51,6 +59,8 @@ export function useFeed(kind: FeedKind, { enabled, canReplace }: Options) {
     refetchOnWindowFocus: false,
   });
   const cards = useMemo(() => dedupeCards(query.data?.pages ?? []), [query.data]);
+  const firstPage = query.data?.pages[0];
+  const listId = useMemo(() => listIdentity(firstPage), [firstPage]);
   const [refreshing, setRefreshing] = useState(false);
 
   /** Fetches a new list's first page and shows it instead of the current list. */
@@ -91,8 +101,8 @@ export function useFeed(kind: FeedKind, { enabled, canReplace }: Options) {
 
   return {
     cards,
-    /** Changes when a new list replaces the old one (refresh): impressions count afresh. */
-    firstPage: query.data?.pages[0],
+    /** Changes when a new list replaces the old one (refresh), not when a look on it is saved or hidden. */
+    listId,
     isPending: query.isPending,
     /** The first page failed and nothing is stored to show instead. */
     isError: query.isError && !query.data,
