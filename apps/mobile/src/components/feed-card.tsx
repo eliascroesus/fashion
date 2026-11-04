@@ -6,6 +6,7 @@ import { Link } from 'expo-router';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet, View } from 'react-native';
+import { DOWNSCALE_PHOTOS } from '../lib/photos';
 import { markLookOpening } from '../looks/open-timing';
 import { radii, spacing, ThemedText, useColors } from '../theme';
 import { SaveButton } from './save-button';
@@ -78,7 +79,9 @@ export const FeedCard = memo(function FeedCard({
                 // Cells are reused while scrolling: never show the previous look's photo.
                 recyclingKey={card.id}
                 cachePolicy="memory-disk"
-                transition={120}
+                allowDownscaling={DOWNSCALE_PHOTOS}
+                // Photos already on the phone (fetched ahead) show at once; only downloads fade in.
+                transition={{ duration: 120, skipOnCacheHit: 'all' }}
                 style={{ width, height }}
                 accessible={false}
               />

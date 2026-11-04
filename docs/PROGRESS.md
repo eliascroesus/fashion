@@ -3,7 +3,7 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-Phase 2, Step 2.5 — The look page: built and checked in the iPhone simulator (2026-11-03), PR #12, stacked on Step 2.4 (PR #11, waiting for Elias's OK to merge). Tapping a look zooms its photo into the look page: swipeable photos, the poster with Follow, the caption, a place for the pieces (Phase 3), and "More like this". Back lands on the same spot. Still open from earlier steps: "mid-range Android, no blank cards or stutter" (2.3) and "300 real looks in dev" (2.1), waiting on the phone and the photos. Phase 1 gate: everything passed except "app on both phones with login" (no Android phone yet; a real iPhone needs the Apple Developer membership); Elias chose to go on and do that check when the hardware is ready. Next: Step 2.6 — taste picker.
+Phase 2, Step 2.5 — The look page: built and checked in the iPhone simulator (2026-11-03), PR #12, stacked on Step 2.4 (PR #11, waiting for Elias's OK to merge). Tapping a look zooms its photo into the look page: swipeable photos, the poster with Follow, the caption, a place for the pieces (Phase 3), and "More like this". Back lands on the same spot. Smoothness pass (2026-11-04, after Elias's test): photos are no longer redrawn on the main thread, photos already on the phone no longer fade in, and "More like this" is built after the zoom; the worst freeze while opening a look went from 58 ms to 18–27 ms. Still open from earlier steps: "mid-range Android, no blank cards or stutter" (2.3) and "300 real looks in dev" (2.1), waiting on the phone and the photos. Phase 1 gate: everything passed except "app on both phones with login" (no Android phone yet; a real iPhone needs the Apple Developer membership); Elias chose to go on and do that check when the hardware is ready. Next: Step 2.6 — taste picker.
 
 ## Done
 - Step 1.1 — Project skeleton and safety net (PR #1). Monorepo (pnpm + Turborepo), strict TypeScript, ESLint + Prettier, Vitest, GitHub Actions CI on every pull request. CI green.
@@ -41,9 +41,20 @@ Phase 2, Step 2.5 — The look page: built and checked in the iPhone simulator (
     - Maestro `look-page.yaml` passes on the iPhone 18 Pro simulator (Release build, staging): scroll Home, open a look, check poster / Follow / caption / photos / shop placeholder / "More like this", open a look from "More like this", Back twice. Then the developer menu must show "Last look open" under 400 ms.
     - `same-place.sh` checks that Home before and after is pixel-identical (status bar and scroll indicator left out).
     - The other three flows still pass.
+  - **Smoothness pass (2026-11-04):** Elias found opening, Back and scrolling OK but not as smooth as they could be. Profiled the Release build in the simulator (Time Profiler, scripted run: 9 flings, open a look twice, Back). Fixes:
+    - On iPhone, grid and look photos are shown as delivered (`DOWNSCALE_PHOTOS` in `src/lib/photos.ts`): expo-image was redrawing every grid photo smaller on the main thread (600 px file in a 576 px card). Android keeps shrinking them, since it does that while decoding, off the main thread.
+    - Photos already on the phone show at once; only downloads fade in (`skipOnCacheHit: 'all'`).
+    - "More like this" is built once the zoom has finished.
+    - A saved look no longer bounces when it scrolls into a reused grid cell; board covers no longer briefly show the previous board's photo in a reused cell.
+    - `look-page.yaml` scrolls to the shop placeholder before "More like this" (a single fling could carry past it). It passes 3/3 with Home pixel-identical after Back; the other three flows pass.
 
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
+- 2026-11-04 — Smoothness (Step 2.5 pass):
+  - **Photos are shown as delivered on iPhone:** our photos come in fixed sizes (300/600/1080), so expo-image's downscaling is off on iOS for grid cards and the look's photos; the graphics chip scales the small difference. Android keeps it: Glide shrinks while decoding on a worker thread and caches the smaller copy (turning it off there would only cost memory, found in review). Kept on for the avatar and board covers too: they're often far smaller than the 300 px photo, where GPU scaling looks rough.
+  - **No fade for photos already on the phone** (fetched ahead or seen before); downloads still fade in over 120 ms.
+  - **"More like this" waits for the zoom:** it's loaded at once but only built when the opening animation ends (or after 600 ms), so the zoom has the main thread to itself. It's below the screen at that moment.
+  - The save button bounces only when that same look becomes saved (FlashList reuses cells, so the button can switch to another, already saved look).
 - 2026-11-03 — Look page (Step 2.5):
   - **Opening:** the grid card's photo zooms into the look page with Apple's zoom transition (`Link.AppleZoom` in Expo Router, iOS 18+). On Android and older iOS it's the normal slide, because a grow effect there needs an experimental library. The zoom wraps only the photo (with its own size): wrapping the whole card broke the masonry layout (the wrapper takes no space of its own).
   - **Layout:** all photos are as tall as the cover (cropped to fit), so swiping never changes the height.
@@ -127,7 +138,7 @@ Phase 2, Step 2.5 — The look page: built and checked in the iPhone simulator (
 - **OK for two small free libraries (Step 1.3)** — `jose` (checks Supabase login tokens) and `@fastify/rate-limit` (rate limiting). Both are free, open source, widely used. Say no and Claude will replace them.
 
 ## Open decisions for Elias
-- When For You runs out of unseen looks (2026-11-03) — today a profile that has seen nearly everything gets a short For You ending in "all caught up" for up to a week. Proposal: once fewer than a few pages of unseen looks are left, fill the rest of the list with looks seen longest ago (still nothing seen in the last 24 h). Small feed-engine change; could go with Step 2.4 or 2.6.
+- When For You runs out of unseen looks (2026-11-03) — today a profile that has seen nearly everything gets a short For You ending in "all caught up" for up to a week; once it has seen all of them, For You is empty and says "No looks yet" (seen in the simulator on 2026-11-04 after the smoothness runs: the guest had seen all 300). Proposal: once fewer than a few pages of unseen looks are left, fill the rest of the list with looks seen longest ago (still nothing seen in the last 24 h). Small feed-engine change; could go with Step 2.4 or 2.6.
 - Style tags on looks — Step 2.6's taste picker matches on styles, but looks only have occasion and season tags so far. Decide before tagging the 300 photos, so they're tagged once. Proposed to Elias (2026-11-03), waiting for his OK or edits: minimal, streetwear, classic, sporty, vintage, boho, preppy, edgy, romantic, quiet luxury (1–2 per look, written in the same `tags` list as occasions/seasons in looks.json; the same list becomes the taste-picker chips). Once agreed: small change (shared list + database enum + `style_tags` column + loader), done before loading his photos.
 - Domain name (outfitly.com or other) — none yet (2026-11-02); everything that waits on it is in `docs/BEFORE_LAUNCH.md`; outfitly.com is registered by someone else (since 2011). Until we have one, images use the R2 public dev address (r2.dev — rate-limited and meant for development, so connect `img.<domain>` as a Custom Domain on `outfitly-public-dev` and update `MEDIA_PUBLIC_BASE_URL` before launch) and Turnstile allows `outfitly-api-staging.fly.dev` (`EXPO_PUBLIC_TURNSTILE_ORIGIN`)
 - App ID (default `com.outfitly.app`)
@@ -151,6 +162,7 @@ Phase 2, Step 2.5 — The look page: built and checked in the iPhone simulator (
 - `pnpm audit`: one moderate advisory in minimatch, pulled in only by ESLint (dev tool reading our own config) — not exploitable here; wait for upstream fix.
 
 ## Measured numbers
+- Smoothness (Step 2.5 pass, iPhone 18 Pro simulator, Release build, staging, logged out, 2026-11-04; Time Profiler while Maestro runs 9 flings, then opens a look twice and goes back): main-thread freezes the app causes, before → after: over 8 ms 11 → 5, over 17 ms 2 → 1, worst 58 → 18 ms (it was while a look opened); photo redrawing 417 → 0 ms per run. Opening the same look 6 times, worst freeze with / without "More like this" waiting for the zoom: first open 27 / 55 ms, reopens 20–22 / 22–26 ms. Going back: the app itself barely works; the 16–24 ms seen there is Maestro reading the screen. JavaScript is never the bottleneck (1.1 s of work in 60 s, longest 32 ms). The Mac was mostly idle (M4 Max, load ~3 of 14 cores). Apple's frame-drop tool (Animation Hitches) only runs on a real device.
 - Look page open (Step 2.5, iPhone 18 Pro simulator, Release build, staging, 2026-11-03): from the tap to the cached cover photo displayed, 19–40 ms over 5 opens of different looks (40, 26, 22, 20, 19). The zoom animation is over about 0.3 s after the tap (screen recording: changes from 9.55 s to 9.84 s), so the look is fully open in under 400 ms. Not measured on a real phone yet.
 - "More like this" (Step 2.5, reviewer's local test, 10,000 looks): first page 45 ms, next page 57 ms. It reads every published look for each page (a full table scan), so it grows with the catalogue (For You: ~13 ms). See "Later".
 - Offline saves (Step 2.4, iPhone simulator, staging, 2026-11-03): back online at 20:32:55 UTC, the 2 offline saves were on the server at 20:33:03 (≈ 8 s, on the 2 s → 4 s → 8 s retry). The first save made the guest account in about 0.5 s (account 20:32:41.05, save 20:32:41.57).
@@ -170,6 +182,7 @@ Phase 2, Step 2.5 — The look page: built and checked in the iPhone simulator (
 - First EAS Android preview build (free plan): ~40 min in queue + ~15 min building; APK 107 MB (2026-11-02)
 
 ## Later (parked ideas, not in current scope)
+- Re-measure smoothness on a real iPhone with Instruments → Animation Hitches (needs the Apple Developer membership) and on a mid-range Android phone: the simulator shows main-thread freezes but not the real 120 Hz screen or finger feel.
 - Measure scrolling on a real mid-range Android phone with FlashList's `useBenchmark` (JS frame rate, blank area) once there is one.
 - Events are credited to the profile active when the batch is sent, not when the card was seen (the queue survives sign-out and, from Step 4.1, profile switching). Store the profile per event and send batches per profile before Step 4.1. The same goes for the saves outbox (Step 2.4): it sends as whoever is active at send time; store the profile per action before profile switching exists (a retry under another profile would be refused with 422 and dropped).
 - Idempotency: answers below 500 are stored and replayed for 24 h, including a 403 that might pass later; consider freeing the key for 403/409/429 like 5xx (the outbox drops an action after 10 refusals).

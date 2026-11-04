@@ -15,6 +15,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { photoHeight } from '../feed/layout';
+import { DOWNSCALE_PHOTOS } from '../lib/photos';
 import { saveIfNot } from '../saves';
 import { radii, spacing, useColors } from '../theme';
 import { gridPhotoUrl } from './look-grid';
@@ -73,6 +74,8 @@ export function LookPhotos({ card, photos, width, onCoverShown }: LookPhotosProp
       placeholderContentFit="cover"
       contentFit="cover"
       cachePolicy="memory-disk"
+      // Narrower phones show the 1080 smaller (on iPhone, not redrawn mid-zoom).
+      allowDownscaling={DOWNSCALE_PHOTOS}
       transition={placeholder ? 0 : 150}
       style={StyleSheet.absoluteFill}
       accessible={false}

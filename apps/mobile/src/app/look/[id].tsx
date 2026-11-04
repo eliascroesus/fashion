@@ -1,6 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { FeedCard, LookDetail } from '@outfitly/shared';
-import { router, useLocalSearchParams } from 'expo-router';
+import {
+  type NativeStackNavigationProp,
+  router,
+  useLocalSearchParams,
+  useNavigation,
+} from 'expo-router';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ApiRequestError } from '../../api';
 import { ActivityIndicator, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
@@ -11,6 +17,7 @@ import { LookGrid } from '../../components/look-grid';
 import { LookPhotos } from '../../components/look-photos';
 import { SaveButton } from '../../components/save-button';
 import { ShopPlaceholder } from '../../components/shop-placeholder';
+import type { CardList } from '../../feed/card-list';
 import { markLookShown } from '../../looks/open-timing';
 import { useLookDetail, useSimilarLooks } from '../../looks/queries';
 import { findCard } from '../../saves';
@@ -29,6 +36,46 @@ function cardOf(look: LookDetail): FeedCard | undefined {
   };
 }
 
+const nothing = () => undefined;
+
+/** "More like this" until the zoom is over: still loading, and asks for nothing. */
+const NOT_BUILT_YET: CardList = {
+  cards: [],
+  isPending: true,
+  isError: false,
+  hasNextPage: false,
+  isFetchingNextPage: false,
+  isFetchNextPageError: false,
+  loadMore: nothing,
+  retryNextPage: nothing,
+  retry: nothing,
+  refreshing: false,
+  refresh: () => Promise.resolve(),
+};
+
+/** If the stack never says the opening animation ended, go ahead after this long. */
+const OPENED_FALLBACK_MS = 600;
+
+/** True once this screen's opening animation (e.g. the zoom from the grid) has finished. */
+function useOpened(): boolean {
+  const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
+  const [opened, setOpened] = useState(false);
+  useEffect(() => {
+    if (opened) return;
+    const timer = setTimeout(() => {
+      setOpened(true);
+    }, OPENED_FALLBACK_MS);
+    const unsubscribe = navigation.addListener('transitionEnd', (event) => {
+      if (!event.data.closing) setOpened(true);
+    });
+    return () => {
+      clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [navigation, opened]);
+  return opened;
+}
+
 /**
  * A look: its photos (the grid card zooms into the first), who posted it with
  * a Follow button, the caption, where the pieces will be listed (Phase 3), and
@@ -43,6 +90,9 @@ export default function LookScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const detail = useLookDetail(id);
   const similar = useSimilarLooks(id);
+  // "More like this" (below the screen at first) is fetched at once but only built after the
+  // zoom, which then has the main thread to itself.
+  const opened = useOpened();
   // The card from the grid shows at once; the look's own data fills in the rest.
   const card = findCard(id) ?? (detail.data ? cardOf(detail.data) : undefined);
   // Removed or hidden since (404), versus no connection or a server problem (worth a retry).
@@ -88,7 +138,7 @@ export default function LookScreen() {
     <Screen testID="screen-look" style={{ paddingTop: insets.top }}>
       {card ? (
         <LookGrid
-          list={similar}
+          list={opened ? similar : NOT_BUILT_YET}
           testID="look-page"
           cardTestID="similar-card"
           header={header}

@@ -23,8 +23,12 @@ function Cover({
           placeholder={{ thumbhash: photo.thumbhash }}
           placeholderContentFit="cover"
           contentFit="cover"
+          // Boards sit in lists that reuse cells: never show the previous board's photo.
+          recyclingKey={photo.urls[300]}
           cachePolicy="memory-disk"
-          transition={120}
+          // Covers are often much smaller than the 300 px photo, so it's still shrunk to fit;
+          // photos already on the phone show at once.
+          transition={{ duration: 120, skipOnCacheHit: 'all' }}
           style={StyleSheet.absoluteFill}
           accessible={false}
         />

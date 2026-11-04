@@ -54,13 +54,16 @@ appId: ${APP_ID || 'com.outfitly.app'}
           duration: 300
       - assertVisible:
           id: look-photo-1
-# Down to the shop placeholder and "More like this".
+# Down to the shop placeholder, then "More like this" (one at a time: a single fling can
+# carry the page past the placeholder).
+- scrollUntilVisible:
+    element:
+      id: shop-placeholder
+    direction: DOWN
 - scrollUntilVisible:
     element:
       id: similar-card
     direction: DOWN
-- assertVisible:
-    id: shop-placeholder
 
 # One level deeper, then back twice.
 - tapOn:
@@ -72,8 +75,9 @@ appId: ${APP_ID || 'com.outfitly.app'}
     timeout: 10000
 - tapOn:
     id: look-back
+# Back on the first look, where we left it.
 - assertVisible:
-    id: shop-placeholder
+    id: similar-card
 - tapOn:
     id: look-back
 - assertVisible:
