@@ -2,7 +2,8 @@
 # what the page shows, follow "More like this" one level deeper, and come back.
 #   maestro test -e APP_ID=com.outfitly.app.dev apps/mobile/.maestro/look-page.yaml
 # It saves two screenshots of Home, before opening and after Back (look-page/home-before,
-# look-page/home-after): `apps/mobile/.maestro/same-place.sh` checks they are identical.
+# look-page/home-after): `apps/mobile/.maestro/same-place.sh` checks they are identical, and
+# `apps/mobile/.maestro/photo-shown.sh` that the opened look's photo is drawn (look-page/look-open).
 # Needs looks with tags and several photos on the server the build talks to.
 appId: ${APP_ID || 'com.outfitly.app'}
 ---
@@ -41,8 +42,13 @@ appId: ${APP_ID || 'com.outfitly.app'}
     timeout: 10000
 - assertVisible:
     id: look-follow
+# For photo-shown.sh: the photo must be drawn, not only its main colour.
+- waitForAnimationToEnd
+- takeScreenshot: look-page/look-open
+# The caption shows when the look has one (the seed looks have none).
 - assertVisible:
     id: look-caption
+    optional: true
 # Swipe to the next photo (looks with one photo have no dots).
 - runFlow:
     when:
