@@ -1,17 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { LOOK_TAGS, lookSlug, OCCASIONS, SEASONS, splitLookTags } from './index.ts';
+import { LOOK_TAGS, lookSlug, OCCASIONS, SEASONS, splitLookTags, STYLES } from './index.ts';
 
 const ID = '3f9a2c1b-4d5e-4f60-8a1b-2c3d4e5f6a7b';
 
 describe('look tags', () => {
-  it('has no tag that is both an occasion and a season', () => {
-    expect(new Set(LOOK_TAGS).size).toBe(OCCASIONS.length + SEASONS.length);
+  it('has no tag in two groups (occasion, season, style)', () => {
+    expect(new Set(LOOK_TAGS).size).toBe(OCCASIONS.length + SEASONS.length + STYLES.length);
   });
 
-  it('sorts mixed tags into occasions and seasons, dropping duplicates', () => {
-    expect(splitLookTags(['autumn', 'work', 'party', 'autumn', 'winter'])).toEqual({
+  it('sorts mixed tags into occasions, seasons and styles, dropping duplicates', () => {
+    expect(
+      splitLookTags(['autumn', 'streetwear', 'work', 'party', 'autumn', 'winter', 'streetwear']),
+    ).toEqual({
       occasions: ['work', 'party'],
       seasons: ['autumn', 'winter'],
+      styles: ['streetwear'],
     });
   });
 });

@@ -8,9 +8,10 @@ import {
   media,
   or,
   profiles,
+  sql,
   tasteProfiles,
 } from '@outfitly/db';
-import { lookSlug, OCCASIONS, SEASONS } from '@outfitly/shared';
+import { lookSlug, OCCASIONS, SEASONS, STYLES } from '@outfitly/shared';
 import sharp from 'sharp';
 import type { PhotoStorage } from '../../src/storage.ts';
 import { ensureAuthor, fixedUuid, mapLimit, storeSeedPhoto } from './common.ts';
@@ -100,6 +101,8 @@ function fakeLook(index: number, pool: readonly string[], now: number) {
       status: 'published' as const,
       occasionTags: [pick(OCCASIONS, r)],
       seasonTags: [pick(SEASONS, r)],
+      // Its own random stream, so adding styles changed nothing else about existing fake looks.
+      styleTags: [pick(STYLES, random(index + 2_000_003))],
       publishedAt,
       createdAt: publishedAt,
     },
@@ -119,8 +122,13 @@ export interface FakeLooksOptions {
   log?: (line: string) => void;
 }
 
-/** Adds fake looks until there are `count`. Safe to run again. */
-export async function seedFakeLooks(options: FakeLooksOptions): Promise<{ inserted: number }> {
+/**
+ * Adds fake looks until there are `count`, and gives a style to fake looks made
+ * before styles existed (`restyled`). Safe to run again.
+ */
+export async function seedFakeLooks(
+  options: FakeLooksOptions,
+): Promise<{ inserted: number; restyled: number }> {
   const { db, storage, count, poolSize = 30, photoWidth = 1200, log = () => undefined } = options;
   for (const author of FAKE_AUTHORS) {
     const id = await ensureAuthor(db, author);
@@ -146,6 +154,7 @@ export async function seedFakeLooks(options: FakeLooksOptions): Promise<{ insert
 
   const now = Date.now();
   let inserted = 0;
+  let restyled = 0;
   for (let from = 0; from < count; from += 500) {
     const batch = Array.from({ length: Math.min(500, count - from) }, (_, i) =>
       fakeLook(from + i, pool, now),
@@ -161,10 +170,16 @@ export async function seedFakeLooks(options: FakeLooksOptions): Promise<{ insert
         .insert(lookMedia)
         .values(batch.flatMap((b) => b.photos))
         .onConflictDoNothing();
+      const styled = batch.map(({ look }) => sql`(${look.id}::uuid, ${look.styleTags[0]})`);
+      const updated = await tx.execute(sql`
+        UPDATE looks l SET style_tags = ARRAY[v.style::look_style]
+          FROM (VALUES ${sql.join(styled, sql`, `)}) AS v(id, style)
+         WHERE l.id = v.id AND l.style_tags = '{}'`);
+      restyled += updated.rowCount ?? 0;
     });
     log(`  ${String(Math.min(from + 500, count))}/${String(count)}`);
   }
-  return { inserted };
+  return { inserted, restyled };
 }
 
 /** Deletes every fake look, its placeholder pictures and the fake profiles. */

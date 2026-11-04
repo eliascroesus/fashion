@@ -18,7 +18,12 @@ import {
   meSchema,
   mergeGuestResultSchema,
   saveStateSchema,
+  type Style,
+  stylesParam,
   swipeStateSchema,
+  type Taste,
+  tastePickerSchema,
+  tasteSchema,
   uploadTicketSchema,
 } from '@outfitly/shared';
 import { z } from 'zod';
@@ -146,11 +151,20 @@ export function createApiClient(options: ApiClientOptions) {
     return parsed.data;
   }
 
-  const page = (path: string, cursor?: string, signal?: AbortSignal) =>
-    request('GET', cursor ? `${path}?cursor=${encodeURIComponent(cursor)}` : path, {
+  const page = (
+    path: string,
+    cursor?: string,
+    signal?: AbortSignal,
+    query: Record<string, string | undefined> = {},
+  ) => {
+    const params = Object.entries({ cursor, ...query }).flatMap(([name, value]) =>
+      value ? [`${name}=${encodeURIComponent(value)}`] : [],
+    );
+    return request('GET', params.length > 0 ? `${path}?${params.join('&')}` : path, {
       schema: feedPageSchema,
       ...(signal ? { signal } : {}),
     });
+  };
 
   const id = encodeURIComponent;
 
@@ -182,8 +196,12 @@ export function createApiClient(options: ApiClientOptions) {
         request('GET', `/media/${encodeURIComponent(mediaId)}`, { schema: mediaSchema }),
     },
     feed: {
-      /** Works logged out. Leave out the cursor for a new list (page 1). */
-      forYou: (cursor?: string, signal?: AbortSignal) => page('/feed/for-you', cursor, signal),
+      /**
+       * Works logged out. Leave out the cursor for a new list (page 1). `styles`:
+       * the taste picked on this phone (the profile's stored taste wins over it).
+       */
+      forYou: (cursor?: string, signal?: AbortSignal, styles: readonly Style[] = []) =>
+        page('/feed/for-you', cursor, signal, { styles: stylesParam(styles) }),
       following: (cursor?: string, signal?: AbortSignal) => page('/feed/following', cursor, signal),
     },
     looks: {
@@ -196,6 +214,17 @@ export function createApiClient(options: ApiClientOptions) {
       /** "More like this", 20 per page. */
       similar: (lookId: string, cursor?: string, signal?: AbortSignal) =>
         page(`/looks/${id(lookId)}/similar`, cursor, signal),
+    },
+    taste: {
+      /** The taste picker's looks (works logged out). */
+      picker: (signal?: AbortSignal) =>
+        request('GET', '/taste/picker', {
+          schema: tastePickerSchema,
+          ...(signal ? { signal } : {}),
+        }),
+      /** Stores the picked taste if the profile has none yet; answers with what it has. */
+      save: (taste: Taste, idempotencyKey: string) =>
+        request('PUT', '/taste', { schema: tasteSchema, body: taste, idempotencyKey }),
     },
     follows: {
       follow: (profileId: string, idempotencyKey: string) =>

@@ -6,6 +6,7 @@ import { api } from '../api';
 import { carryOverLoggedOutData } from '../feed/cache';
 import { queryClient } from '../lib/query';
 import { forgetLocalSaves, outbox, refreshSavedLists, setGuestSessionStarter } from '../saves';
+import { forgetTaste } from '../taste';
 import { useCaptchaToken } from './captcha';
 import { type AuthFlows, createAuthFlows } from './flows';
 import { getMe, pendingGuestMerge, setMe } from './store';
@@ -18,6 +19,7 @@ function clearLocalSession(): void {
   // Nothing from the previous login may show for the next one, or be sent as it.
   queryClient.clear();
   forgetLocalSaves();
+  forgetTaste();
 }
 
 function signedIn(me: Me): void {

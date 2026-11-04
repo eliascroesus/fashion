@@ -1,5 +1,24 @@
-import { and, type Db, desc, eq, feedSnapshots, gt, isNull, notInArray, sql } from '@outfitly/db';
-import { FEED_PAGE_SIZE, type FeedCard, type FeedPage } from '@outfitly/shared';
+import {
+  and,
+  type Db,
+  desc,
+  eq,
+  feedSnapshots,
+  gt,
+  isNotNull,
+  isNull,
+  notInArray,
+  type SQL,
+  sql,
+  tasteProfiles,
+} from '@outfitly/db';
+import {
+  FEED_PAGE_SIZE,
+  type FeedCard,
+  type FeedPage,
+  knownStyles,
+  type Style,
+} from '@outfitly/shared';
 import { z } from 'zod';
 import {
   applyDiversity,
@@ -31,20 +50,36 @@ interface CandidateRow extends Record<string, unknown> {
 type Scored = Candidate & { score: number };
 
 /**
+ * Looks in any of `styles` (as a look_style[]: a plain JS array would become a
+ * list of parameters). No styles: plain `false`, so Postgres skips the pool
+ * instead of reading every look to find none.
+ */
+function inStyles(look: SQL, styles: readonly Style[]): SQL {
+  if (styles.length === 0) return sql`false`;
+  const list = sql.join(
+    styles.map((style) => sql`${style}`),
+    sql`, `,
+  );
+  return sql`${look}.style_tags && ARRAY[${list}]::look_style[]`;
+}
+
+/**
  * Up to `poolLimit` candidates from each of the four pools, in one round trip.
  * Each pool walks its own index (see looks_feed_*_idx) and stops early.
- * Logged out (`profileId` null), only the fresh and popular pools return rows.
+ * Logged out (`profileId` null), the following pool is empty, and the taste
+ * pool only has looks when the phone sent styles.
  */
 async function fetchCandidates(
   { db }: FeedDeps,
   profileId: string | null,
+  styles: readonly Style[],
 ): Promise<Record<Pool, Scored[]>> {
   const { poolLimit, followingPerAuthor, freshHours, seenDays } = FEED_RULES;
   const viewer = sql`${profileId}::uuid`;
   const { rows } = await db.execute<CandidateRow>(sql`
     WITH visible AS NOT MATERIALIZED (
       SELECT l.id, l.author_profile_id, l.occasion_tags::text[] AS occasion_tags,
-             l.season_tags::text[] AS season_tags, l.published_at, l.popularity_score
+             l.season_tags::text[] AS season_tags, l.style_tags, l.published_at, l.popularity_score
         FROM looks l
        WHERE ${showableLook(sql`l`)}
          AND l.published_at <= now()
@@ -63,10 +98,9 @@ async function fetchCandidates(
       WHERE f.follower_profile_id = ${viewer} AND f.deleted_at IS NULL
       ORDER BY v.published_at DESC, v.id DESC LIMIT ${poolLimit})
     UNION ALL
-    -- Brands count once looks have products (Phase 3).
-    (SELECT 'taste' AS pool, v.* FROM visible v, taste_profiles t
-      WHERE t.profile_id = ${viewer} AND cardinality(t.styles) > 0
-        AND (v.occasion_tags || v.season_tags) && t.styles
+    -- Looks in the picked styles (looks_feed_style_idx). Brands count once looks have products (Phase 3).
+    (SELECT 'taste' AS pool, v.* FROM visible v
+      WHERE ${inStyles(sql`v`, styles)}
       ORDER BY v.popularity_score DESC, v.published_at DESC, v.id DESC LIMIT ${poolLimit})
     UNION ALL
     (SELECT 'fresh' AS pool, v.* FROM visible v
@@ -100,14 +134,73 @@ async function seeLessKeys({ db }: FeedDeps, profileId: string | null): Promise<
   return new Set(rows.flatMap((r) => similarityKey(r.occasion_tags, r.season_tags) ?? []));
 }
 
+/**
+ * Styles the taste pool matches: the profile's stored styles when it has any,
+ * else the ones the phone sent (logged out, or before its picks are uploaded).
+ * Values no longer in STYLES are dropped.
+ */
+async function tasteStyles(
+  { db }: FeedDeps,
+  profileId: string | null,
+  sent: readonly Style[],
+): Promise<Style[]> {
+  if (profileId !== null) {
+    const [stored] = await db
+      .select({ styles: tasteProfiles.styles })
+      .from(tasteProfiles)
+      .where(eq(tasteProfiles.profileId, profileId));
+    const styles = knownStyles(stored?.styles ?? []);
+    if (styles.length > 0) return styles;
+  }
+  return knownStyles(sent);
+}
+
+/**
+ * Looks the profile saw between `seenDays` and `refillAfterHours` ago, seen
+ * longest ago first: they top up a list when few unseen looks are left, so For
+ * You never runs dry (nothing seen in the last day comes back).
+ */
+async function seenLongAgo(
+  { db }: FeedDeps,
+  profileId: string,
+  limit: number,
+): Promise<Candidate[]> {
+  const { seenDays, refillAfterHours } = FEED_RULES;
+  const { rows } = await db.execute<{
+    id: string;
+    author_profile_id: string;
+    occasion_tags: string[];
+    season_tags: string[];
+  }>(sql`
+    SELECT l.id, l.author_profile_id, l.occasion_tags::text[] AS occasion_tags,
+           l.season_tags::text[] AS season_tags
+      FROM seen s JOIN looks l ON l.id = s.look_id
+     WHERE s.profile_id = ${profileId}
+       AND s.last_seen_at > now() - make_interval(days => ${seenDays})
+       AND s.last_seen_at <= now() - make_interval(hours => ${refillAfterHours})
+       AND ${showableLook(sql`l`)}
+       AND l.published_at <= now()
+       AND l.author_profile_id <> ${profileId}
+       AND l.id NOT IN (SELECT w.look_id FROM swipes w
+                         WHERE w.profile_id = ${profileId} AND w.kind = 'see_less')
+     ORDER BY s.last_seen_at, l.id
+     LIMIT ${limit}`);
+  return rows.map((row) => ({
+    id: row.id,
+    authorId: row.author_profile_id,
+    similarityKey: similarityKey(row.occasion_tags, row.season_tags),
+  }));
+}
+
 /** Ranks a new For You list for this viewer: up to `snapshotSize` look ids, best first. */
 async function rankLooks(
   deps: FeedDeps,
   profileId: string | null,
+  styles: readonly Style[],
   random: () => number,
 ): Promise<string[]> {
   const [pools, lessLike] = await Promise.all([
-    fetchCandidates(deps, profileId),
+    fetchCandidates(deps, profileId, styles),
     seeLessKeys(deps, profileId),
   ]);
   const mixed = interleave({
@@ -116,14 +209,24 @@ async function rankLooks(
     fresh: demoteSimilar(pools.fresh, lessLike),
     popular: demoteSimilar(jitter(pools.popular, random), lessLike),
   });
-  return applyDiversity(mixed, FEED_RULES.snapshotSize).map((c) => c.id);
+  let candidates: Candidate[] = mixed;
+  if (profileId !== null && mixed.length < FEED_RULES.snapshotSize) {
+    const refill = await seenLongAgo(deps, profileId, FEED_RULES.snapshotSize - mixed.length);
+    candidates = [...mixed, ...demoteSimilar(refill, lessLike)];
+  }
+  return applyDiversity(candidates, FEED_RULES.snapshotSize).map((c) => c.id);
 }
 
 /** Saves a list. A profile keeps its newest `listsPerProfile` (each refresh makes one). */
-async function saveList(db: Db, profileId: string | null, lookIds: string[]): Promise<string> {
+async function saveList(
+  db: Db,
+  profileId: string | null,
+  lookIds: string[],
+  tasteKey: string | null = null,
+): Promise<string> {
   const [row] = await db
     .insert(feedSnapshots)
-    .values({ profileId, lookIds })
+    .values({ profileId, lookIds, tasteKey })
     .returning({ id: feedSnapshots.id });
   if (!row) throw new Error('Feed snapshot insert returned no row.');
   if (profileId !== null) {
@@ -155,28 +258,53 @@ function readIdsFrom(deps: FeedDeps, listId: string) {
   };
 }
 
+interface SharedList {
+  id: string;
+  total: number;
+}
+
 /**
- * One of the shared logged-out lists made in the last few minutes, picked at
- * random; null while there are fewer than `sharedLists` (then a new one is made).
+ * For a logged-out visitor: one of the shared lists for their styles (none
+ * picked: the plain ones) made in the last few minutes, picked at random, or
+ * `'new'` while there are fewer than allowed (then one is made). New styled
+ * lists have a cap across all style choices, so strangers can't fill the
+ * database by trying combinations: past it, the choice's newest list from the
+ * day is reused, else they get a plain one (`'plain'`).
  */
 async function pickSharedList(
   deps: FeedDeps,
+  tasteKey: string | null,
   random: () => number,
-): Promise<{ id: string; total: number } | null> {
-  const recent = await deps.db
-    .select({ id: feedSnapshots.id, total: sql<number>`cardinality(${feedSnapshots.lookIds})` })
-    .from(feedSnapshots)
-    .where(
-      and(
-        isNull(feedSnapshots.profileId),
-        gt(
-          feedSnapshots.createdAt,
-          sql`now() - make_interval(mins => ${FEED_RULES.sharedListMinutes})`,
-        ),
-      ),
+): Promise<SharedList | 'new' | 'plain'> {
+  const since = (minutes: number) =>
+    and(
+      isNull(feedSnapshots.profileId),
+      gt(feedSnapshots.createdAt, sql`now() - make_interval(mins => ${minutes})`),
     );
-  if (recent.length < FEED_RULES.sharedLists) return null;
-  return recent[Math.floor(random() * recent.length)] ?? null;
+  const listsSince = (minutes: number) =>
+    deps.db
+      .select({ id: feedSnapshots.id, total: sql<number>`cardinality(${feedSnapshots.lookIds})` })
+      .from(feedSnapshots)
+      .where(
+        and(
+          since(minutes),
+          tasteKey === null ? isNull(feedSnapshots.tasteKey) : eq(feedSnapshots.tasteKey, tasteKey),
+        ),
+      )
+      .orderBy(desc(feedSnapshots.createdAt));
+
+  const { sharedLists, sharedListsPerTaste, sharedListMinutes, styledListsPerWindow } = FEED_RULES;
+  const recent = await listsSince(sharedListMinutes);
+  const wanted = tasteKey === null ? sharedLists : sharedListsPerTaste;
+  if (recent.length >= wanted) return recent[Math.floor(random() * recent.length)] ?? 'new';
+  if (tasteKey === null) return 'new';
+  const styledLately = await deps.db.$count(
+    feedSnapshots,
+    and(since(sharedListMinutes), isNotNull(feedSnapshots.tasteKey)),
+  );
+  if (styledLately < styledListsPerWindow) return 'new';
+  const [newest] = await listsSince(24 * 60).limit(1);
+  return newest ?? 'plain';
 }
 
 /**
@@ -208,21 +336,28 @@ async function fillPage(
   return { items, nextCursor: next < total ? encodeCursor({ s: listId, i: next }) : null };
 }
 
-/** Page 1: a shared recent list when logged out (once there are enough), else a new one. */
+/**
+ * Page 1: a shared recent list when logged out (once there are enough for
+ * their styles), else a new one.
+ */
 async function firstPage(
   deps: FeedDeps,
   profileId: string | null,
+  sentStyles: readonly Style[],
   random: () => number,
 ): Promise<FeedPage> {
+  const styles = await tasteStyles(deps, profileId, sentStyles);
+  const tasteKey = profileId === null && styles.length > 0 ? styles.join(',') : null;
   if (profileId === null) {
-    const shared = await pickSharedList(deps, random);
-    if (shared) {
+    const shared = await pickSharedList(deps, tasteKey, random);
+    if (shared === 'plain') return firstPage(deps, null, [], random);
+    if (shared !== 'new') {
       return fillPage(deps, null, shared.id, 0, shared.total, readIdsFrom(deps, shared.id));
     }
   }
-  const lookIds = await rankLooks(deps, profileId, random);
+  const lookIds = await rankLooks(deps, profileId, styles, random);
   if (lookIds.length === 0) return { items: [], nextCursor: null };
-  const listId = await saveList(deps.db, profileId, lookIds);
+  const listId = await saveList(deps.db, profileId, lookIds, tasteKey);
   return fillPage(deps, profileId, listId, 0, lookIds.length, (from, count) =>
     Promise.resolve(lookIds.slice(from, from + count)),
   );
@@ -231,6 +366,8 @@ async function firstPage(
 export interface ForYouOptions {
   /** Randomness for the light reshuffle and the shared-list pick (tests pass a fixed one). */
   random?: () => number;
+  /** Styles picked on the phone (`?styles=`); a profile's stored taste wins over them. */
+  styles?: readonly Style[];
 }
 
 /**
@@ -245,9 +382,9 @@ export async function forYouPage(
   deps: FeedDeps,
   profileId: string | null,
   cursor: string | undefined,
-  { random = Math.random }: ForYouOptions = {},
+  { random = Math.random, styles = [] }: ForYouOptions = {},
 ): Promise<FeedPage> {
-  if (cursor === undefined) return firstPage(deps, profileId, random);
+  if (cursor === undefined) return firstPage(deps, profileId, styles, random);
   const { s, i } = decodeCursor(cursorSchema, cursor);
   // One round trip: the owner, the length and the ids this page most likely needs.
   const [list] = await deps.db
@@ -259,7 +396,7 @@ export async function forYouPage(
     .from(feedSnapshots)
     .where(eq(feedSnapshots.id, s));
   if (!list || (list.profileId !== null && list.profileId !== profileId)) {
-    return firstPage(deps, profileId, random);
+    return firstPage(deps, profileId, styles, random);
   }
   const readMore = readIdsFrom(deps, s);
   return fillPage(deps, profileId, s, i, list.total, (from, count) =>

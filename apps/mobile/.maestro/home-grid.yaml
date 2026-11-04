@@ -6,6 +6,7 @@
 appId: ${APP_ID || 'com.outfitly.app'}
 ---
 - launchApp
+- runFlow: subflows/skip-taste.yaml
 - extendedWaitUntil:
     visible:
       id: feed-card

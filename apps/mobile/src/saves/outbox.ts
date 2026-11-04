@@ -16,7 +16,9 @@ export type SaveAction =
   | { kind: 'board-remove'; boardId: string; lookId: string }
   | { kind: 'see-less'; lookId: string }
   | { kind: 'follow'; profileId: string }
-  | { kind: 'unfollow'; profileId: string };
+  | { kind: 'unfollow'; profileId: string }
+  /** The taste picker's answers (ids as picked; the server checks them). */
+  | { kind: 'taste'; styles: string[]; brands: string[] };
 
 export interface PendingAction {
   /** Also the request's Idempotency-Key: every retry of this action reuses it. */

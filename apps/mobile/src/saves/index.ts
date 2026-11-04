@@ -1,4 +1,10 @@
-import { feedCardSchema, type FeedCard, type LookDetail } from '@outfitly/shared';
+import {
+  BRAND_IDS,
+  feedCardSchema,
+  type FeedCard,
+  knownStyles,
+  type LookDetail,
+} from '@outfitly/shared';
 import { randomUUID } from 'expo-crypto';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
@@ -41,6 +47,12 @@ const pendingSchema = z.object({
     z.object({ kind: z.literal('see-less'), lookId: z.string() }),
     z.object({ kind: z.literal('follow'), profileId: z.string() }),
     z.object({ kind: z.literal('unfollow'), profileId: z.string() }),
+    // Loose on purpose: a style or brand dropped in a later version mustn't wipe waiting saves.
+    z.object({
+      kind: z.literal('taste'),
+      styles: z.array(z.string()),
+      brands: z.array(z.string()),
+    }),
   ]),
 });
 
@@ -73,6 +85,14 @@ function send({ id, action }: PendingAction): Promise<unknown> {
       return api.follows.follow(action.profileId, id);
     case 'unfollow':
       return api.follows.unfollow(action.profileId, id);
+    case 'taste':
+      return api.taste.save(
+        {
+          styles: knownStyles(action.styles),
+          brands: BRAND_IDS.filter((brand) => action.brands.includes(brand)),
+        },
+        id,
+      );
   }
 }
 

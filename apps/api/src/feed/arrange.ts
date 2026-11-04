@@ -22,18 +22,34 @@ export const FEED_RULES = {
    */
   sharedLists: 8,
   sharedListMinutes: 15,
+  /**
+   * Logged-out visitors who picked styles share lists per style choice: up to
+   * this many per choice in `sharedListMinutes`, and at most
+   * `styledListsPerWindow` new styled lists in that time across all choices.
+   */
+  sharedListsPerTaste: 2,
+  styledListsPerWindow: 50,
   /** A profile keeps its newest few lists (one per refresh); older ones go. */
   listsPerProfile: 5,
   /** Looks similar to the profile's newest this-many "see less like this" go to the back. */
   seeLessRemembered: 50,
+  /**
+   * A list short of `snapshotSize` (few unseen looks left) is topped up with
+   * looks seen longest ago, but never ones seen in the last this-many hours.
+   */
+  refillAfterHours: 24,
 } as const;
 
 /** Where a For You candidate came from. */
 export const POOLS = ['following', 'taste', 'fresh', 'popular'] as const;
 export type Pool = (typeof POOLS)[number];
 
-/** Share of each pool in the mix (e.g. 3 of every 10 from people you follow). */
-export const POOL_WEIGHTS: Record<Pool, number> = { following: 3, taste: 3, fresh: 2, popular: 2 };
+/**
+ * Share of each pool in the mix, among the pools that have looks. Someone who
+ * picked styles and follows nobody yet gets 6 of every 10 from their styles,
+ * so the taste picker shows on page 1; with follows, 3 of every 13 are theirs.
+ */
+export const POOL_WEIGHTS: Record<Pool, number> = { following: 3, taste: 6, fresh: 2, popular: 2 };
 
 export interface Candidate {
   id: string;

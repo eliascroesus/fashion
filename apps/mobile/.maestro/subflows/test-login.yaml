@@ -19,7 +19,12 @@ appId: ${APP_ID || 'com.outfitly.app'}
     notVisible:
       id: sign-up-sheet
     timeout: 30000
-# iOS may offer to store the password afterwards; that dialog covers the tabs.
+# iOS may offer to store the password afterwards (a moment later); that dialog covers the tabs.
+- extendedWaitUntil:
+    visible:
+      text: 'Not Now'
+    timeout: 3000
+    optional: true
 - tapOn:
     text: 'Not Now'
     optional: true

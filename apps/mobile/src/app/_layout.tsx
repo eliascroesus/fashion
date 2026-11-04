@@ -5,11 +5,13 @@ import { type ErrorBoundaryProps, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider } from '../auth/AuthProvider';
 import { CaptchaProvider } from '../auth/captcha';
 import { ToastHost } from '../components/toast';
 import { PERSIST_MAX_AGE, queryClient, queryPersister } from '../lib/query';
 import { initSentry, Sentry } from '../lib/sentry';
+import { usePickerDone } from '../taste';
 import { radii, Screen, spacing, ThemedText, useColors, useThemeName } from '../theme';
 import { navigationTheme } from '../theme/navigation';
 
@@ -29,42 +31,54 @@ const SHEET = {
 function RootLayout() {
   const colors = useColors();
   const themeName = useThemeName();
+  const pickerDone = usePickerDone();
   return (
-    <ThemeProvider value={navigationTheme(colors, themeName === 'dark')}>
-      <PersistQueryClientProvider
-        client={queryClient}
-        persistOptions={{
-          persister: queryPersister,
-          maxAge: PERSIST_MAX_AGE,
-          buster: CACHE_VERSION,
-        }}
-      >
-        <CaptchaProvider>
-          <AuthProvider>
-            <StatusBar style={themeName === 'dark' ? 'light' : 'dark'} />
-            <Stack
-              screenOptions={{
-                headerShown: false,
-                contentStyle: { backgroundColor: colors.background },
-              }}
-            >
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen name="look/[id]" />
-              <Stack.Screen name="board/[id]" />
-              <Stack.Screen name="look-menu/[id]" options={SHEET} />
-              <Stack.Screen
-                name="save-to-board/[id]"
-                options={{ ...SHEET, sheetAllowedDetents: [0.6, 1] }}
-              />
-              <Stack.Screen name="board-name" options={SHEET} />
-              <Stack.Screen name="sign-up" options={{ presentation: 'modal' }} />
-              <Stack.Screen name="auth-callback" />
-            </Stack>
-            <ToastHost />
-          </AuthProvider>
-        </CaptchaProvider>
-      </PersistQueryClientProvider>
-    </ThemeProvider>
+    <GestureHandlerRootView style={styles.root}>
+      <ThemeProvider value={navigationTheme(colors, themeName === 'dark')}>
+        <PersistQueryClientProvider
+          client={queryClient}
+          persistOptions={{
+            persister: queryPersister,
+            maxAge: PERSIST_MAX_AGE,
+            buster: CACHE_VERSION,
+          }}
+        >
+          <CaptchaProvider>
+            <AuthProvider>
+              <StatusBar style={themeName === 'dark' ? 'light' : 'dark'} />
+              <Stack
+                screenOptions={{
+                  headerShown: false,
+                  contentStyle: { backgroundColor: colors.background },
+                }}
+              >
+                {/* The taste picker comes first at the first open; Home never shows before it. */}
+                <Stack.Protected guard={pickerDone}>
+                  <Stack.Screen name="(tabs)" />
+                </Stack.Protected>
+                <Stack.Protected guard={!pickerDone}>
+                  <Stack.Screen
+                    name="taste"
+                    options={{ gestureEnabled: false, animation: 'fade' }}
+                  />
+                </Stack.Protected>
+                <Stack.Screen name="look/[id]" />
+                <Stack.Screen name="board/[id]" />
+                <Stack.Screen name="look-menu/[id]" options={SHEET} />
+                <Stack.Screen
+                  name="save-to-board/[id]"
+                  options={{ ...SHEET, sheetAllowedDetents: [0.6, 1] }}
+                />
+                <Stack.Screen name="board-name" options={SHEET} />
+                <Stack.Screen name="sign-up" options={{ presentation: 'modal' }} />
+                <Stack.Screen name="auth-callback" />
+              </Stack>
+              <ToastHost />
+            </AuthProvider>
+          </CaptchaProvider>
+        </PersistQueryClientProvider>
+      </ThemeProvider>
+    </GestureHandlerRootView>
   );
 }
 
@@ -91,6 +105,7 @@ export function ErrorBoundary({ retry }: ErrorBoundaryProps) {
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1 },
   center: { alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   button: {
     marginTop: spacing.lg,

@@ -16,6 +16,9 @@ Things we've parked on purpose. None of them block building, but all of them mus
 - [ ] Then edit the templates "Confirm sign up", "Magic Link" and "Change Email Address": subject "Your Outfitly code", and a body that shows the code `{{ .Token }}`. Without this, people get a link instead of a code and email login doesn't work.
 - [ ] Until it's done, the app's "Continue with email" option doesn't work: hide it or finish this before testers.
 
+## Content
+- [ ] The seed photos (loaded 2026-11-04 as `@outfitly.picks`) look saved from Pinterest and Instagram. Before anyone outside the team sees them: get each owner's permission (and credit them), or replace them with photos we may use.
+
 ## The app
 - [ ] Hide the developer menu (long-press the Profile title) in store builds. Its "Pretend offline" switch and the test login in the sign-up sheet are already left out of store builds (`EXPO_PUBLIC_APP_ENV=production`); only the "Waiting to sync" count would still show.
 - [ ] Replace Expo's placeholder app icon and splash screen with the Outfitly logo.

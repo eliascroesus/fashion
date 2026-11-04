@@ -100,6 +100,14 @@ export function LookPhotos({ card, photos, width, onCoverShown }: LookPhotosProp
             {...(onCoverShown ? { onDisplay: onCoverShown } : {})}
           />
           {sharp(item, false)}
+          {/* Where the grid card zooms to: an empty frame over the photo. The photos must not be
+              inside Link.AppleZoomTarget: after the zoom they stay undrawn (only the main colour
+              showed, unnoticed with the plain stand-in pictures). */}
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            <Link.AppleZoomTarget>
+              <View collapsable={false} style={{ width, height }} />
+            </Link.AppleZoomTarget>
+          </View>
         </View>
       ) : (
         <View style={frame}>{sharp(item, true)}</View>
@@ -111,7 +119,7 @@ export function LookPhotos({ card, photos, width, onCoverShown }: LookPhotosProp
         accessibilityRole="image"
         onPress={onPress}
       >
-        {index === 0 ? <Link.AppleZoomTarget>{image}</Link.AppleZoomTarget> : image}
+        {image}
       </Pressable>
     );
   };

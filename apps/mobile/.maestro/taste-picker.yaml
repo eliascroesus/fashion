@@ -1,0 +1,66 @@
+# The taste picker at the first open: Home doesn't show before it; drag one look right and
+# tap ♥ on another, ✕ on the rest; tick Streetwear and a brand; Done → Home shows looks.
+# The developer menu then shows how long it took (time it by hand: Maestro is slow per step).
+#   maestro test -e APP_ID=com.outfitly.app.dev apps/mobile/.maestro/taste-picker.yaml
+appId: ${APP_ID || 'com.outfitly.app'}
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: taste-card
+    timeout: 20000
+- assertNotVisible:
+    id: tab-home
+# A real drag to the right likes the look.
+- swipe:
+    start: 25%, 50%
+    end: 95%, 50%
+    duration: 250
+- waitForAnimationToEnd
+- tapOn:
+    id: taste-like
+- waitForAnimationToEnd
+- repeat:
+    while:
+      visible:
+        id: taste-card
+    commands:
+      - tapOn:
+          id: taste-pass
+      - waitForAnimationToEnd
+# The chips: the liked looks' styles are ticked already; make sure Streetwear is.
+# (On iPhone Maestro reads a chip's state from what VoiceOver says: "checkbox, checked".)
+- assertVisible:
+    id: taste-done
+- runFlow:
+    when:
+      notVisible:
+        id: taste-style-streetwear
+        text: '.*, checked'
+    commands:
+      - tapOn:
+          id: taste-style-streetwear
+- assertVisible:
+    id: taste-style-streetwear
+    text: '.*, checked'
+- assertVisible:
+    id: taste-brand-nike
+    text: '.*, unchecked'
+- tapOn:
+    id: taste-brand-nike
+- assertVisible:
+    id: taste-brand-nike
+    text: '.*, checked'
+- tapOn:
+    id: taste-done
+- extendedWaitUntil:
+    visible:
+      id: feed-card
+    timeout: 20000
+- tapOn:
+    id: tab-profile
+- longPressOn:
+    id: profile-title
+- assertVisible:
+    id: dev-taste-time
