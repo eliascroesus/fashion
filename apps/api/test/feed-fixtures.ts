@@ -1,6 +1,6 @@
 // Test helpers for feeds: authors, looks with ready cover photos, logins and the rule checker.
 import { type Db, lookMedia, looks, media, profiles, sql } from '@outfitly/db';
-import { lookSlug, type Occasion, type Season } from '@outfitly/shared';
+import { lookSlug, type Occasion, type Season, type Style } from '@outfitly/shared';
 import { type Candidate, FEED_RULES, similarityKey } from '../src/feed/arrange.ts';
 import { signToken } from './helpers.ts';
 
@@ -52,6 +52,7 @@ export interface LookSpec {
   authorId: string;
   occasions?: Occasion[];
   seasons?: Season[];
+  styles?: Style[];
   /** Hours ago it went public (default 10 days). */
   hoursAgo?: number;
   status?: 'draft' | 'published' | 'hidden';
@@ -75,6 +76,7 @@ export async function createLooks(db: Db, specs: readonly LookSpec[]): Promise<s
         status,
         occasionTags: spec.occasions ?? [],
         seasonTags: spec.seasons ?? [],
+        styleTags: spec.styles ?? [],
         popularityScore: spec.popularity ?? 0.05,
         publishedAt:
           status === 'draft'

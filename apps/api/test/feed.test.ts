@@ -1,5 +1,6 @@
 import {
   and,
+  desc,
   eq,
   feedSnapshots,
   follows,
@@ -18,6 +19,8 @@ import {
   meSchema,
   OCCASIONS,
   SEASONS,
+  type Style,
+  STYLES,
 } from '@outfitly/shared';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -43,6 +46,8 @@ const authors: string[] = [];
 /** More looks than one For You list holds, so every list is full and never runs dry. */
 const CATALOGUE = 480;
 const FRESH = 40;
+/** Left out of the catalogue: only the taste pool can bring a look in this style to page 1. */
+const RARE_STYLE: Style = 'colorful';
 
 beforeAll(async () => {
   ctx = await createTestContext();
@@ -51,12 +56,17 @@ beforeAll(async () => {
 
   for (let a = 0; a < 8; a++) authors.push(await createAuthor(ctx.db, `author.${String(a)}`));
   const random = seeded(7);
-  // 7 occasions × 4 seasons = 28 different tag sets ('festival' is kept for the taste test).
+  // Styles from their own random stream, so they don't line up with authors or tag sets
+  // (otherwise the diversity rules, not the taste pool, would decide what page 1 shows).
+  const styleRandom = seeded(11);
+  const styles = STYLES.filter((style) => style !== RARE_STYLE);
+  // 7 occasions × 4 seasons = 28 different tag sets.
   const occasions = OCCASIONS.filter((o) => o !== 'festival');
   const specs: LookSpec[] = Array.from({ length: CATALOGUE }, (_, i) => ({
     authorId: authors[i % authors.length] ?? '',
     occasions: [occasions[i % occasions.length] ?? 'everyday'],
     seasons: [SEASONS[Math.floor(i / occasions.length) % SEASONS.length] ?? 'autumn'],
+    styles: [styles[Math.floor(styleRandom() * styles.length)] ?? 'minimal'],
     // The first FRESH are new but not popular yet: only the fresh pool lifts them.
     hoursAgo: i < FRESH ? 1 + i : 80 + i,
     popularity: i < FRESH ? 0.0001 : 0.02 + 0.2 * random(),
@@ -175,6 +185,7 @@ describe('GET /v1/feed/for-you', () => {
         feedSnapshots,
         and(
           isNull(feedSnapshots.profileId),
+          isNull(feedSnapshots.tasteKey),
           sql`${feedSnapshots.createdAt} > now() - interval '15 minutes'`,
         ),
       );
@@ -277,10 +288,10 @@ describe('GET /v1/feed/for-you, personalised', () => {
     const tasteAuthor = await createAuthor(ctx.db, 'taste.one');
     special['taste'] = await createLook(ctx.db, {
       authorId: tasteAuthor,
-      occasions: ['festival'],
+      styles: [RARE_STYLE],
       popularity: 0.0001,
     });
-    await ctx.db.insert(tasteProfiles).values({ profileId: me.profileId, styles: ['festival'] });
+    await ctx.db.insert(tasteProfiles).values({ profileId: me.profileId, styles: [RARE_STYLE] });
 
     // Very popular, so they'd lead the feed if they were allowed in.
     const top = { authorId: authors[0] ?? '', popularity: 1 };
@@ -290,7 +301,7 @@ describe('GET /v1/feed/for-you, personalised', () => {
       {
         profileId: me.profileId,
         lookId: special['seenRecently'],
-        lastSeenAt: sql`now() - interval '1 day'`,
+        lastSeenAt: sql`now() - interval '2 hours'`,
       },
       {
         profileId: me.profileId,
@@ -342,6 +353,159 @@ describe('GET /v1/feed/for-you, personalised', () => {
     const all = ids(await allPages('for-you', me.token));
     expect(new Set(all).size).toBe(all.length);
     expect(diversityViolations(await candidatesFor(ctx.db, all))).toEqual([]);
+  });
+});
+
+describe('GET /v1/feed/for-you, taste picker styles', () => {
+  /** How many of a page's looks are in `style`. */
+  async function inStyle(feed: FeedPage, style: Style): Promise<number> {
+    const rows = await ctx.db
+      .select({ styleTags: looks.styleTags })
+      .from(looks)
+      .where(
+        inArray(
+          looks.id,
+          feed.items.map((i) => i.id),
+        ),
+      );
+    return rows.filter((r) => r.styleTags.includes(style)).length;
+  }
+  const firstPageWith = (styles: string, token?: string) =>
+    page(`for-you?styles=${styles}` as 'for-you', undefined, token);
+  const listsFor = (tasteKey: string) =>
+    ctx.db.$count(
+      feedSnapshots,
+      and(isNull(feedSnapshots.profileId), eq(feedSnapshots.tasteKey, tasteKey)),
+    );
+
+  it('makes most of page 1 streetwear for a logged-out phone that picked Streetwear', async () => {
+    // The first two requests each rank a new shared list for this choice.
+    for (let i = 0; i < FEED_RULES.sharedListsPerTaste; i++) {
+      const first = await firstPageWith('streetwear');
+      expect(first.items).toHaveLength(FEED_PAGE_SIZE);
+      expect(await inStyle(first, 'streetwear')).toBeGreaterThanOrEqual(11);
+    }
+  });
+
+  it('does the same for profiles whose stored taste is Streetwear, every time', async () => {
+    for (let i = 0; i < 5; i++) {
+      const { token, profileId } = await viewer();
+      await ctx.db.insert(tasteProfiles).values({ profileId, styles: ['streetwear'] });
+      const first = await page('for-you', undefined, token);
+      expect(await inStyle(first, 'streetwear')).toBeGreaterThanOrEqual(11);
+      expect(diversityViolations(await candidatesFor(ctx.db, ids([first])))).toEqual([]);
+    }
+  });
+
+  it("uses the phone's styles until the profile has a taste, then the stored one", async () => {
+    const { token, profileId } = await viewer();
+    expect(
+      await inStyle(await firstPageWith('streetwear', token), 'streetwear'),
+    ).toBeGreaterThanOrEqual(11);
+    await ctx.db.insert(tasteProfiles).values({ profileId, styles: ['edgy'] });
+    const first = await firstPageWith('streetwear', token);
+    expect(await inStyle(first, 'edgy')).toBeGreaterThanOrEqual(11);
+    expect(await inStyle(first, 'streetwear')).toBeLessThan(11);
+  });
+
+  it('keeps a few shared lists per style choice, apart from the plain ones', async () => {
+    const plainBefore = await ctx.db.$count(
+      feedSnapshots,
+      and(isNull(feedSnapshots.profileId), isNull(feedSnapshots.tasteKey)),
+    );
+    for (let i = 0; i < 6; i++) await firstPageWith('streetwear,minimal');
+    // Order and repeats don't make another choice.
+    await firstPageWith('minimal,streetwear,minimal');
+    expect(await listsFor('minimal,streetwear')).toBe(FEED_RULES.sharedListsPerTaste);
+    expect(
+      await ctx.db.$count(
+        feedSnapshots,
+        and(isNull(feedSnapshots.profileId), isNull(feedSnapshots.tasteKey)),
+      ),
+    ).toBe(plainBefore);
+    // Unknown styles are dropped: this is the plain feed.
+    const plain = await firstPageWith('goth');
+    const [row] = await ctx.db
+      .select({ tasteKey: feedSnapshots.tasteKey })
+      .from(feedSnapshots)
+      .where(eq(feedSnapshots.id, snapshotIdOf(plain.nextCursor)));
+    expect(row?.tasteKey).toBeNull();
+  });
+
+  it("stops making new styled lists past the cap: reuses the choice's list from the day, else a plain one", async () => {
+    const filler = Array.from({ length: FEED_RULES.styledListsPerWindow }, (_, i) => ({
+      lookIds: [] as string[],
+      tasteKey: `cap-test-${String(i)}`,
+    }));
+    await ctx.db.insert(feedSnapshots).values(filler);
+    const [older] = await ctx.db
+      .insert(feedSnapshots)
+      .values({
+        lookIds: (await page('for-you')).items.map((i) => i.id),
+        tasteKey: 'sporty',
+        createdAt: sql`now() - interval '3 hours'`,
+      })
+      .returning({ id: feedSnapshots.id });
+    try {
+      const reused = await firstPageWith('sporty');
+      expect(snapshotIdOf(reused.nextCursor ?? encodeCursor({ s: older?.id, i: 0 }))).toBe(
+        older?.id,
+      );
+      expect(await listsFor('sporty')).toBe(1);
+
+      const fallback = await firstPageWith('edgy,romantic');
+      expect(fallback.items).toHaveLength(FEED_PAGE_SIZE);
+      expect(await listsFor('edgy,romantic')).toBe(0);
+    } finally {
+      await ctx.db
+        .delete(feedSnapshots)
+        .where(
+          sql`${feedSnapshots.tasteKey} like 'cap-test-%' or ${feedSnapshots.tasteKey} = 'sporty'`,
+        );
+    }
+  });
+});
+
+describe('GET /v1/feed/for-you, when few unseen looks are left', () => {
+  it('tops the list up with looks seen longest ago, never ones seen in the last day', async () => {
+    const { token, profileId } = await viewer();
+    const all = await ctx.db
+      .select({ id: looks.id })
+      .from(looks)
+      .where(sql`${looks.status} = 'published'`);
+    const allIds = all.map((r) => r.id);
+    // The catalogue's newest 40, in order: varied posters and tags, all showable.
+    const catalogue = await ctx.db
+      .select({ id: looks.id })
+      .from(looks)
+      .where(inArray(looks.authorProfileId, authors))
+      .orderBy(desc(looks.publishedAt))
+      .limit(40);
+    const longAgo = new Set(catalogue.slice(0, 30).map((r) => r.id));
+    const recent = new Set(catalogue.slice(30).map((r) => r.id));
+    // Everything was seen within the week: nothing is unseen any more.
+    await ctx.db.insert(seen).values(
+      allIds.map((lookId) => ({
+        profileId,
+        lookId,
+        lastSeenAt: longAgo.has(lookId)
+          ? sql`now() - interval '6 days'`
+          : recent.has(lookId)
+            ? sql`now() - interval '2 hours'`
+            : sql`now() - interval '3 days'`,
+      })),
+    );
+
+    const pages = await allPages('for-you', token);
+    const shown = ids(pages);
+    expect(pages[0]?.items).toHaveLength(FEED_PAGE_SIZE);
+    expect(shown.length).toBeGreaterThanOrEqual(FEED_RULES.snapshotSize);
+    expect(shown.some((id) => recent.has(id))).toBe(false);
+    expect(new Set(shown).size).toBe(shown.length);
+    // Seen longest ago comes first (the diversity rules may move a few).
+    const firstPage = pages[0]?.items.map((i) => i.id) ?? [];
+    expect(firstPage.filter((id) => longAgo.has(id)).length).toBeGreaterThanOrEqual(15);
+    expect(diversityViolations(await candidatesFor(ctx.db, shown))).toEqual([]);
   });
 });
 

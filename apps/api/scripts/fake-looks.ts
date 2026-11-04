@@ -30,7 +30,7 @@ try {
     const { looks } = await removeFakeLooks(db);
     console.log(`Removed ${String(looks)} fake looks and their posters.`);
   } else {
-    const { inserted } = await seedFakeLooks({
+    const { inserted, restyled } = await seedFakeLooks({
       db,
       storage: new R2Storage(r2Config(config)),
       count,
@@ -43,6 +43,7 @@ try {
     console.log(
       `Added ${String(inserted)} fake looks in ${seconds} s; ${String(await countFakeLooks(db))} in total.`,
     );
+    if (restyled > 0) console.log(`Gave a style to ${String(restyled)} older fake looks.`);
   }
 } finally {
   await db.$client.end();

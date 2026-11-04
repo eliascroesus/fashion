@@ -14,9 +14,25 @@ export type Occasion = (typeof OCCASIONS)[number];
 export const SEASONS = ['spring', 'summer', 'autumn', 'winter'] as const;
 export type Season = (typeof SEASONS)[number];
 
-/** Every tag a look can carry: occasions and seasons share one list for people writing seed files. */
-export const LOOK_TAGS = [...OCCASIONS, ...SEASONS] as const;
-export type LookTag = Occasion | Season;
+/**
+ * A look's style (usually one); also the taste picker's style chips. What each
+ * means is in docs/STYLE_GUIDE.md. The ids are permanent: the database enum and
+ * answers waiting on phones use them, so add new ones but never rename.
+ */
+export const STYLES = [
+  'minimal',
+  'streetwear',
+  'classic',
+  'sporty',
+  'romantic',
+  'edgy',
+  'colorful',
+] as const;
+export type Style = (typeof STYLES)[number];
+
+/** Every tag a look can carry: occasions, seasons and styles share one list for people writing seed files. */
+export const LOOK_TAGS = [...OCCASIONS, ...SEASONS, ...STYLES] as const;
+export type LookTag = Occasion | Season | Style;
 
 export const LOOK_STATUSES = ['draft', 'pending', 'published', 'hidden'] as const;
 export type LookStatus = (typeof LOOK_STATUSES)[number];
@@ -28,15 +44,17 @@ export const MAX_LOOK_PHOTOS = 10;
 export const EVENT_NAMES = ['impression', 'open', 'save', 'share', 'click'] as const;
 export type EventName = (typeof EVENT_NAMES)[number];
 
-/** Sorts mixed tags into occasions and seasons (duplicates dropped). */
+/** Sorts mixed tags into occasions, seasons and styles (duplicates dropped). */
 export function splitLookTags(tags: readonly LookTag[]): {
   occasions: Occasion[];
   seasons: Season[];
+  styles: Style[];
 } {
   const set = new Set(tags);
   return {
     occasions: OCCASIONS.filter((o) => set.has(o)),
     seasons: SEASONS.filter((s) => set.has(s)),
+    styles: STYLES.filter((s) => set.has(s)),
   };
 }
 

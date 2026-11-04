@@ -1,4 +1,4 @@
-import { LOOK_STATUSES, MAX_LOOK_PHOTOS, OCCASIONS, SEASONS } from '@outfitly/shared';
+import { LOOK_STATUSES, MAX_LOOK_PHOTOS, OCCASIONS, SEASONS, STYLES } from '@outfitly/shared';
 import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
@@ -21,6 +21,7 @@ import { profiles } from './profiles.ts';
 export const lookStatus = pgEnum('look_status', LOOK_STATUSES);
 export const lookOccasion = pgEnum('look_occasion', OCCASIONS);
 export const lookSeason = pgEnum('look_season', SEASONS);
+export const lookStyle = pgEnum('look_style', STYLES);
 
 /**
  * A posted outfit: the core content unit. Photos are in `look_media`.
@@ -45,6 +46,11 @@ export const looks = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'`),
+    /** Usually one; what the taste picker's style chips match (docs/STYLE_GUIDE.md). */
+    styleTags: lookStyle('style_tags')
+      .array()
+      .notNull()
+      .default(sql`'{}'`),
     aiDescription: text('ai_description'),
     popularityScore: doublePrecision('popularity_score').notNull().default(0),
     isSponsored: boolean('is_sponsored').notNull().default(false),
@@ -66,6 +72,10 @@ export const looks = pgTable(
         t.publishedAt.desc().nullsFirst(),
         t.id.desc().nullsFirst(),
       )
+      .where(sql`${t.status} = 'published' and ${t.deletedAt} is null`),
+    // For You's taste pool: looks with any of the picked styles.
+    index('looks_feed_style_idx')
+      .using('gin', t.styleTags)
       .where(sql`${t.status} = 'published' and ${t.deletedAt} is null`),
     index('looks_feed_author_idx')
       .on(t.authorProfileId, t.publishedAt.desc().nullsFirst(), t.id.desc().nullsFirst())

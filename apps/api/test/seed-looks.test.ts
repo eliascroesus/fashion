@@ -58,7 +58,7 @@ const LOOKS_FILE = [
   {
     photos: ['coat-front.jpg', 'coat-back.jpg'],
     caption: 'Camel coat over a grey knit',
-    tags: ['work', 'autumn', 'winter'],
+    tags: ['work', 'autumn', 'winter', 'classic'],
     author: 'seed.anna',
     authorName: 'Anna',
   },
@@ -127,10 +127,16 @@ describe('pnpm seed:looks', () => {
       status: 'published',
       occasionTags: ['work'],
       seasonTags: ['autumn', 'winter'],
+      styleTags: ['classic'],
       isSponsored: false,
     });
     expect(coat?.slug).toMatch(/^camel-coat-over-a-grey-knit-[0-9a-f]{12}$/);
-    expect(summer).toMatchObject({ caption: null, seasonTags: ['summer'], occasionTags: [] });
+    expect(summer).toMatchObject({
+      caption: null,
+      seasonTags: ['summer'],
+      occasionTags: [],
+      styleTags: [],
+    });
     expect(summer?.slug).toMatch(/^look-[0-9a-f]{12}$/);
 
     const photos = await ctx.db
@@ -358,9 +364,9 @@ describe('pnpm seed:fake-looks', () => {
   const options = () => ({ db: ctx.db, storage: ctx.storage, poolSize: 4, photoWidth: 120 });
 
   it('tops up to the requested number of fake looks, with no duplicates', async () => {
-    expect(await seedFakeLooks({ ...options(), count: 30 })).toEqual({ inserted: 30 });
-    expect(await seedFakeLooks({ ...options(), count: 30 })).toEqual({ inserted: 0 });
-    expect(await seedFakeLooks({ ...options(), count: 40 })).toEqual({ inserted: 10 });
+    expect(await seedFakeLooks({ ...options(), count: 30 })).toEqual({ inserted: 30, restyled: 0 });
+    expect(await seedFakeLooks({ ...options(), count: 30 })).toEqual({ inserted: 0, restyled: 0 });
+    expect(await seedFakeLooks({ ...options(), count: 40 })).toEqual({ inserted: 10, restyled: 0 });
     expect(await countFakeLooks(ctx.db)).toBe(40);
 
     const authorIds = FAKE_AUTHORS.map((a) => a.id);
@@ -378,6 +384,29 @@ describe('pnpm seed:fake-looks', () => {
       );
     expect(links.length).toBeGreaterThanOrEqual(40);
     expect(links.length).toBeLessThanOrEqual(120);
+    expect(fake.every((l) => l.styleTags.length === 1)).toBe(true);
+  });
+
+  it('gives a style to fake looks made before styles existed, and only to those', async () => {
+    const authorIds = FAKE_AUTHORS.map((a) => a.id);
+    const before = await ctx.db
+      .select()
+      .from(looks)
+      .where(inArray(looks.authorProfileId, authorIds));
+    const [first, second] = before;
+    await ctx.db
+      .update(looks)
+      .set({ styleTags: [] })
+      .where(inArray(looks.id, [first?.id ?? '', second?.id ?? '']));
+
+    expect(await seedFakeLooks({ ...options(), count: 40 })).toEqual({ inserted: 0, restyled: 2 });
+    const after = await ctx.db
+      .select()
+      .from(looks)
+      .where(inArray(looks.authorProfileId, authorIds));
+    const styleOf = (rows: typeof before) => new Map(rows.map((l) => [l.id, l.styleTags]));
+    // The same style as a fresh run would give, and every other look untouched.
+    expect(styleOf(after)).toEqual(styleOf(before));
   });
 
   it('removes every fake look, picture and poster in one go, leaving real data alone', async () => {

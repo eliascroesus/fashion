@@ -49,12 +49,23 @@ describe('interleave', () => {
   });
 
   it('shows a look that is in several pools once, where it comes up first', () => {
-    const mixed = interleave({
-      following: [{ id: 'a' }, { id: 'b' }],
-      taste: [{ id: 'a' }, { id: 'c' }],
-      popular: [{ id: 'b' }, { id: 'c' }, { id: 'd' }],
-    });
+    const mixed = interleave(
+      {
+        following: [{ id: 'a' }, { id: 'b' }],
+        taste: [{ id: 'a' }, { id: 'c' }],
+        popular: [{ id: 'b' }, { id: 'c' }, { id: 'd' }],
+      },
+      { following: 3, taste: 3, fresh: 2, popular: 2 },
+    );
     expect(mixed.map((m) => m.id)).toEqual(['a', 'c', 'b', 'd']);
+  });
+
+  it('gives someone with picked styles (and no follows) 6 of every 10 from their styles', () => {
+    const pool = (name: string) =>
+      Array.from({ length: 20 }, (_, i) => ({ id: `${name}${String(i)}` }));
+    const mixed = interleave({ taste: pool('t'), fresh: pool('n'), popular: pool('p') });
+    const firstTwenty = mixed.slice(0, 20).map((m) => m.id[0]);
+    expect(firstTwenty.filter((p) => p === 't')).toHaveLength(12);
   });
 
   it('skips empty pools and keeps each pool in order', () => {

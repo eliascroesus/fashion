@@ -245,13 +245,14 @@ export async function seedLooks(options: SeedOptions): Promise<SeedResult> {
     if (!entry.photos.every((file) => ready.has(file))) continue; // A photo failed; reported above.
     const mediaOrder = entry.photos.map((file) => mediaIdOf.get(file) ?? '');
     const lookId = fileLookIds[index] ?? '';
-    const { occasions, seasons } = splitLookTags(entry.tags);
+    const { occasions, seasons, styles } = splitLookTags(entry.tags);
     const fields = {
       authorProfileId: authorIds.get(entry.author) ?? '',
       caption: entry.caption,
       slug: lookSlug(entry.caption, lookId),
       occasionTags: occasions,
       seasonTags: seasons,
+      styleTags: styles,
       status: 'published' as const,
       deletedAt: null,
     };

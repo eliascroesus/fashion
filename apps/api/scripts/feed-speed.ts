@@ -78,7 +78,7 @@ async function overHttp(): Promise<void> {
   await measure('For You', NEXT_PAGES, get);
 }
 
-/** @loadtest.01 follows five other test posters, likes party/summer and has seen 300 looks. */
+/** @loadtest.01 follows five other test posters, picked Streetwear and has seen 300 looks. */
 async function prepareViewer(db: Db): Promise<string> {
   const [viewer, ...others] = FAKE_AUTHORS.slice(0, 6).map((a) => a.id);
   if (!viewer) throw new Error('no fake authors');
@@ -88,8 +88,8 @@ async function prepareViewer(db: Db): Promise<string> {
     .onConflictDoNothing();
   await db
     .insert(tasteProfiles)
-    .values({ profileId: viewer, styles: ['party', 'summer'] })
-    .onConflictDoNothing();
+    .values({ profileId: viewer, styles: ['streetwear'] })
+    .onConflictDoUpdate({ target: tasteProfiles.profileId, set: { styles: ['streetwear'] } });
   const sample = await db
     .select({ id: looks.id })
     .from(looks)
@@ -125,13 +125,17 @@ async function direct(): Promise<void> {
     await measure('For You', NEXT_PAGES, (cursor) => forYouPage(deps, viewer, cursor));
     await measure('Following', 2, (cursor) => followingPage(deps, viewer, cursor));
 
-    // Worst case for the taste pool: a pick no look carries, so it reads the whole catalogue.
+    // Harder case for the taste pool: the style the fewest looks carry.
+    const { rows } = await db.execute<{ style: string }>(sql`
+      SELECT s.style::text AS style FROM looks l, unnest(l.style_tags) AS s(style)
+       GROUP BY s.style ORDER BY count(*) LIMIT 1`);
+    const rarest = rows[0]?.style ?? 'colorful';
     const picky = FAKE_AUTHORS[6]?.id ?? '';
     await db
       .insert(tasteProfiles)
-      .values({ profileId: picky, styles: ['streetwear'] })
-      .onConflictDoNothing();
-    console.log('Logged in as @loadtest.07, whose taste matches no look:');
+      .values({ profileId: picky, styles: [rarest] })
+      .onConflictDoUpdate({ target: tasteProfiles.profileId, set: { styles: [rarest] } });
+    console.log(`Logged in as @loadtest.07, who picked the rarest style (${rarest}):`);
     await measure('For You', 0, (cursor) => forYouPage(deps, picky, cursor));
   } finally {
     await db.$client.end();

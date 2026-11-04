@@ -13,6 +13,7 @@ import { boardsRoutes } from './routes/boards.ts';
 import { eventsRoutes } from './routes/events.ts';
 import { feedRoutes } from './routes/feed.ts';
 import { looksRoutes } from './routes/looks.ts';
+import { tasteRoutes } from './routes/taste.ts';
 import { mediaRoutes } from './routes/media.ts';
 import { savesRoutes } from './routes/saves.ts';
 import { sessionRoutes } from './routes/session.ts';
@@ -77,6 +78,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       savesRoutes(v1, deps);
       boardsRoutes(v1, deps);
       looksRoutes(v1, deps);
+      tasteRoutes(v1, deps);
       done();
     },
     { prefix: API_PREFIX },
