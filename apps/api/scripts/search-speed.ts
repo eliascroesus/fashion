@@ -45,9 +45,12 @@ for (let i = 0; i < 3; i++) await timedGet('/v1/search/suggest', { q: 'warm' });
 const suggest: number[] = [];
 const first: number[] = [];
 const later: number[] = [];
+/** `/v1/health` (no database work) between searches: what the network alone takes meanwhile. */
+const floor: number[] = [];
 const results = new Map<string, number>();
 for (let run = 0; run < runs; run++) {
   for (const search of SEARCHES) {
+    floor.push((await timedGet('/v1/health', {}))[0]);
     for (let end = 1; end <= search.length; end++) {
       const [ms, body] = await timedGet('/v1/search/suggest', { q: search.slice(0, end) });
       suggestionsSchema.parse(body);
@@ -70,6 +73,7 @@ for (let run = 0; run < runs; run++) {
   }
 }
 console.log(`Logged out, over HTTP from this computer to ${baseUrl}:`);
+report('Health (network)', floor);
 report('Suggestions', suggest);
 report('Search, page 1', first);
 if (later.length > 0) report('Search, next pages', later);

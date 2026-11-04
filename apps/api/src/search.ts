@@ -22,8 +22,12 @@ import {
 } from './feed/cards.ts';
 import { avatarJoin, briefColumns, type BriefRow, profileLook, toBrief } from './profile-page.ts';
 
-/** A vocabulary word at least this similar (pg_trgm, 0–1) to a typed word counts as its typo. */
-const TYPO_SIMILARITY = 0.4;
+/**
+ * Possible typos of a typed word: up to this many vocabulary words pg_trgm
+ * finds similar (`%`, similarity ≥ 0.3), of which only the closest by letter
+ * changes are kept (see `closest`).
+ */
+const TYPO_CANDIDATES = 20;
 /** Shorter words are never matched as typos (too few letters to tell), nor searched as a prefix. */
 const TYPO_MIN_LENGTH = 3;
 /** Each typed word also finds up to this many vocabulary words (typos, tag words). */
@@ -101,27 +105,82 @@ export async function refreshSearchTerms(db: Db): Promise<{ changed: number; rem
 }
 
 /**
+ * How many letters to add, remove, change, or swap with the next one, to
+ * turn `a` into `b` ("jeens" → "jeans" is 1, "minimel" → "mini" is 3).
+ */
+export function editDistance(a: string, b: string): number {
+  const x = Array.from(a);
+  const y = Array.from(b);
+  const d = Array.from({ length: x.length + 1 }, (_, i) =>
+    Array.from({ length: y.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
+  );
+  for (let i = 1; i <= x.length; i++) {
+    const row = d[i] ?? [];
+    for (let j = 1; j <= y.length; j++) {
+      const cost = x[i - 1] === y[j - 1] ? 0 : 1;
+      let best = Math.min(
+        (d[i - 1]?.[j] ?? 0) + 1,
+        (row[j - 1] ?? 0) + 1,
+        (d[i - 1]?.[j - 1] ?? 0) + cost,
+      );
+      if (i > 1 && j > 1 && x[i - 1] === y[j - 2] && x[i - 2] === y[j - 1]) {
+        best = Math.min(best, (d[i - 2]?.[j - 2] ?? 0) + 1);
+      }
+      row[j] = best;
+    }
+  }
+  return d[x.length]?.[y.length] ?? 0;
+}
+
+/**
+ * The typos of `word` among `candidates` (in the order given): the fewest
+ * letter changes away, at most 1 for words of up to 4 letters and 2 for longer
+ * ones. So "linnen" gets linen but not "lined", "minimel" minimal but not "mini".
+ */
+export function closest<T extends { term: string }>(word: string, candidates: readonly T[]): T[] {
+  const allowed = Array.from(word).length <= 4 ? 1 : 2;
+  const scored = candidates
+    .map((candidate) => ({ candidate, edits: editDistance(candidate.term, word) }))
+    .filter(({ edits }) => edits <= allowed);
+  const fewest = Math.min(...scored.map(({ edits }) => edits));
+  return scored.filter(({ edits }) => edits === fewest).map(({ candidate }) => candidate);
+}
+
+/** pg_trgm's similar vocabulary words for `word`, most similar first. */
+function typoCandidates(word: SQL): SQL {
+  return sql`SELECT s.term, s.lexeme FROM search_terms s
+              WHERE ${similar(sql`s.term`, word)}
+              ORDER BY ${similarity(sql`s.term`, word)} DESC, s.look_count DESC, s.term
+              LIMIT ${TYPO_CANDIDATES}`;
+}
+
+/**
  * What else each typed word should find, mapped to what looks are searched
  * for (a tag word gives its tag): the word itself if the vocabulary has it,
- * else similar words (a typo, a plural). A known word isn't widened, so
- * "linen" doesn't also find "lined".
+ * else its closest typos (a misspelling, a plural). A known word isn't
+ * widened, so "linen" doesn't also find "lined".
  */
 async function alternatives(db: Db, words: readonly string[]): Promise<Map<string, string[]>> {
-  const { rows } = await db.execute<{ word: string; lexemes: string[] }>(sql`
-    SELECT w.word, array_remove(array_agg(s.lexeme), NULL) AS lexemes
+  const { rows } = await db.execute<{ word: string; term: string; lexeme: string }>(sql`
+    SELECT w.word, s.term, s.lexeme
       FROM unnest(${textArray(words)}) AS w(word)
-      LEFT JOIN LATERAL (
-        SELECT s.lexeme FROM search_terms s
-         WHERE s.term = w.word
-            OR (char_length(w.word) >= ${TYPO_MIN_LENGTH}
-                AND NOT EXISTS (SELECT 1 FROM search_terms e WHERE e.term = w.word)
-                AND ${similar(sql`s.term`, sql`w.word`)}
-                AND ${similarity(sql`s.term`, sql`w.word`)} >= ${TYPO_SIMILARITY})
-         ORDER BY s.term = w.word DESC, ${similarity(sql`s.term`, sql`w.word`)} DESC,
-                  s.look_count DESC, s.term
-         LIMIT ${MAX_ALTERNATIVES}) s ON true
-     GROUP BY w.word`);
-  return new Map(rows.map((r) => [r.word, r.lexemes]));
+      CROSS JOIN LATERAL (
+        SELECT e.term, e.lexeme FROM search_terms e WHERE e.term = w.word
+        UNION ALL
+        SELECT t.term, t.lexeme FROM (${typoCandidates(sql`w.word`)}) t
+         WHERE char_length(w.word) >= ${TYPO_MIN_LENGTH}
+           AND NOT EXISTS (SELECT 1 FROM search_terms e WHERE e.term = w.word)) s`);
+  const result = new Map<string, string[]>();
+  for (const word of words) {
+    const found = rows.filter((r) => r.word === word);
+    const exact = found.filter((r) => r.term === word);
+    const matches = exact.length > 0 ? exact : closest(word, found).slice(0, MAX_ALTERNATIVES);
+    result.set(
+      word,
+      matches.map((r) => r.lexeme),
+    );
+  }
+  return result;
 }
 
 /** A word as tsquery text: quoted, its quotes and backslashes escaped (never parsed as syntax). */
@@ -221,20 +280,23 @@ export async function searchLooks(
   };
 }
 
-/** Vocabulary words that complete `word` (or, from 3 letters, look like a typo of it). */
+/**
+ * Vocabulary words that complete `word`, most common first; only when none
+ * does (from 3 letters), its closest typos.
+ */
 async function completions(db: Db, word: string): Promise<string[]> {
-  const prefix = likePrefix(word);
-  const typo =
-    word.length >= TYPO_MIN_LENGTH
-      ? sql`OR (${similar(sql`s.term`, sql`${word}::text`)}
-               AND ${similarity(sql`s.term`, sql`${word}::text`)} >= ${TYPO_SIMILARITY})`
-      : sql``;
   const { rows } = await db.execute<{ term: string }>(sql`
     SELECT s.term FROM search_terms s
-     WHERE s.term LIKE ${prefix} ${typo}
-     ORDER BY s.term LIKE ${prefix} DESC, s.look_count DESC, s.term
+     WHERE s.term LIKE ${likePrefix(word)}
+     ORDER BY s.look_count DESC, s.term
      LIMIT ${MAX_SUGGESTED_TERMS}`);
-  return rows.map((r) => r.term);
+  if (rows.length > 0 || Array.from(word).length < TYPO_MIN_LENGTH) return rows.map((r) => r.term);
+  const typos = await db.execute<{ term: string; lexeme: string }>(
+    typoCandidates(sql`${word}::text`),
+  );
+  return closest(word, typos.rows)
+    .slice(0, MAX_SUGGESTED_TERMS)
+    .map((r) => r.term);
 }
 
 /** People who post, by handle (start, or similar from 3 letters) or a name containing the text. */

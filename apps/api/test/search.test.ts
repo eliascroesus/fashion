@@ -8,7 +8,7 @@ import {
 } from '@outfitly/shared';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { refreshSearchTerms, wordsQuery } from '../src/search.ts';
+import { closest, editDistance, refreshSearchTerms, wordsQuery } from '../src/search.ts';
 import { createAuthor, createLogin, createLook, createLooks } from './feed-fixtures.ts';
 import { buildTestApp, createTestContext, type TestContext } from './helpers.ts';
 
@@ -105,6 +105,29 @@ describe('search', () => {
     expect(await found('linnen')).toEqual(sorted('linenShirt', 'linenDress'));
     expect(await found('linen')).toEqual(sorted('linenShirt', 'linenDress'));
     expect(await found('LINEN!')).toEqual(sorted('linenShirt', 'linenDress'));
+  });
+
+  it('finds a word with one wrong letter in the middle ("jeens" → jeans)', async () => {
+    expect(await found('jeens')).toEqual(sorted('leather'));
+    expect((await suggestions('jeens')).terms).toEqual(['jeans']);
+  });
+
+  it('takes only the closest typos: "minimel" is minimal, not mini', async () => {
+    await createLook(ctx.db, { authorId: author, caption: 'Denim mini skirt' });
+    await refreshSearchTerms(ctx.db);
+    expect(await found('minimel')).toEqual(sorted('linenShirt'));
+    expect((await suggestions('minimel')).terms).toEqual(['minimal']);
+  });
+
+  it('counts letter changes like a person would (a swap is one)', () => {
+    expect(editDistance('jeens', 'jeans')).toBe(1);
+    expect(editDistance('jaens', 'jeans')).toBe(1);
+    expect(editDistance('minimel', 'mini')).toBe(3);
+    expect(editDistance('linnen', 'lined')).toBe(2);
+    expect(editDistance('höst', 'host')).toBe(1);
+    const words = [{ term: 'lined' }, { term: 'linen' }, { term: 'line' }];
+    expect(closest('linnen', words)).toEqual([{ term: 'linen' }]);
+    expect(closest('lin', [{ term: 'pins' }])).toEqual([]);
   });
 
   it('finds tags by their id, a typo of it, or their Swedish word', async () => {
