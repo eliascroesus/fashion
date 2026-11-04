@@ -23,6 +23,10 @@ function fakeAuth() {
     signInWithOAuth: vi.fn(() => ok({ url: 'https://supabase.test/authorize?google' })),
     exchangeCodeForSession: vi.fn(() => ok()),
     signInWithOtp: vi.fn(() => ok()),
+    signInWithPassword: vi.fn((): Promise<unknown> => {
+      session = { access_token: 'real-token', user: { is_anonymous: false } };
+      return ok();
+    }),
     updateUser: vi.fn((): Promise<unknown> => ok()),
     verifyOtp: vi.fn(() => ok()),
     signOut: vi.fn((): Promise<unknown> => {
@@ -247,5 +251,114 @@ describe('sign out', () => {
     fake.auth.signOut.mockImplementationOnce(() => Promise.reject(new Error('offline')));
     await expect(createAuthFlows(deps).signOut()).rejects.toThrow('offline');
     expect(deps.onSignedOut).toHaveBeenCalled();
+  });
+});
+
+describe('sign-in right after the first save', () => {
+  it('waits for the guest session being made, then moves its content to the account', async () => {
+    const flows = createAuthFlows(deps);
+    // The guest's profile setup is still on its way when Apple sign-in starts.
+    let finishGuest = () => undefined as unknown;
+    api.start.mockImplementationOnce(
+      () =>
+        new Promise<Me>((resolve) => {
+          finishGuest = () => {
+            resolve({ ...ME, isAnonymous: true, activeProfileId: 'guest-profile' });
+          };
+        }),
+    );
+    void flows.ensureSession();
+    fake.auth.linkIdentity.mockImplementationOnce(() => err('identity_already_exists'));
+    const signIn = flows.signInWithIdToken('apple', 'apple-token');
+    await vi.waitFor(() => {
+      expect(api.start).toHaveBeenCalledOnce();
+    });
+    expect(fake.auth.linkIdentity).not.toHaveBeenCalled();
+    finishGuest();
+    expect(await signIn).toBe('merged');
+    expectMergedAfterSignIn();
+    // The account's login is stored last, so the guest's can't replace it.
+    expect(vi.mocked(deps.onSignedIn).mock.calls.at(-1)?.[0]).toEqual(ME);
+  });
+});
+
+describe('password sign-in (test login, developer menu only)', () => {
+  it("signs in with a CAPTCHA token and moves a guest's content over", async () => {
+    fake.setSession(guest);
+    const result = await createAuthFlows(deps).signInWithPassword('test@example.com', 'pw');
+    expect(result).toBe('merged');
+    expect(fake.auth.signInWithPassword).toHaveBeenCalledWith({
+      email: 'test@example.com',
+      password: 'pw',
+      options: { captchaToken: 'captcha-ok' },
+    });
+    expectMergedAfterSignIn();
+  });
+
+  it('is a plain sign-in without a guest session, and reports a wrong password', async () => {
+    const flows = createAuthFlows(deps);
+    expect(await flows.signInWithPassword('test@example.com', 'pw')).toBe('signed_in');
+    expect(api.mergeGuest).not.toHaveBeenCalled();
+    fake.auth.signInWithPassword.mockImplementationOnce(() => err('invalid_credentials'));
+    await expect(flows.signInWithPassword('test@example.com', 'bad')).rejects.toMatchObject({
+      code: 'invalid_credentials',
+    });
+  });
+});
+
+describe('no guest session in the middle of a sign-in', () => {
+  it('refuses to start a guest while the Google page is open, and works again afterwards', async () => {
+    let returnFromGoogle: (url: string | null) => void = () => undefined;
+    deps.openAuthSession = vi.fn(
+      () =>
+        new Promise<string | null>((resolve) => {
+          returnFromGoogle = resolve;
+        }),
+    );
+    const flows = createAuthFlows(deps);
+    const signIn = flows.signInWithGoogle();
+    await vi.waitFor(() => {
+      expect(deps.openAuthSession).toHaveBeenCalled();
+    });
+    // A save retried meanwhile must not make a guest that would replace the account.
+    await expect(flows.ensureSession()).rejects.toMatchObject({ code: 'signing_in' });
+    expect(fake.auth.signInAnonymously).not.toHaveBeenCalled();
+
+    returnFromGoogle('outfitly://auth-callback?code=abc');
+    expect(await signIn).toBe('signed_in');
+    fake.setSession({ access_token: 'real-token', user: { is_anonymous: false } });
+    hasProfile = true;
+    await expect(flows.ensureSession()).resolves.toBeNull();
+  });
+
+  it('lets a save already on its way as the guest land before the guest content moves', async () => {
+    fake.setSession(guest);
+    const order: string[] = [];
+    deps.beforeMerge = () => {
+      order.push('saves settled');
+      return Promise.resolve();
+    };
+    api.mergeGuest.mockImplementation(() => {
+      order.push('merge');
+      return Promise.resolve({});
+    });
+    deps.onMerged = () => {
+      order.push('lists refreshed');
+    };
+    await createAuthFlows(deps).signInWithPassword('test@example.com', 'pw');
+    // Lists the account loaded at sign-in (before the move) are loaded again after it.
+    expect(order).toEqual(['saves settled', 'merge', 'lists refreshed']);
+  });
+
+  it('moves a guest made while the email code was being typed', async () => {
+    const flows = createAuthFlows(deps);
+    expect(await flows.startEmail('new@example.com')).toBe('new');
+    fake.setSession(guest); // the first save happened between the two steps
+    fake.auth.verifyOtp.mockImplementationOnce(() => {
+      fake.setSession({ access_token: 'real-token', user: { is_anonymous: false } });
+      return ok();
+    });
+    expect(await flows.verifyEmail('new@example.com', '123456', 'new')).toBe('merged');
+    expectMergedAfterSignIn();
   });
 });

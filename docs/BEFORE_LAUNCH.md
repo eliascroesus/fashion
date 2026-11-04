@@ -17,7 +17,7 @@ Things we've parked on purpose. None of them block building, but all of them mus
 - [ ] Until it's done, the app's "Continue with email" option doesn't work: hide it or finish this before testers.
 
 ## The app
-- [ ] Hide the developer menu (long-press the Profile title → "Test save") in store builds.
+- [ ] Hide the developer menu (long-press the Profile title) in store builds. Its "Pretend offline" switch and the test login in the sign-up sheet are already left out of store builds (`EXPO_PUBLIC_APP_ENV=production`); only the "Waiting to sync" count would still show.
 - [ ] Replace Expo's placeholder app icon and splash screen with the Outfitly logo.
 - [ ] Keep the login session encrypted on the phone (MMKV encryption key stored in the secure keychain).
 

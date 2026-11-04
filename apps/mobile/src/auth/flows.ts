@@ -8,6 +8,7 @@ export type AuthClient = Pick<
   | 'signInAnonymously'
   | 'signInWithIdToken'
   | 'signInWithOtp'
+  | 'signInWithPassword'
   | 'signInWithOAuth'
   | 'linkIdentity'
   | 'updateUser'
@@ -37,6 +38,10 @@ export interface FlowDeps {
   hasProfile: () => boolean;
   /** A guest token whose content still has to move into the signed-in account (kept on the phone). */
   pendingMerge: { get: () => string | null; set: (token: string | null) => void };
+  /** Before a guest's content moves: lets a save already on its way as the guest land first. */
+  beforeMerge?: () => Promise<void>;
+  /** A guest's content moved into the account: lists loaded before (e.g. Saves) are out of date. */
+  onMerged?: () => void;
 }
 
 export class AuthFlowError extends Error {
@@ -64,11 +69,37 @@ export function createAuthFlows(deps: FlowDeps) {
   let pendingGuestToken: string | null = null;
   /** One guest sign-in at a time, however many saves happen at once. */
   let ensuring: Promise<Me | null> | null = null;
+  /** Sign-ins in progress: no new guest session may start meanwhile. */
+  let signingIn = 0;
+
+  /**
+   * Runs a sign-in step. A guest session started in the middle (e.g. a save
+   * retried while the Google page is open) could replace the account's login
+   * or keep the save away from it, so ensureSession refuses until it's over.
+   */
+  async function signingInto<T>(work: () => Promise<T>): Promise<T> {
+    signingIn += 1;
+    try {
+      return await work();
+    } finally {
+      signingIn -= 1;
+    }
+  }
 
   async function currentSession() {
     const { data, error } = await auth.getSession();
     fail(error);
     return data.session;
+  }
+
+  /**
+   * The session a sign-in starts from. A guest session still being made (the
+   * first save, a moment ago) is finished first, so its saves move along and
+   * its profile can't replace the account's afterwards.
+   */
+  async function startingSession() {
+    if (ensuring) await ensuring.catch(() => null);
+    return currentSession();
   }
 
   /**
@@ -82,6 +113,7 @@ export function createAuthFlows(deps: FlowDeps) {
     try {
       await api.mergeGuest(token);
       deps.pendingMerge.set(null);
+      deps.onMerged?.();
     } catch (error) {
       const status = (error as { status?: unknown }).status;
       if (typeof status === 'number' && status >= 400 && status < 500) deps.pendingMerge.set(null);
@@ -94,6 +126,7 @@ export function createAuthFlows(deps: FlowDeps) {
     deps.onSignedIn(me);
     if (guestToken) {
       deps.pendingMerge.set(guestToken);
+      await deps.beforeMerge?.();
       await mergePending();
     }
     return result;
@@ -105,6 +138,10 @@ export function createAuthFlows(deps: FlowDeps) {
      * this only when someone first saves something, never at app open.
      */
     async ensureSession(): Promise<Me | null> {
+      if (!ensuring && signingIn > 0) {
+        // The sign-in's account will do; the caller tries again once it's there.
+        throw new AuthFlowError('signing_in', 'A sign-in is in progress.');
+      }
       ensuring ??= (async () => {
         if (!(await currentSession())) {
           const captchaToken = await deps.getCaptchaToken();
@@ -130,98 +167,132 @@ export function createAuthFlows(deps: FlowDeps) {
      * upgraded in place (same user id, same data); if that Apple ID already has
      * an account, we sign in to it and move the guest's content over.
      */
-    async signInWithIdToken(provider: 'apple' | 'google', token: string, nonce?: string) {
-      const credentials = { provider, token, ...(nonce ? { nonce } : {}) };
-      const session = await currentSession();
-      if (session?.user.is_anonymous) {
-        // Linking returns a fresh session in which the user is no longer anonymous.
-        const linked = await auth.linkIdentity(credentials);
-        if (!linked.error) return finish('upgraded');
-        if (linked.error.code !== 'identity_already_exists') fail(linked.error);
-        const guestToken = session.access_token;
+    signInWithIdToken(provider: 'apple' | 'google', token: string, nonce?: string) {
+      return signingInto(async () => {
+        const credentials = { provider, token, ...(nonce ? { nonce } : {}) };
+        const session = await startingSession();
+        if (session?.user.is_anonymous) {
+          // Linking returns a fresh session in which the user is no longer anonymous.
+          const linked = await auth.linkIdentity(credentials);
+          if (!linked.error) return finish('upgraded');
+          if (linked.error.code !== 'identity_already_exists') fail(linked.error);
+          const guestToken = session.access_token;
+          fail((await auth.signInWithIdToken(credentials)).error);
+          return finish('merged', guestToken);
+        }
         fail((await auth.signInWithIdToken(credentials)).error);
-        return finish('merged', guestToken);
-      }
-      fail((await auth.signInWithIdToken(credentials)).error);
-      return finish('signed_in');
+        return finish('signed_in');
+      });
     },
 
     /** Google (web sign-in page in the system browser), with the same guest rules as Apple. */
-    async signInWithGoogle(): Promise<SignInResult> {
-      const options = { redirectTo: deps.redirectTo, skipBrowserRedirect: true };
-      const session = await currentSession();
+    signInWithGoogle(): Promise<SignInResult> {
+      return signingInto(async () => {
+        const options = { redirectTo: deps.redirectTo, skipBrowserRedirect: true };
+        const session = await startingSession();
 
-      const runOAuth = async (
-        start: () => Promise<{
-          data: { url: string | null } | null;
-          error: { code?: string | undefined; message: string } | null;
-        }>,
-      ) => {
-        const { data, error } = await start();
-        fail(error);
-        if (!data?.url) throw new AuthFlowError('no_url');
-        const returned = await deps.openAuthSession(data.url, deps.redirectTo);
-        if (!returned) return { cancelled: true as const };
-        // Supabase puts results in the query (?code=) and errors in the query or the fragment.
-        const url = new URL(returned);
-        const fragment = new URLSearchParams(url.hash.slice(1));
-        const read = (key: string) => url.searchParams.get(key) ?? fragment.get(key);
-        return { cancelled: false as const, code: read('code'), errorCode: read('error_code') };
-      };
+        const runOAuth = async (
+          start: () => Promise<{
+            data: { url: string | null } | null;
+            error: { code?: string | undefined; message: string } | null;
+          }>,
+        ) => {
+          const { data, error } = await start();
+          fail(error);
+          if (!data?.url) throw new AuthFlowError('no_url');
+          const returned = await deps.openAuthSession(data.url, deps.redirectTo);
+          if (!returned) return { cancelled: true as const };
+          // Supabase puts results in the query (?code=) and errors in the query or the fragment.
+          const url = new URL(returned);
+          const fragment = new URLSearchParams(url.hash.slice(1));
+          const read = (key: string) => url.searchParams.get(key) ?? fragment.get(key);
+          return { cancelled: false as const, code: read('code'), errorCode: read('error_code') };
+        };
 
-      if (session?.user.is_anonymous) {
-        const linked = await runOAuth(() => auth.linkIdentity({ provider: 'google', options }));
-        if (linked.cancelled) return 'cancelled';
-        if (linked.code) {
-          fail((await auth.exchangeCodeForSession(linked.code)).error);
-          return finish('upgraded');
+        if (session?.user.is_anonymous) {
+          const linked = await runOAuth(() => auth.linkIdentity({ provider: 'google', options }));
+          if (linked.cancelled) return 'cancelled';
+          if (linked.code) {
+            fail((await auth.exchangeCodeForSession(linked.code)).error);
+            return finish('upgraded');
+          }
+          if (linked.errorCode !== 'identity_already_exists') {
+            throw new AuthFlowError(linked.errorCode ?? 'oauth_failed');
+          }
         }
-        if (linked.errorCode !== 'identity_already_exists') {
-          throw new AuthFlowError(linked.errorCode ?? 'oauth_failed');
-        }
-      }
-      const guestToken = session?.user.is_anonymous ? session.access_token : null;
-      const signedIn = await runOAuth(() => auth.signInWithOAuth({ provider: 'google', options }));
-      if (signedIn.cancelled) return 'cancelled';
-      if (!signedIn.code) throw new AuthFlowError(signedIn.errorCode ?? 'oauth_failed');
-      fail((await auth.exchangeCodeForSession(signedIn.code)).error);
-      return finish(guestToken ? 'merged' : 'signed_in', guestToken);
+        const guestToken = session?.user.is_anonymous ? session.access_token : null;
+        const signedIn = await runOAuth(() =>
+          auth.signInWithOAuth({ provider: 'google', options }),
+        );
+        if (signedIn.cancelled) return 'cancelled';
+        if (!signedIn.code) throw new AuthFlowError(signedIn.errorCode ?? 'oauth_failed');
+        fail((await auth.exchangeCodeForSession(signedIn.code)).error);
+        return finish(guestToken ? 'merged' : 'signed_in', guestToken);
+      });
+    },
+
+    /**
+     * Email + password, for the automated tests' test login only (the
+     * developer menu; people use Apple, Google or an emailed code). Same guest
+     * rules as the others: a guest's content moves into the account.
+     */
+    signInWithPassword(email: string, password: string): Promise<SignInResult> {
+      return signingInto(async () => {
+        const session = await startingSession();
+        const guestToken = session?.user.is_anonymous ? session.access_token : null;
+        const captchaToken = await deps.getCaptchaToken();
+        fail((await auth.signInWithPassword({ email, password, options: { captchaToken } })).error);
+        return finish(guestToken ? 'merged' : 'signed_in', guestToken);
+      });
     },
 
     /** Step 1 of email sign-in: send a 6-digit code. */
-    async startEmail(email: string): Promise<EmailMode> {
-      const session = await currentSession();
-      pendingGuestToken = null;
-      if (session?.user.is_anonymous) {
-        // Give the guest account this email (keeps the same user id)…
-        const { error } = await auth.updateUser({ email });
-        if (!error) return 'link';
-        if (error.code !== 'email_exists') fail(error);
-        // …unless the email already has an account: sign in to that one instead.
-        pendingGuestToken = session.access_token;
+    startEmail(email: string): Promise<EmailMode> {
+      return signingInto(async () => {
+        const session = await startingSession();
+        pendingGuestToken = null;
+        if (session?.user.is_anonymous) {
+          // Give the guest account this email (keeps the same user id)…
+          const { error } = await auth.updateUser({ email });
+          if (!error) return 'link';
+          if (error.code !== 'email_exists') fail(error);
+          // …unless the email already has an account: sign in to that one instead.
+          pendingGuestToken = session.access_token;
+          const captchaToken = await deps.getCaptchaToken();
+          fail(
+            (
+              await auth.signInWithOtp({
+                email,
+                options: { shouldCreateUser: false, captchaToken },
+              })
+            ).error,
+          );
+          return 'existing';
+        }
         const captchaToken = await deps.getCaptchaToken();
         fail(
-          (await auth.signInWithOtp({ email, options: { shouldCreateUser: false, captchaToken } }))
+          (await auth.signInWithOtp({ email, options: { shouldCreateUser: true, captchaToken } }))
             .error,
         );
-        return 'existing';
-      }
-      const captchaToken = await deps.getCaptchaToken();
-      fail(
-        (await auth.signInWithOtp({ email, options: { shouldCreateUser: true, captchaToken } }))
-          .error,
-      );
-      return 'new';
+        return 'new';
+      });
     },
 
     /** Step 2 of email sign-in: check the code. */
-    async verifyEmail(email: string, code: string, mode: EmailMode): Promise<SignInResult> {
-      const type = mode === 'link' ? 'email_change' : 'email';
-      fail((await auth.verifyOtp({ email, token: code, type })).error);
-      if (mode === 'link') return finish('upgraded');
-      const guestToken = pendingGuestToken;
-      pendingGuestToken = null;
-      return finish(guestToken ? 'merged' : 'signed_in', guestToken);
+    verifyEmail(email: string, code: string, mode: EmailMode): Promise<SignInResult> {
+      return signingInto(async () => {
+        if (mode === 'link') {
+          fail((await auth.verifyOtp({ email, token: code, type: 'email_change' })).error);
+          return finish('upgraded');
+        }
+        // A guest may have started while the person typed the code (a save): it moves along too.
+        const session = await startingSession();
+        const guestToken =
+          pendingGuestToken ?? (session?.user.is_anonymous ? session.access_token : null);
+        fail((await auth.verifyOtp({ email, token: code, type: 'email' })).error);
+        pendingGuestToken = null;
+        return finish(guestToken ? 'merged' : 'signed_in', guestToken);
+      });
     },
 
     /**

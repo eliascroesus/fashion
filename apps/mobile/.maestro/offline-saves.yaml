@@ -1,0 +1,74 @@
+# Saves made offline show at once, and reach the server once the connection is back.
+# "Pretend offline" (developer menu) fails every request the way airplane mode does;
+# coming back online, the next retry (at most ~30 s later) sends them.
+#   maestro test -e APP_ID=com.outfitly.app.dev apps/mobile/.maestro/offline-saves.yaml
+# No login needed: the first save makes a guest account.
+appId: ${APP_ID || 'com.outfitly.app'}
+env:
+  SYNC_TIMEOUT: 45000
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: tab-profile
+- longPressOn:
+    id: profile-title
+- assertVisible:
+    id: dev-menu
+
+# The first save (online) makes the guest account.
+- tapOn:
+    id: tab-home
+- extendedWaitUntil:
+    visible:
+      id: feed-card
+    timeout: 20000
+# A card below the For You / Following switch (the grid keeps cards ready above the screen too).
+- tapOn:
+    id: feed-card-save
+    index: 0
+    below:
+      id: feed-switch-for-you
+- extendedWaitUntil:
+    visible:
+      id: sign-up-sheet
+    timeout: 10000
+- tapOn:
+    id: sign-up-close
+- runFlow: subflows/wait-synced.yaml
+
+# Offline: save two more looks. They show as saved, and in Saved, straight away.
+- tapOn:
+    id: dev-pretend-offline
+- tapOn:
+    id: tab-home
+- tapOn:
+    id: feed-card-save
+    index: 1
+    below:
+      id: feed-switch-for-you
+- tapOn:
+    id: feed-card-save
+    index: 2
+    below:
+      id: feed-switch-for-you
+- tapOn:
+    id: tab-saved
+- assertVisible:
+    id: saved-card
+    index: 2
+- tapOn:
+    id: tab-profile
+- assertVisible:
+    id: dev-waiting
+    text: '.*: 2'
+
+# Back online: they are sent without touching anything.
+- tapOn:
+    id: dev-pretend-offline
+- runFlow: subflows/wait-synced.yaml
+- tapOn:
+    id: tab-saved
+- assertVisible:
+    id: saved-card
+    index: 2

@@ -19,6 +19,8 @@ export const feedCardSchema = z.object({
   }),
   /** Shoppable pieces in the look (0 until products exist, Phase 3). */
   itemCount: z.number().int().nonnegative(),
+  /** Whether the profile asking has saved it (false when logged out). */
+  saved: z.boolean(),
 });
 export type FeedCard = z.infer<typeof feedCardSchema>;
 

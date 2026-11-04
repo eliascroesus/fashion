@@ -2,6 +2,10 @@ import {
   ACTIVE_PROFILE_HEADER,
   API_PREFIX,
   type ApiErrorCode,
+  boardDeletedSchema,
+  boardItemStateSchema,
+  boardListSchema,
+  boardSchema,
   type CreateUploadBody,
   type EventBatch,
   eventBatchResultSchema,
@@ -11,6 +15,8 @@ import {
   mediaSchema,
   meSchema,
   mergeGuestResultSchema,
+  saveStateSchema,
+  swipeStateSchema,
   uploadTicketSchema,
 } from '@outfitly/shared';
 import { z } from 'zod';
@@ -144,6 +150,8 @@ export function createApiClient(options: ApiClientOptions) {
       ...(signal ? { signal } : {}),
     });
 
+  const id = encodeURIComponent;
+
   return {
     health: () => request('GET', '/health', { schema: healthSchema }),
     me: () => request('GET', '/me', { schema: meSchema }),
@@ -175,6 +183,56 @@ export function createApiClient(options: ApiClientOptions) {
       /** Works logged out. Leave out the cursor for a new list (page 1). */
       forYou: (cursor?: string, signal?: AbortSignal) => page('/feed/for-you', cursor, signal),
       following: (cursor?: string, signal?: AbortSignal) => page('/feed/following', cursor, signal),
+    },
+    /** Writes take the user action's key: a retry of the same action must reuse it. */
+    saves: {
+      list: (cursor?: string, signal?: AbortSignal) => page('/saves', cursor, signal),
+      save: (lookId: string, idempotencyKey: string) =>
+        request('PUT', `/saves/${id(lookId)}`, {
+          schema: saveStateSchema,
+          body: {},
+          idempotencyKey,
+        }),
+      unsave: (lookId: string, idempotencyKey: string) =>
+        request('DELETE', `/saves/${id(lookId)}`, { schema: saveStateSchema, idempotencyKey }),
+      /** "See less like this". */
+      seeLess: (lookId: string, idempotencyKey: string) =>
+        request('PUT', `/swipes/${id(lookId)}`, {
+          schema: swipeStateSchema,
+          body: { kind: 'see_less' },
+          idempotencyKey,
+        }),
+    },
+    boards: {
+      /** With `lookId`, each board also says whether it holds that look. */
+      list: (lookId?: string, signal?: AbortSignal) =>
+        request('GET', lookId ? `/boards?lookId=${id(lookId)}` : '/boards', {
+          schema: boardListSchema,
+          ...(signal ? { signal } : {}),
+        }),
+      create: (name: string, idempotencyKey: string) =>
+        request('POST', '/boards', { schema: boardSchema, body: { name }, idempotencyKey }),
+      rename: (boardId: string, name: string, idempotencyKey: string) =>
+        request('PATCH', `/boards/${id(boardId)}`, {
+          schema: boardSchema,
+          body: { name },
+          idempotencyKey,
+        }),
+      remove: (boardId: string, idempotencyKey: string) =>
+        request('DELETE', `/boards/${id(boardId)}`, { schema: boardDeletedSchema, idempotencyKey }),
+      looks: (boardId: string, cursor?: string, signal?: AbortSignal) =>
+        page(`/boards/${id(boardId)}/looks`, cursor, signal),
+      addLook: (boardId: string, lookId: string, idempotencyKey: string) =>
+        request('PUT', `/boards/${id(boardId)}/looks/${id(lookId)}`, {
+          schema: boardItemStateSchema,
+          body: {},
+          idempotencyKey,
+        }),
+      removeLook: (boardId: string, lookId: string, idempotencyKey: string) =>
+        request('DELETE', `/boards/${id(boardId)}/looks/${id(lookId)}`, {
+          schema: boardItemStateSchema,
+          idempotencyKey,
+        }),
     },
     events: {
       /** Resending a batch is safe: the server skips event ids it already has. */

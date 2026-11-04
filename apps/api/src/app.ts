@@ -9,9 +9,11 @@ import type { Config } from './config.ts';
 import { ApiError, notFoundHandler, registerErrorHandler } from './errors.ts';
 import { registerIdempotency } from './idempotency.ts';
 import type { JobQueue } from './jobs.ts';
+import { boardsRoutes } from './routes/boards.ts';
 import { eventsRoutes } from './routes/events.ts';
 import { feedRoutes } from './routes/feed.ts';
 import { mediaRoutes } from './routes/media.ts';
+import { savesRoutes } from './routes/saves.ts';
 import { sessionRoutes } from './routes/session.ts';
 import { systemRoutes } from './routes/system.ts';
 import type { PhotoStorage } from './storage.ts';
@@ -71,6 +73,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       mediaRoutes(v1, deps);
       feedRoutes(v1, deps);
       eventsRoutes(v1, deps);
+      savesRoutes(v1, deps);
+      boardsRoutes(v1, deps);
       done();
     },
     { prefix: API_PREFIX },

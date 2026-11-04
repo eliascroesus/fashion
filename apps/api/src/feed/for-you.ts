@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   applyDiversity,
   type Candidate,
+  demoteSimilar,
   FEED_RULES,
   interleave,
   jitter,
@@ -52,6 +53,8 @@ async function fetchCandidates(
          AND l.id NOT IN (SELECT s.look_id FROM seen s
                            WHERE s.profile_id = ${viewer}
                              AND s.last_seen_at > now() - make_interval(days => ${seenDays}))
+         AND l.id NOT IN (SELECT w.look_id FROM swipes w
+                           WHERE w.profile_id = ${viewer} AND w.kind = 'see_less')
     )
     -- Each followed person's newest few, via looks_feed_author_idx (the Following tab has the rest).
     (SELECT 'following' AS pool, v.* FROM follows f
@@ -85,17 +88,33 @@ async function fetchCandidates(
   return pools;
 }
 
+/** Similarity keys of the looks this profile most recently marked "see less like this". */
+async function seeLessKeys({ db }: FeedDeps, profileId: string | null): Promise<Set<string>> {
+  if (profileId === null) return new Set();
+  const { rows } = await db.execute<{ occasion_tags: string[]; season_tags: string[] }>(sql`
+    SELECT l.occasion_tags::text[] AS occasion_tags, l.season_tags::text[] AS season_tags
+      FROM swipes w JOIN looks l ON l.id = w.look_id
+     WHERE w.profile_id = ${profileId} AND w.kind = 'see_less'
+     ORDER BY w.updated_at DESC
+     LIMIT ${FEED_RULES.seeLessRemembered}`);
+  return new Set(rows.flatMap((r) => similarityKey(r.occasion_tags, r.season_tags) ?? []));
+}
+
 /** Ranks a new For You list for this viewer: up to `snapshotSize` look ids, best first. */
 async function rankLooks(
   deps: FeedDeps,
   profileId: string | null,
   random: () => number,
 ): Promise<string[]> {
-  const pools = await fetchCandidates(deps, profileId);
+  const [pools, lessLike] = await Promise.all([
+    fetchCandidates(deps, profileId),
+    seeLessKeys(deps, profileId),
+  ]);
   const mixed = interleave({
-    ...pools,
-    taste: jitter(pools.taste, random),
-    popular: jitter(pools.popular, random),
+    following: demoteSimilar(pools.following, lessLike),
+    taste: demoteSimilar(jitter(pools.taste, random), lessLike),
+    fresh: demoteSimilar(pools.fresh, lessLike),
+    popular: demoteSimilar(jitter(pools.popular, random), lessLike),
   });
   return applyDiversity(mixed, FEED_RULES.snapshotSize).map((c) => c.id);
 }
@@ -167,6 +186,7 @@ async function pickSharedList(
  */
 async function fillPage(
   deps: FeedDeps,
+  profileId: string | null,
   listId: string,
   start: number,
   total: number,
@@ -177,7 +197,7 @@ async function fillPage(
   while (items.length < FEED_PAGE_SIZE && next < total) {
     const ids = await readIds(next, FEED_PAGE_SIZE * 2);
     if (ids.length === 0) break;
-    const cards = await loadCards(deps, ids);
+    const cards = await loadCards(deps, ids, profileId);
     for (const id of ids) {
       next++;
       const card = cards.get(id);
@@ -196,12 +216,14 @@ async function firstPage(
 ): Promise<FeedPage> {
   if (profileId === null) {
     const shared = await pickSharedList(deps, random);
-    if (shared) return fillPage(deps, shared.id, 0, shared.total, readIdsFrom(deps, shared.id));
+    if (shared) {
+      return fillPage(deps, null, shared.id, 0, shared.total, readIdsFrom(deps, shared.id));
+    }
   }
   const lookIds = await rankLooks(deps, profileId, random);
   if (lookIds.length === 0) return { items: [], nextCursor: null };
   const listId = await saveList(deps.db, profileId, lookIds);
-  return fillPage(deps, listId, 0, lookIds.length, (from, count) =>
+  return fillPage(deps, profileId, listId, 0, lookIds.length, (from, count) =>
     Promise.resolve(lookIds.slice(from, from + count)),
   );
 }
@@ -240,7 +262,7 @@ export async function forYouPage(
     return firstPage(deps, profileId, random);
   }
   const readMore = readIdsFrom(deps, s);
-  return fillPage(deps, s, i, list.total, (from, count) =>
+  return fillPage(deps, profileId, s, i, list.total, (from, count) =>
     from === i ? Promise.resolve(list.ids) : readMore(from, count),
   );
 }

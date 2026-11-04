@@ -1,24 +1,14 @@
 import { sql } from '@outfitly/db';
 import { FEED_PAGE_SIZE, type FeedPage } from '@outfitly/shared';
 import { z } from 'zod';
-import { decodeCursor, encodeCursor, type FeedDeps, loadCards, showableLook } from './cards.ts';
-
-/**
- * A real UTC time with microseconds, e.g. 2026-11-03T10:00:00.123456Z, that
- * Postgres accepts (no Feb 30: it wouldn't round-trip; no year 0).
- */
-const microsTime = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/)
-  .refine((t) => {
-    const millis = t.slice(0, 23);
-    const date = new Date(`${millis}Z`);
-    return (
-      !Number.isNaN(date.getTime()) &&
-      date.toISOString().startsWith(millis) &&
-      date.getUTCFullYear() >= 2000
-    );
-  });
+import {
+  decodeCursor,
+  encodeCursor,
+  type FeedDeps,
+  loadCards,
+  microsTime,
+  showableLook,
+} from './cards.ts';
 
 /** The last look of the previous page. `t` keeps Postgres's microseconds (a JS Date can't). */
 const cursorSchema = z.object({ t: microsTime, id: z.uuid() });
@@ -49,6 +39,7 @@ export async function followingPage(
   const cards = await loadCards(
     deps,
     page.map((r) => r.id),
+    profileId,
   );
   const last = page.at(-1);
   return {

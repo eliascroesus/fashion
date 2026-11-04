@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet } from 'react-native';
 import { AuthProvider } from '../auth/AuthProvider';
 import { CaptchaProvider } from '../auth/captcha';
+import { ToastHost } from '../components/toast';
 import { PERSIST_MAX_AGE, queryClient, queryPersister } from '../lib/query';
 import { initSentry, Sentry } from '../lib/sentry';
 import { radii, Screen, spacing, ThemedText, useColors, useThemeName } from '../theme';
@@ -16,6 +17,14 @@ initSentry();
 
 /** A new app version starts with a fresh cache, so old data shapes are never restored. */
 const CACHE_VERSION = Constants.expoConfig?.version ?? 'dev';
+
+/** Small sheets that rise from the bottom, as tall as what's in them. */
+const SHEET = {
+  presentation: 'formSheet',
+  sheetAllowedDetents: 'fitToContents',
+  sheetGrabberVisible: true,
+  sheetCornerRadius: radii.lg,
+} as const;
 
 function RootLayout() {
   const colors = useColors();
@@ -41,9 +50,17 @@ function RootLayout() {
             >
               <Stack.Screen name="(tabs)" />
               <Stack.Screen name="look/[id]" />
+              <Stack.Screen name="board/[id]" />
+              <Stack.Screen name="look-menu/[id]" options={SHEET} />
+              <Stack.Screen
+                name="save-to-board/[id]"
+                options={{ ...SHEET, sheetAllowedDetents: [0.6, 1] }}
+              />
+              <Stack.Screen name="board-name" options={SHEET} />
               <Stack.Screen name="sign-up" options={{ presentation: 'modal' }} />
               <Stack.Screen name="auth-callback" />
             </Stack>
+            <ToastHost />
           </AuthProvider>
         </CaptchaProvider>
       </PersistQueryClientProvider>

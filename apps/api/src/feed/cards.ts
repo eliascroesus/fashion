@@ -8,11 +8,12 @@ import {
   looks,
   media,
   profiles,
+  saves,
   sql,
   type SQL,
 } from '@outfitly/db';
 import type { FeedCard } from '@outfitly/shared';
-import type { z } from 'zod';
+import { z } from 'zod';
 import { ApiError } from '../errors.ts';
 import type { PhotoStorage } from '../storage.ts';
 
@@ -39,14 +40,38 @@ export function showableLook(look: SQL): SQL {
           WHERE lm.look_id = ${look}.id AND lm.position = 0)`;
 }
 
-/** Cards for these looks, by id. Looks that can't be shown any more are missing. */
+/** Which of these looks the profile has saved (none when logged out). */
+async function savedAmong(
+  db: Db,
+  viewerProfileId: string | null,
+  ids: readonly string[],
+): Promise<Set<string>> {
+  if (viewerProfileId === null) return new Set();
+  const rows = await db
+    .select({ lookId: saves.lookId })
+    .from(saves)
+    .where(
+      and(
+        eq(saves.profileId, viewerProfileId),
+        inArray(saves.lookId, [...ids]),
+        isNull(saves.deletedAt),
+      ),
+    );
+  return new Set(rows.map((r) => r.lookId));
+}
+
+/**
+ * Cards for these looks, by id, as `viewerProfileId` sees them (null when
+ * logged out). Looks that can't be shown any more are missing.
+ */
 export async function loadCards(
   { db, storage }: FeedDeps,
   ids: readonly string[],
+  viewerProfileId: string | null,
 ): Promise<Map<string, FeedCard>> {
   const cards = new Map<string, FeedCard>();
   if (ids.length === 0) return cards;
-  const rows = await db
+  const rowsQuery = db
     .select({
       id: looks.id,
       authorId: looks.authorProfileId,
@@ -68,6 +93,7 @@ export async function loadCards(
     .where(
       and(inArray(looks.id, [...ids]), eq(looks.status, 'published'), isNull(looks.deletedAt)),
     );
+  const [rows, saved] = await Promise.all([rowsQuery, savedAmong(db, viewerProfileId, ids)]);
   for (const { id, authorId, width, height, thumbhash, dominantColor, ...keys } of rows) {
     // A ready photo always has these (media_ready_is_complete); this satisfies the types.
     if (!width || !height || !thumbhash || !dominantColor) continue;
@@ -87,9 +113,32 @@ export async function loadCards(
         },
       },
       itemCount: 0, // Shoppable pieces arrive with products (Phase 3).
+      saved: saved.has(id),
     });
   }
   return cards;
+}
+
+/**
+ * A real UTC time with microseconds, e.g. 2026-11-03T10:00:00.123456Z, that
+ * Postgres accepts (no Feb 30: it wouldn't round-trip; no year 0).
+ */
+export const microsTime = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/)
+  .refine((t) => {
+    const millis = t.slice(0, 23);
+    const date = new Date(`${millis}Z`);
+    return (
+      !Number.isNaN(date.getTime()) &&
+      date.toISOString().startsWith(millis) &&
+      date.getUTCFullYear() >= 2000
+    );
+  });
+
+/** Postgres timestamp as `microsTime` text, for keyset cursors. */
+export function microsText(column: SQL): SQL<string> {
+  return sql<string>`to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 }
 
 /** Cursors are opaque to the app: base64url JSON, checked on the way back in. */

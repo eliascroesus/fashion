@@ -17,7 +17,21 @@
     },
     "saved": {
       "title": "Saved",
-      "comingSoon": "Looks you save end up here."
+      "saves": "Saves",
+      "boards": "Boards",
+      "emptyTitle": "Nothing saved yet",
+      "empty": "Tap the bookmark on any look to save it here.",
+      "loggedOutTitle": "Save looks you love",
+      "loggedOut": "Tap the bookmark on any look. Your saves end up here.",
+      "guest": "Sign up to keep your saves on all your devices.",
+      "guestAction": "Sign up",
+      "boardsEmpty": "Make a board to sort your saves, like \"Summer\" or \"Work\".",
+      "newBoard": "New board",
+      "lookCount_one": "{{count}} look",
+      "lookCount_other": "{{count}} looks",
+      "boardsLoadFailed": "Couldn't load your boards.",
+      "boardLabel_one": "{{name}}, {{count}} look",
+      "boardLabel_other": "{{name}}, {{count}} looks"
     },
     "profile": {
       "title": "Profile",
@@ -40,7 +54,9 @@
     "loadFailedTitle": "Couldn't load looks",
     "loadFailed": "Check your connection and try again.",
     "loadMoreFailed": "Couldn't load more looks.",
-    "allCaughtUp": "You're all caught up. Pull down for new looks."
+    "allCaughtUp": "You're all caught up. Pull down for new looks.",
+    "unsave": "Remove from saves",
+    "moreOptions": "Press and hold for more options"
   },
   "look": {
     "back": "Back",
@@ -66,7 +82,10 @@
     "notConfigured": "Sign-in isn't set up in this build.",
     "errorGeneric": "Couldn't sign in. Please try again.",
     "errorEmail": "Enter a valid email address.",
-    "errorCode": "That code didn't work. Check it and try again."
+    "errorCode": "That code didn't work. Check it and try again.",
+    "devSignIn": "Test login (developer)",
+    "devPassword": "Password",
+    "devSignInButton": "Sign in with password"
   },
   "profile": {
     "guest": "Guest",
@@ -76,6 +95,48 @@
     "signIn": "Sign in",
     "signOut": "Sign out",
     "devMenu": "Developer menu",
-    "testSave": "Test save"
+    "pretendOffline": "Pretend offline",
+    "waiting_one": "Waiting to sync: {{count}}",
+    "waiting_other": "Waiting to sync: {{count}}",
+    "unsyncedTitle": "Some saves haven't synced",
+    "unsyncedBody_one": "{{count}} change hasn't reached Outfitly yet (you seem to be offline). If you sign out now, it will be lost.",
+    "unsyncedBody_other": "{{count}} changes haven't reached Outfitly yet (you seem to be offline). If you sign out now, they will be lost."
+  },
+  "board": {
+    "options": "Board options",
+    "rename": "Rename board",
+    "delete": "Delete board",
+    "deleteTitle": "Delete \"{{name}}\"?",
+    "deleteBody": "The looks on it stay in your saves.",
+    "cancel": "Cancel",
+    "deleteConfirm": "Delete",
+    "emptyTitle": "No looks on this board yet",
+    "empty": "Press and hold a look and choose \"Save to board\".",
+    "failed": "Couldn't do that. Check your connection and try again."
+  },
+  "boardName": {
+    "createTitle": "New board",
+    "renameTitle": "Rename board",
+    "label": "Name",
+    "placeholder": "e.g. Summer evenings",
+    "create": "Create",
+    "save": "Save",
+    "failed": "Couldn't save the board. Check your connection and try again.",
+    "tooMany": "You have the most boards you can have. Delete one to make another."
+  },
+  "lookMenu": {
+    "title": "Look options",
+    "saveToBoard": "Save to board",
+    "seeLess": "See less like this",
+    "seeLessDone": "Got it. You'll see fewer looks like this."
+  },
+  "saveToBoard": {
+    "title": "Save to board",
+    "newBoard": "New board",
+    "savedTo": "Saved to {{name}}",
+    "removedFrom": "Removed from {{name}}",
+    "empty": "No boards yet. Make your first one.",
+    "loadFailed": "Couldn't load your boards. Check your connection and try again.",
+    "done": "Done"
   }
 }

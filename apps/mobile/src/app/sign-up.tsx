@@ -14,11 +14,12 @@ import { getAppleIdToken } from '../auth/apple';
 import { useAuth } from '../auth/AuthProvider';
 import type { EmailMode, SignInResult } from '../auth/flows';
 import { Button } from '../components/button';
+import { DEV_TOOLS, useDevMenu } from '../lib/dev';
 import { radii, Screen, spacing, ThemedText, typography, useColors, useThemeName } from '../theme';
 
 type Step =
   { kind: 'choose' } | { kind: 'email' } | { kind: 'code'; email: string; mode: EmailMode };
-type Action = 'apple' | 'google' | 'email' | 'verify';
+type Action = 'apple' | 'google' | 'email' | 'verify' | 'password';
 
 /** Must match Supabase → Authentication → Email OTP length. */
 const CODE_LENGTH = 6;
@@ -36,6 +37,9 @@ export default function SignUpSheet() {
   const [busy, setBusy] = useState<Action | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [appleAvailable, setAppleAvailable] = useState(false);
+  const [password, setPassword] = useState('');
+  const devMenu = useDevMenu();
+  const devSignIn = DEV_TOOLS && devMenu;
 
   useEffect(() => {
     void AppleAuthentication.isAvailableAsync().then(setAppleAvailable);
@@ -110,6 +114,54 @@ export default function SignUpSheet() {
           onPress={() => {
             setStep({ kind: 'email' });
           }}
+        />
+      </View>
+    );
+  }
+
+  /** The automated tests' test login (developer menu on, never in the store build). */
+  function devStep() {
+    if (!auth) return null;
+    return (
+      <View style={styles.actions} testID="dev-sign-in">
+        <ThemedText variant="bodyStrong">{t('auth.devSignIn')}</ThemedText>
+        <TextInput
+          testID="dev-email"
+          style={inputStyle}
+          accessibilityLabel={t('auth.emailLabel')}
+          value={email}
+          onChangeText={setEmail}
+          placeholder={t('auth.emailPlaceholder')}
+          placeholderTextColor={colors.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="email-address"
+        />
+        <TextInput
+          testID="dev-password"
+          style={inputStyle}
+          accessibilityLabel={t('auth.devPassword')}
+          value={password}
+          onChangeText={setPassword}
+          placeholder={t('auth.devPassword')}
+          placeholderTextColor={colors.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry
+        />
+        <Button
+          variant="secondary"
+          testID="dev-sign-in-submit"
+          label={t('auth.devSignInButton')}
+          loading={busy === 'password'}
+          disabled={busy !== null || !email || !password}
+          onPress={() =>
+            void run(
+              'password',
+              () => auth.signInWithPassword(email.trim().toLowerCase(), password),
+              t('auth.errorGeneric'),
+            )
+          }
         />
       </View>
     );
@@ -225,6 +277,7 @@ export default function SignUpSheet() {
         {step.kind === 'choose' ? chooseStep() : null}
         {step.kind === 'email' ? emailStep() : null}
         {step.kind === 'code' ? codeStep(step.email, step.mode) : null}
+        {step.kind === 'choose' && devSignIn ? devStep() : null}
 
         {error ? (
           <ThemedText accessibilityLiveRegion="polite" style={{ color: colors.danger }}>
@@ -234,6 +287,7 @@ export default function SignUpSheet() {
 
         <Button
           variant="secondary"
+          testID="sign-up-close"
           label={t('auth.close')}
           onPress={() => {
             router.back();

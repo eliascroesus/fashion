@@ -1,0 +1,80 @@
+# The sign-up moment: save a look while logged out → a guest account starts and the
+# sign-up sheet opens → sign in → the look is still saved (it moved to the account).
+#
+# Signs in with the test login (a Supabase user made for tests), which needs a build with
+# developer tools (any build but the store one) and looks on the server the build talks to:
+#   maestro test -e APP_ID=com.outfitly.app.dev -e TEST_EMAIL=… -e TEST_PASSWORD=… \
+#     apps/mobile/.maestro/save-sign-up.yaml
+# It starts by emptying the test login's saves, so the one save at the end is the guest's.
+appId: ${APP_ID || 'com.outfitly.app'}
+---
+- launchApp:
+    clearState: true
+# The developer menu holds the test login and the "waiting to sync" count.
+- tapOn:
+    id: tab-profile
+- longPressOn:
+    id: profile-title
+- assertVisible:
+    id: dev-menu
+
+# 1. Empty the test login's saves.
+- tapOn:
+    id: profile-sign-in
+- runFlow: subflows/test-login.yaml
+- tapOn:
+    id: tab-saved
+- extendedWaitUntil:
+    visible:
+      id: 'saved-card-save|saved-empty'
+    timeout: 20000
+- repeat:
+    while:
+      visible:
+        id: saved-card-save
+    commands:
+      - tapOn:
+          id: saved-card-save
+          index: 0
+- assertVisible:
+    id: saved-empty
+- runFlow: subflows/wait-synced.yaml
+- tapOn:
+    id: profile-sign-out
+- extendedWaitUntil:
+    visible:
+      id: profile-sign-in
+    timeout: 10000
+
+# 2. Logged out: save the first look on Home.
+- tapOn:
+    id: tab-home
+- extendedWaitUntil:
+    visible:
+      id: feed-card
+    timeout: 20000
+# A card below the For You / Following switch (the grid keeps cards ready above the screen too).
+- tapOn:
+    id: feed-card-save
+    below:
+      id: feed-switch-for-you
+- extendedWaitUntil:
+    visible:
+      id: sign-up-sheet
+    timeout: 10000
+
+# 3. Sign up (here: sign in to the test login, which merges the guest into it).
+- runFlow: subflows/test-login.yaml
+- runFlow: subflows/wait-synced.yaml
+- assertVisible:
+    id: profile-sign-out
+
+# 4. The look saved as a guest is in the account's saves.
+- tapOn:
+    id: tab-saved
+- extendedWaitUntil:
+    visible:
+      id: saved-card
+    timeout: 20000
+- assertNotVisible:
+    id: saved-empty
