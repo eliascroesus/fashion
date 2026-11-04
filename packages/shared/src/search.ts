@@ -74,21 +74,29 @@ export const STOP_WORDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The words of a search: lowercase letters and digits (any language), each
- * once, at most MAX_SEARCH_WORDS. Small words are left out unless the search
- * is nothing but those.
+ * The words of a search: lowercase letters (with their accent marks) and
+ * digits in any language, each once, at most MAX_SEARCH_WORDS. Small words
+ * are left out unless the search is nothing but those.
  */
 export function searchWords(text: string): string[] {
   const all = text
     .normalize('NFC')
     .toLowerCase()
-    .match(/[\p{L}\p{N}]+/gu);
+    .match(/[\p{L}\p{M}\p{N}]+/gu);
   const unique = [...new Set((all ?? []).map((w) => w.slice(0, MAX_WORD_LENGTH)))];
   const meaningful = unique.filter((w) => !STOP_WORDS.has(w));
   return (meaningful.length > 0 ? meaningful : unique).slice(0, MAX_SEARCH_WORDS);
 }
 
-const searchText = z.string().trim().min(1).max(MAX_SEARCH_LENGTH);
+/**
+ * Search text: control characters (which Postgres text can't hold, e.g. NUL)
+ * become spaces, then trimmed; 1–100 characters.
+ */
+const searchText = z
+  .string()
+  // eslint-disable-next-line no-control-regex
+  .transform((text) => text.replace(/[\u0000-\u001f\u007f]/g, ' ').trim())
+  .pipe(z.string().min(1).max(MAX_SEARCH_LENGTH));
 
 /** `GET /v1/search/looks?q=&cursor=`: looks matching the words, 20 per page. */
 export const searchQuerySchema = feedQuerySchema.extend({ q: searchText });

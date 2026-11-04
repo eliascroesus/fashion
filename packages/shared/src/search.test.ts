@@ -48,6 +48,11 @@ describe('search words for tags', () => {
 });
 
 describe('searchQuerySchema', () => {
+  it('turns control characters (e.g. NUL, which Postgres refuses) into spaces', () => {
+    expect(searchQuerySchema.parse({ q: 'linen\u0000shirt\n' }).q).toBe('linen shirt');
+    expect(searchQuerySchema.safeParse({ q: '\u0000\u0007' }).success).toBe(false);
+  });
+
   it('trims and needs 1–100 characters', () => {
     expect(searchQuerySchema.parse({ q: '  linen ' }).q).toBe('linen');
     expect(searchQuerySchema.safeParse({ q: '   ' }).success).toBe(false);

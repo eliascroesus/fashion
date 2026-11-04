@@ -3,7 +3,7 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-Phase 2, Step 2.6 — Taste picker: built and checked in the iPhone simulator and on staging (2026-11-04), PR #13. Steps 2.4 and 2.5 are merged (PRs #11, #12). At the first open a skippable picker comes before Home: swipe about 10 looks, then tick styles (pre-ticked from the likes) and favourite brands. Picking Streetwear makes 12 of 20 looks on the first page streetwear on staging (1 of 20 without). For You no longer runs dry. Elias's photos are in (2026-11-04): 125 real outfits on staging, the 300 stand-ins removed; Streetwear and Sporty have no outfits yet (see Waiting on Elias). Still open from earlier steps: "mid-range Android, no blank cards or stutter" (2.3), waiting on the phone. Phase 1 gate: everything passed except "app on both phones with login" (no Android phone yet; a real iPhone needs the Apple Developer membership); Elias chose to go on and do that check when the hardware is ready. Next: Step 2.7 — search and profiles.
+Phase 2, Step 2.7 — Search and profiles: built and checked in the iPhone simulator and on staging (2026-11-04), PR #14. That is the last step of Phase 2; Steps 2.4–2.6 are merged (PRs #11–#13). Search tab: popular tags as chips, recent searches, suggestions while typing (searches and people), results as a grid; typos work ("linnen" finds linen, "minimel" finds Minimal) and Swedish tag words too ("sommar"). Profiles: tap the poster on a look page, or a person in search, for their profile (looks, followers, following, Follow); your own Profile tab shows the same top part. Following someone fills the Following tab without a pull to refresh. Waiting on Elias: the review of the 125 captions Claude wrote (`~/Downloads/outfitly-seed/captions-review.html`), then Claude loads them so search finds pieces ("cardigan", "wide-leg jeans"). Still open from earlier steps: "mid-range Android, no blank cards or stutter" (2.3), waiting on the phone. Phase 1 gate: everything passed except "app on both phones with login" (no Android phone yet; a real iPhone needs the Apple Developer membership). Next: the Phase 2 gate, item by item with Elias.
 
 ## Done
 - Step 1.1 — Project skeleton and safety net (PR #1). Monorepo (pnpm + Turborepo), strict TypeScript, ESLint + Prettier, Vitest, GitHub Actions CI on every pull request. CI green.
@@ -65,9 +65,52 @@ Phase 2, Step 2.6 — Taste picker: built and checked in the iPhone simulator an
     - API: page 1 with Streetwear picked is at least 11 of 20 streetwear (logged out, and for 5 profiles with a stored taste, diversity rules kept); stored taste beats `?styles=`; lists per style choice and both caps; taste PUT fills only an empty taste, replays a retry, refuses unknown values and needs a login; picker looks; runs dry (everything seen 3–6 days ago → full list, oldest first; nothing seen 2 h ago).
     - Maestro: new `taste-picker.yaml` (drag a look right, ♥ one, ✕ the rest, Streetwear and Nike ticked, Done, Home shows looks, the developer menu shows the time). Every other flow skips the picker when it shows (`subflows/skip-taste.yaml`). All 7 flows pass, plus both `same-place.sh` checks.
     - Live on staging: page 1 with `?styles=streetwear` = 12 of 20 streetwear (4 requests), 1 of 20 without.
+- Step 2.7 — Search and profiles (PR #14) — **done in the iPhone simulator and on staging (2026-11-04).**
+  - **Database (migration 0009):**
+    - `looks.search_vector`: a generated column (tags and caption weigh A, the AI description B; `'simple'` config, no stemming), filled by Postgres on every insert and update via the IMMUTABLE function `look_search_vector`. Indexed with GIN.
+    - New table `search_terms`, search's vocabulary: every word in the looks that can be shown, with its look count, plus Swedish tag words mapped to their tag (sommar → summer). Rebuilt by the pg-boss job `search-terms` every 15 minutes, at startup and after `pnpm seed:looks` / `seed:fake-looks`. Locked like the rest (live lock test 17/17).
+    - Trigram indexes on `profiles.handle` and `lower(display_name)`.
+  - **Server:**
+    - `GET /v1/search/looks?q=` returns 20 per page.
+      - Every word must match. A word the vocabulary doesn't know also matches its typos (pg_trgm similarity ≥ 0.4, up to 5), and the last word also matches as a prefix ("lin" → linen).
+      - Order: best match, then popularity, then newest.
+    - `GET /v1/search/suggest?q=`: the last word completed (prefix first, then typos; earlier words kept), plus up to 3 people who have looks.
+    - `GET /v1/search/popular`: up to 12 tags by look count.
+    - `GET /v1/profiles/:id`: counts of looks, followers and following (deleted profiles left out) and whether you follow. `GET /v1/profiles/:id/looks`: newest first, sharing the Following feed's paging (`newestPage`).
+    - Search text has its control characters turned into spaces (a NUL made Postgres fail).
+    - Live on staging.
+  - **App:**
+    - Search tab: a search bar; before typing, recent searches (the last 10, on the phone, ✕ / Clear, forgotten at sign-out) and Popular chips (labels in English or Swedish). While typing: "Search for …", completed searches and People. Then results in the Home grid.
+    - The suggestions stay up (with Cancel) whenever the text isn't what the results are for, even after the keyboard is dragged away. Cancel goes back to the results.
+    - Profile screen (`profile/[id]`): photo or first letter, name, @handle, verified tick, looks · followers · following, Follow (offline-safe through the outbox; logged out it opens the sign-up sheet), and their looks as a grid. Opened by tapping the poster on a look page or a person in search.
+    - Own Profile tab: the same top part (long-press your name for the developer menu), sign in/out, and your looks grid (empty until posting in Phase 4).
+    - Following / unfollowing resets the Following list (it loads again by itself, also when it was already open and empty) and refreshes profile counts. While a follow is on its way, the follower count already counts it.
+    - Search results and profile grids log impressions with their position (sources `search`, `profile`; not on your own profile). Saved bookmarks show on those grids too.
+    - Search results and an open profile carry over at the first save (the guest account), so nothing reloads or jumps.
+    - Developer menu: "Last suggestions: N ms" (from a keystroke to the suggestions on screen).
+  - **Tests:**
+    - API: "linnen" finds the linen looks and nothing else; minimel/sommar/höst/dejt find their tags.
+      - Every word must match; small words like "with" are dropped; the last word completes; "linen" never finds "lined".
+      - Hidden, draft, unready and deleted-author looks never show.
+      - Paging: 45 equal matches, plus a run that crosses rank and popularity boundaries, without repeats or gaps.
+      - The caption outranks the AI description. Quotes and tsquery syntax are plain text. NUL is handled.
+      - Suggestions: completions, typos, earlier words kept, people only with looks. Links and emails never become words.
+      - Popular tags; the vocabulary follows hidden looks.
+      - Profile counts and 404; profile looks paging; following fills the Following feed and unfollowing empties it.
+    - Test databases now print floats like Supabase (`extra_float_digits = 0`). This caught a real bug on staging: page 2 of search was empty because the rank in the cursor came back rounded. The rank is now a 6-decimal number carried as text.
+    - Maestro:
+      - New `search.yaml`: chips, typo → suggestion → results, a look and back, recent searches, Cancel after dragging the keyboard away, the developer menu time.
+      - New `follow-fills-following.yaml`: test login, Following empty, search → open a look → tap the poster → profile → Follow, then Following shows their looks (no pull to refresh); cleans up by unfollowing through search's people, and undoes a follow left by a run that stopped halfway.
+      - All 9 flows pass on the iPhone 18 Pro simulator (Release build, staging), plus `same-place.sh` (both) and `photo-shown.sh`. In the final run, 7 passed at once. home-grid was re-run because Maestro's driver didn't start in time. save-keeps-place was re-run after clearing the test login's `seen` rows (its For You was empty, see Known issues).
+  - **Captions:** Claude wrote a one-line caption for each of the 125 outfits (what's visible: pieces, colours, and materials only when clear). None is clearly linen, so on staging try typos like "cardigen" or "jeens" once they're loaded. They wait for Elias's review before loading.
 
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
+- 2026-11-04 — Search (Step 2.7): Postgres full-text search with the `'simple'` config (no stemming: English and Swedish words behave the same; plurals and typos come from the vocabulary instead). A typed word the vocabulary knows is searched as itself; an unknown word also matches up to 5 similar ones (pg_trgm ≥ 0.4), so "linnen" finds linen but "linen" never finds "lined". Only the last word is also a prefix (the plan said every word of 3+ letters): a finished word shouldn't widen to longer ones ("tan" → tank). Small words (with, and, med, och…) are dropped. Ranked by match (tags and caption above the AI description), then popularity, then newest.
+- 2026-11-04 — Search cursors carry the rank as a 6-decimal number in text, never a float: Supabase prints floats with 15 digits (`extra_float_digits = 0`), so a float read back is not the same number. Test databases now do the same. Popularity can stay a float in cursors because it is stored rounded to 4 decimals.
+- 2026-11-04 — Recent searches are kept only on the phone (last 10) and forgotten at sign-out; nothing about searches is stored on the server yet. Suggestions include up to 3 people, only those who have looks (guests and people who haven't posted can't be found).
+- 2026-11-04 — Swedish works for tags: each style, occasion and season has its Swedish label as a search word (`TAG_SEARCH_WORDS`, checked against the app's texts by a test). Captions are English.
+- 2026-11-04 — Elias chose that Claude writes the captions for his 125 outfits (reviewed by him before loading) so search has words to find before the Phase 3 AI descriptions.
 - 2026-11-04 — Taste picker (Step 2.6):
   - **Styles (Elias):** 7, one per look (his photos are sorted into one Drive folder per style): Minimal, Streetwear, Classic, Sporty, Romantic, Edgy, Colorful. Fewer than first proposed, so sorting and picking stay quick; Scandi/quiet luxury sit under Minimal, preppy under Classic, boho under Romantic. Ids are permanent (database enum and answers waiting on phones).
   - **Brands (Elias):** 20 brands popular in Sweden, picked now and stored; the feed starts using them when looks have products (Phase 3).
@@ -149,6 +192,7 @@ Phase 2, Step 2.6 — Taste picker: built and checked in the iPhone simulator an
 - 2026-11-02 — Elias asked Claude to work through Phase 1 and Phase 2 overnight without stopping. Each step still gets its own branch + PR, stacked on the previous step's branch; nothing is merged into `main` without Elias.
 
 ## Waiting on Elias
+- **Review the 125 captions (Step 2.7, 2026-11-04):** open `~/Downloads/outfitly-seed/captions-review.html` in a browser. Click a caption to change it; when done, press "Copy my changes" and paste the result into the chat (or say "all OK"). Claude then adds them to `looks.json` and runs `pnpm seed:looks` (it updates the looks in place, no duplicates). Until then the looks have no captions and search finds styles, occasions and seasons only.
 - **More outfit photos (2026-11-04):** Streetwear and Sporty have no outfits yet (those folders held only products), Edgy has 6 and Colorful 13. Aim for about 20 each: a person wearing the whole look, or the whole outfit laid out (not one item on its own). Same Drive folders; Claude loads them the same way (`~/Downloads/outfitly-seed`, `looks.json`, `pnpm seed:looks`).
 - **300 outfit photos (Step 2.1), first batch done 2026-11-04 (125 outfits):** put them in one folder (any of JPG / PNG / WebP / HEIC, max 25 MB each, each picture once), then `pnpm seed:looks <folder> --init` writes `looks.json` with one look per photo; fill in caption, tags (occasions/seasons above) and author handle, put several photos in one look if wanted, and run `pnpm seed:looks <folder>`. Claude can do the commands; Elias only needs to give the folder (and captions if he wants them).
 - **A real iPhone photo** (the R2 check used the generated 12 MP test HEIC) (taken somewhere neutral, location on) to add as a test file, so tests use a true iPhone capture.
@@ -172,6 +216,8 @@ Phase 2, Step 2.6 — Taste picker: built and checked in the iPhone simulator an
 - 18+ only or teens allowed (Step 5.5)
 
 ## Known issues
+- The test login's For You is empty after a day of test runs (2026-11-04): it has seen all 125 looks within 24 hours, and For You never repeats those (the "seen" rule). Flows that sign in and need For You cards can then fail for that reason alone; `follow-fills-following.yaml` opens its look from search for this. Goes away as the catalogue grows; until then wait a day or clear the test login's `seen` rows.
+- On iPhone the keyboard covers the tab bar while the search field is focused (normal for iOS; Cancel or the keyboard's search key closes it).
 - 11 of the 125 real photos got a near-black "main colour" (`#080808`), e.g. a bright street photo: the pipeline (Step 1.4) takes sharp's most common colour band, which can land on dark shadows. It's the colour a frame shows while its photo loads, so those flash black. Fix: use the photo's average colour (`stats()` channel means) and recompute it for the existing photos.
 - Once in about 10 runs of the sign-up test (2026-11-04), Home was blank after signing out: the For You list had its looks (the scroll bar showed 8 screens) but drew none until a tiny scroll, which brought them back at once. Not reproduced in 6 targeted runs (sign in → sign out → Home; Home's first looks arriving while another tab shows). Likely FlashList not redrawing after its data changed while its tab was hidden; watch for it, and fix when it can be reproduced.
 - Staging sleeps when idle; the first request after that takes about 9 s. The taste picker then skips the swiping and goes straight to the chips (its 3 s fallback). Production won't sleep. To see the swipes again: Profile → press and hold "Profile" → "Show the taste picker again".
@@ -193,6 +239,11 @@ Phase 2, Step 2.6 — Taste picker: built and checked in the iPhone simulator an
 - `pnpm audit`: one moderate advisory in minimatch, pulled in only by ESLint (dev tool reading our own config) — not exploitable here; wait for upstream fix.
 
 ## Measured numbers
+- Search (Step 2.7, staging, logged out, over HTTP from the Mac, `pnpm search:speed`: a suggestion request per typed letter, then 3 pages of results; network ≈ 75 ms of each, 2026-11-04):
+  - 125 real looks: suggestions p50 35 ms, p95 70 ms (280 requests); search page 1 p50 41 ms, p95 69 ms; next pages p95 52 ms.
+  - With 10,000 fake looks added (then removed), broad searches matching thousands ("trousers", "black coat", "sneakers"): suggestions p50 34 ms, p95 59 ms (225 requests); search page 1 p50 70 ms, p95 91 ms; next pages p50 71 ms, p95 99 ms. Target "suggestions in under 300 ms" holds.
+  - In the app (iPhone 18 Pro simulator, Release build, staging; developer menu "Last suggestions", from the keystroke to suggestions on screen, including the 120 ms pause after typing): 186 ms for a new text ("minimal coat"), 134 ms when the answer was already on the phone. The same run showed "Last look open" 30 ms for a look opened from search results (cached photo).
+  - Waking a sleeping staging machine: the first request took 9.3 s (reviewer's check), as before.
 - Taste picker (Step 2.6, staging, 2026-11-04):
   - "Done when", 300 stand-in looks (one style each, 43 streetwear): page 1 of For You with Streetwear picked (logged out, nothing followed) = 12 of 20 streetwear on 4 requests; 1 of 20 with nothing picked.
   - With 10,000 looks (added for the check, then removed again): an account that follows one poster and has Streetwear stored gets 10 of 20 streetwear on page 1, plus 5 of 20 from the poster it follows (the weights as decided: following 3 : taste 6 : fresh 2 : popular 2).
@@ -217,6 +268,13 @@ Phase 2, Step 2.6 — Taste picker: built and checked in the iPhone simulator an
 - First EAS Android preview build (free plan): ~40 min in queue + ~15 min building; APK 107 MB (2026-11-02)
 
 ## Later (parked ideas, not in current scope)
+- Search ranks every match on each page: fine at 10,000 looks (p95 < 100 ms for words matching thousands), but at 100,000+ a broad word ("black") should rank only the top candidates, or keep the ranked list like For You's snapshots.
+- Suggestions offer the Swedish tag words to English phones too ("s" → sommar): send the app's language and leave out the other language's tag words.
+- The `search-terms` job has no singleton policy: with two API machines (production, Phase 5) the startup and cron runs can overlap (only double work). Add `policy: 'singleton'`.
+- Changing `look_search_vector` later doesn't recompute the stored search words by itself: that migration must rewrite the column (e.g. drop and add it again).
+- Followers / following lists, editing your own profile (name, photo, handle: Step 4.x), and people as their own results tab in search.
+- Search events (what people search, searches with no results) for ranking and finding missing content; with consent (Step 5.5).
+- Search's results are hidden with `display: none` while the suggestions show (like Home's feed switch): check on a real phone that Cancel lands on the same scroll position.
 - Change your taste after onboarding (Profile → "Your styles"): needs an overwrite mode for `PUT /v1/taste` (today it only fills an empty taste).
 - Styles in "More like this" (today it matches occasion and season tags; AI similarity replaces both in Phase 3).
 - Brands in For You once looks have products (Phase 3): `taste_profiles.brands` is stored already.

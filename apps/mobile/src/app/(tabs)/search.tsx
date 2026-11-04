@@ -35,9 +35,12 @@ export default function SearchScreen() {
   const typed = tidySearch(text);
   const recent = useRecentSearches();
   const popular = usePopularTags();
-  const suggestions = useSuggestions(typed);
   const results = useSearchResults(submitted);
-  const showPanel = focused || submitted === null;
+  // The panel covers the results while typing, and also once the keyboard has gone (a drag
+  // on the list, a profile opened) as long as the text isn't what the results are for.
+  const showPanel = focused || submitted === null || typed !== submitted;
+  const canCancel = focused || typed !== (submitted ?? '');
+  const suggestions = useSuggestions(typed, showPanel);
   const impressions = useImpressions('search', !showPanel);
 
   useEffect(() => {
@@ -79,7 +82,7 @@ export default function SearchScreen() {
           setFocused(false);
         }}
         onCancel={
-          focused
+          canCancel
             ? () => {
                 leaveField();
                 setText(submitted ?? '');

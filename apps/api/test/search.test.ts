@@ -1,4 +1,4 @@
-import { sql } from '@outfitly/db';
+import { inArray, looks, sql } from '@outfitly/db';
 import {
   type FeedPage,
   feedPageSchema,
@@ -181,6 +181,51 @@ describe('search', () => {
     );
   });
 
+  it('does not widen a word it knows: "linen" never finds "lined"', async () => {
+    const lined = await createLook(ctx.db, { authorId: author, caption: 'Lined raincoat' });
+    await refreshSearchTerms(ctx.db);
+    expect(await found('linen')).toEqual(sorted('linenShirt', 'linenDress'));
+    expect(await found('linnen')).toEqual(sorted('linenShirt', 'linenDress'));
+    expect(await found('lined')).toEqual([lined]);
+  });
+
+  it('pages across different ranks and popularity in order, without repeats or gaps', async () => {
+    const inCaption = await createLooks(
+      ctx.db,
+      Array.from({ length: 12 }, (_, i) => ({
+        authorId: author,
+        caption: 'Corduroy jacket',
+        popularity: 0.5 - i / 100,
+      })),
+    );
+    const inAi = await createLooks(
+      ctx.db,
+      Array.from({ length: 13 }, (_, i) => ({
+        authorId: author,
+        caption: 'Brown jacket',
+        popularity: 0.9 - i / 100,
+      })),
+    );
+    await ctx.db.update(looks).set({ aiDescription: 'Corduroy' }).where(inArray(looks.id, inAi));
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await search('corduroy', cursor);
+      seen.push(...page.items.map((c) => c.id));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    // Caption matches first, each group most popular first.
+    expect(seen).toEqual([...inCaption, ...inAi]);
+  });
+
+  it('treats control characters as spaces (Postgres text cannot hold NUL)', async () => {
+    const res = await get('/v1/search/looks?q=linen%00');
+    expect(res.statusCode).toBe(200);
+    expect(feedPageSchema.parse(res.json()).items).toHaveLength(2);
+    expect((await get('/v1/search/suggest?q=abc%00')).statusCode).toBe(200);
+    expect((await get('/v1/search/suggest?q=%00')).statusCode).toBe(400);
+  });
+
   it('refuses an empty search, a bad cursor and too long a text', async () => {
     expect((await get('/v1/search/looks?q=%20')).statusCode).toBe(400);
     expect((await get('/v1/search/looks?q=linen&cursor=nope')).statusCode).toBe(400);
@@ -190,11 +235,23 @@ describe('search', () => {
 
 describe('suggestions', () => {
   it('complete the last word, most common first, keeping earlier words', async () => {
-    expect((await suggestions('lin')).terms).toEqual(['linen']);
+    expect((await suggestions('lin')).terms).toEqual(['linen', 'lined']);
     const s = (await suggestions('s')).terms;
     expect(s.slice(0, 2)).toEqual(['striped', 'sweater']);
     expect(s).toEqual(expect.arrayContaining(['summer', 'sommar', 'shirt', 'sandals']));
     expect((await suggestions('white lea')).terms).toEqual(['white leather']);
+  });
+
+  it('never offer links, emails or numbers with dots as words', async () => {
+    await createLook(ctx.db, {
+      authorId: author,
+      caption: 'Sizes at shop.com/linen-dress, ask x@y.se, fits 1.5 sizes up',
+    });
+    await refreshSearchTerms(ctx.db);
+    const { rows } = await ctx.db.execute<{ term: string }>(
+      sql`SELECT term FROM search_terms WHERE term ~ '[./@:]' OR term = 'sizes'`,
+    );
+    expect(rows.map((r) => r.term)).toEqual(['sizes']);
   });
 
   it('turn a typo into the real word, and never suggest small words', async () => {

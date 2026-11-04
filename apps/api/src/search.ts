@@ -66,6 +66,8 @@ export async function refreshSearchTerms(db: Db): Promise<{ changed: number; rem
         FROM looks l, unnest(l.search_vector) AS w
        WHERE ${showableLook(sql`l`)} AND l.published_at <= now()
          AND char_length(w.lexeme) >= 2 AND w.lexeme <> ALL(${textArray([...STOP_WORDS])})
+         -- Words, not links, emails, paths or numbers like 1.5 (the parser keeps those whole).
+         AND w.lexeme !~ '[./@:_]'
        GROUP BY w.lexeme
     ),
     tag_words AS (
@@ -99,9 +101,10 @@ export async function refreshSearchTerms(db: Db): Promise<{ changed: number; rem
 }
 
 /**
- * What else each typed word should find: vocabulary words that are the word
- * itself or similar to it (a typo, a plural), mapped to what looks are
- * searched for (a tag word gives its tag).
+ * What else each typed word should find, mapped to what looks are searched
+ * for (a tag word gives its tag): the word itself if the vocabulary has it,
+ * else similar words (a typo, a plural). A known word isn't widened, so
+ * "linen" doesn't also find "lined".
  */
 async function alternatives(db: Db, words: readonly string[]): Promise<Map<string, string[]>> {
   const { rows } = await db.execute<{ word: string; lexemes: string[] }>(sql`
@@ -111,6 +114,7 @@ async function alternatives(db: Db, words: readonly string[]): Promise<Map<strin
         SELECT s.lexeme FROM search_terms s
          WHERE s.term = w.word
             OR (char_length(w.word) >= ${TYPO_MIN_LENGTH}
+                AND NOT EXISTS (SELECT 1 FROM search_terms e WHERE e.term = w.word)
                 AND ${similar(sql`s.term`, sql`w.word`)}
                 AND ${similarity(sql`s.term`, sql`w.word`)} >= ${TYPO_SIMILARITY})
          ORDER BY s.term = w.word DESC, ${similarity(sql`s.term`, sql`w.word`)} DESC,
@@ -148,6 +152,8 @@ export function wordsQuery(
  * The last look of the previous page: its rank, popularity, publish time and
  * id. The rank is a decimal with RANK_DIGITS places, as text: Supabase prints
  * floats with 15 digits, so a float rank read back wouldn't equal itself.
+ * Popularity can stay a float because it is stored rounded to 4 decimals
+ * (`recomputePopularity`).
  */
 const RANK_DIGITS = 6;
 const cursorSchema = z.object({

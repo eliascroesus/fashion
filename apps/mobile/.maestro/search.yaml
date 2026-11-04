@@ -1,7 +1,7 @@
 # Search, logged out: popular tags before typing; a typo turns into the real word in the
 # suggestions; the results grid; a look opened and Back to the same results; the search kept
-# in recent searches; Cancel goes back to the results. Then the developer menu must show how
-# long the last suggestions took.
+# in recent searches; Cancel goes back to the results, also after the keyboard was dragged away.
+# Then the developer menu must show how long the last suggestions took.
 #   maestro test -e APP_ID=com.outfitly.app.dev apps/mobile/.maestro/search.yaml
 # SEARCH_TYPO / SEARCH_WORD: the typo to type and the word it should suggest.
 appId: ${APP_ID || 'com.outfitly.app'}
@@ -70,8 +70,30 @@ appId: ${APP_ID || 'com.outfitly.app'}
 - assertVisible:
     id: search-card
 
+# Typing more and dragging the suggestions (which closes the keyboard) keeps the suggestions
+# up, not the old results under the new text; Cancel still goes back.
+- tapOn:
+    id: search-input
+- inputText: ' coat'
+- extendedWaitUntil:
+    visible:
+      id: search-suggestions
+    timeout: 5000
+- swipe:
+    start: 50%, 60%
+    end: 50%, 40%
+- assertVisible:
+    id: search-suggestions
+- assertNotVisible:
+    id: search-card
+- tapOn:
+    id: search-cancel
+- assertVisible:
+    id: search-card
+
 # The developer menu: keystroke → suggestions on screen.
 - tapOn:
     id: tab-profile
 - assertVisible:
     id: dev-suggest
+- takeScreenshot: search/dev-menu

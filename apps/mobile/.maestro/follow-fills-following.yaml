@@ -1,9 +1,11 @@
-# Following someone fills the Following tab: sign in with the test login, find a poster through
-# search's people suggestions, open their profile (counts, looks), Follow, and Home → Following
-# shows their looks. Ends by unfollowing them again (synced), so the next run starts the same.
+# Following someone fills the Following tab: sign in with the test login (Following is empty),
+# search, open a look, tap its poster for their profile (counts, looks), Follow, and Home → Following
+# shows their looks. Ends by unfollowing them again through search's people suggestions
+# (synced), so the next run starts the same; a run that stopped halfway is undone at the start.
 #   maestro test -e APP_ID=com.outfitly.app.dev -e TEST_EMAIL=… -e TEST_PASSWORD=… \
 #     apps/mobile/.maestro/follow-fills-following.yaml
-# POSTER: what to type to find the poster (default outfitly, for @outfitly.picks).
+# POSTER: what to type to find the poster again (default outfitly, for @outfitly.picks, the only
+# poster on staging).
 appId: ${APP_ID || 'com.outfitly.app'}
 ---
 - launchApp:
@@ -20,28 +22,50 @@ appId: ${APP_ID || 'com.outfitly.app'}
 - runFlow: subflows/test-login.yaml
 
 # Following is empty to begin with (the test login follows nobody), and stays open on Home.
+# A run that stopped halfway may have left the follow on: undo it first.
 - tapOn:
     id: tab-home
 - tapOn:
     id: feed-switch-following
 - extendedWaitUntil:
     visible:
+      id: 'following-empty|feed-card'
+      childOf:
+        id: feed-following
+    timeout: 20000
+- runFlow:
+    when:
+      notVisible:
+        id: following-empty
+    file: subflows/unfollow-poster.yaml
+- tapOn:
+    id: tab-home
+- extendedWaitUntil:
+    visible:
       id: following-empty
     timeout: 20000
 
-# Find the poster and open their profile.
+# Open a look from search results and tap its poster for their profile (Home's Following
+# stays open). Search, not For You: the test login has seen most looks, so For You may be empty.
 - tapOn:
     id: tab-search
 - tapOn:
     id: search-input
-- inputText: ${POSTER || 'outfitly'}
+- inputText: ${LOOK_SEARCH || 'minimal'}
+- pressKey: Enter
 - extendedWaitUntil:
     visible:
-      id: search-person
+      id: search-card
+    timeout: 20000
+- tapOn:
+    id: search-card
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: look-author-open
     timeout: 10000
 - tapOn:
-    id: search-person
-    index: 0
+    id: look-author-open
 - extendedWaitUntil:
     visible:
       id: profile-header
@@ -53,19 +77,10 @@ appId: ${APP_ID || 'com.outfitly.app'}
       id: profile-card
     timeout: 10000
 
-# An earlier run that stopped halfway may have left the follow on: undo it first.
-# (Follow / Following is the button's "selected" state, as VoiceOver reads it.)
-- runFlow:
-    when:
-      visible:
-        id: profile-follow
-        selected: true
-    commands:
-      - tapOn:
-          id: profile-follow
-      - assertVisible:
-          id: profile-follow
-          selected: false
+# Follow / Following is the button's "selected" state, as VoiceOver reads it.
+- assertVisible:
+    id: profile-follow
+    selected: false
 - tapOn:
     id: profile-follow
 - assertVisible:
@@ -74,11 +89,15 @@ appId: ${APP_ID || 'com.outfitly.app'}
 - takeScreenshot: follow/profile-following
 - tapOn:
     id: profile-back
+- tapOn:
+    id: look-back
 - runFlow: subflows/wait-synced.yaml
 
-# Back on Home, the Following list that was empty now shows their looks (no pull to refresh).
+# The Following list that was empty now shows their looks (no pull to refresh).
 - tapOn:
     id: tab-home
+- tapOn:
+    id: feed-switch-following
 - extendedWaitUntil:
     visible:
       id: feed-card
@@ -88,30 +107,4 @@ appId: ${APP_ID || 'com.outfitly.app'}
 - takeScreenshot: follow/following-feed
 
 # Clean up: unfollow again and wait until the server has it.
-- tapOn:
-    id: tab-search
-- tapOn:
-    id: search-input
-- tapOn:
-    id: search-clear
-- inputText: ${POSTER || 'outfitly'}
-- extendedWaitUntil:
-    visible:
-      id: search-person
-    timeout: 10000
-- tapOn:
-    id: search-person
-    index: 0
-- extendedWaitUntil:
-    visible:
-      id: profile-follow
-      selected: true
-    timeout: 10000
-- tapOn:
-    id: profile-follow
-- assertVisible:
-    id: profile-follow
-    selected: false
-- tapOn:
-    id: profile-back
-- runFlow: subflows/wait-synced.yaml
+- runFlow: subflows/unfollow-poster.yaml

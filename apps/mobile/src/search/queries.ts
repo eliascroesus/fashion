@@ -32,18 +32,23 @@ export function useSearchResults(text: string | null): CardList {
   );
 }
 
+/** Suggestions are kept this long for backspacing, and not stored on the phone after that. */
+const SUGGEST_CACHE_MS = 5 * 60 * 1000;
+
 /**
- * Suggestions for what's being typed, asked for once typing pauses. The last
- * ones stay on screen while the next load; `forText` says which text they're for.
+ * Suggestions for what's being typed (while `shown`), asked for once typing
+ * pauses. The last ones stay on screen while the next load; `forText` says
+ * which text they're for.
  */
-export function useSuggestions(text: string) {
+export function useSuggestions(text: string, shown: boolean) {
   const settled = useSettled(text, SUGGEST_DELAY_MS);
   const query = useQuery({
     queryKey: suggestQueryKey(settled),
     queryFn: ({ signal }) => api.search.suggest(settled, signal),
-    enabled: settled.length > 0,
+    enabled: shown && settled.length > 0,
     placeholderData: keepPreviousData,
-    staleTime: 5 * 60 * 1000,
+    staleTime: SUGGEST_CACHE_MS,
+    gcTime: SUGGEST_CACHE_MS,
   });
   return {
     data: query.data,
