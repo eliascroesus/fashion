@@ -3,7 +3,7 @@ import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { createContext, type ReactNode, useContext, useEffect, useMemo } from 'react';
 import { api } from '../api';
-import { carryOverLoggedOutFeed } from '../feed/cache';
+import { carryOverLoggedOutData } from '../feed/cache';
 import { queryClient } from '../lib/query';
 import { forgetLocalSaves, outbox, refreshSavedLists, setGuestSessionStarter } from '../saves';
 import { useCaptchaToken } from './captcha';
@@ -21,8 +21,8 @@ function clearLocalSession(): void {
 }
 
 function signedIn(me: Me): void {
-  // Logged out → first login (the first save): the For You being scrolled carries on.
-  carryOverLoggedOutFeed(queryClient, getMe(), me);
+  // Logged out → first login (the first save): what's on screen carries on.
+  carryOverLoggedOutData(queryClient, getMe(), me);
   setMe(me);
 }
 

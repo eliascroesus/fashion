@@ -11,6 +11,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { setSaved, useIsSaved } from '../saves';
+import { justSaved } from '../saves/bounce';
 import { radii, spacing, useColors } from '../theme';
 
 interface SaveButtonProps {
@@ -25,15 +26,16 @@ export function SaveButton({ card, size = 34, testID = 'save-button' }: SaveButt
   const colors = useColors();
   const saved = useIsSaved(card.id, card.saved);
   const scale = useSharedValue(1);
-  const wasSaved = useRef(saved);
+  const shown = useRef({ lookId: card.id, saved });
 
   // Bounce when it becomes saved (also after a double-tap on the photo).
   useEffect(() => {
-    if (saved && !wasSaved.current) {
+    const now = { lookId: card.id, saved };
+    if (justSaved(shown.current, now)) {
       scale.value = withSequence(withTiming(1.3, { duration: 110 }), withSpring(1));
     }
-    wasSaved.current = saved;
-  }, [saved, scale]);
+    shown.current = now;
+  }, [card.id, saved, scale]);
   const animated = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
 
   return (

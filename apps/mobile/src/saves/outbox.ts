@@ -14,7 +14,9 @@ export type SaveAction =
   | { kind: 'unsave'; lookId: string }
   | { kind: 'board-add'; boardId: string; lookId: string; card?: FeedCard }
   | { kind: 'board-remove'; boardId: string; lookId: string }
-  | { kind: 'see-less'; lookId: string };
+  | { kind: 'see-less'; lookId: string }
+  | { kind: 'follow'; profileId: string }
+  | { kind: 'unfollow'; profileId: string };
 
 export interface PendingAction {
   /** Also the request's Idempotency-Key: every retry of this action reuses it. */
@@ -58,6 +60,7 @@ export interface OutboxDeps {
 export interface OutboxView {
   version: number;
   savedState: (lookId: string) => boolean | undefined;
+  followState: (profileId: string) => boolean | undefined;
   boardState: (boardId: string, lookId: string) => boolean | undefined;
   waitingCards: (boardId?: string) => FeedCard[];
 }
@@ -111,6 +114,7 @@ export class Outbox {
       this.cachedView = {
         version: this.changes,
         savedState: (lookId) => this.savedState(lookId),
+        followState: (profileId) => this.followState(profileId),
         boardState: (boardId, lookId) => this.boardState(boardId, lookId),
         waitingCards: (boardId) => this.waitingCards(boardId),
       };
@@ -135,7 +139,7 @@ export class Outbox {
   savedState(lookId: string): boolean | undefined {
     let saved: boolean | undefined;
     for (const { action } of this.pending) {
-      if (action.lookId !== lookId) continue;
+      if (!('lookId' in action) || action.lookId !== lookId) continue;
       if (action.kind === 'save' || action.kind === 'board-add') saved = true;
       else if (action.kind === 'unsave') saved = false;
     }
@@ -146,12 +150,22 @@ export class Outbox {
   boardState(boardId: string, lookId: string): boolean | undefined {
     let inBoard: boolean | undefined;
     for (const { action } of this.pending) {
-      if (action.lookId !== lookId) continue;
+      if (!('lookId' in action) || action.lookId !== lookId) continue;
       if (action.kind === 'unsave') inBoard = false;
       else if (action.kind === 'board-add' && action.boardId === boardId) inBoard = true;
       else if (action.kind === 'board-remove' && action.boardId === boardId) inBoard = false;
     }
     return inBoard;
+  }
+
+  /** Whether the profile will be followed once everything is sent, or undefined when nothing waiting changes it. */
+  followState(profileId: string): boolean | undefined {
+    let following: boolean | undefined;
+    for (const { action } of this.pending) {
+      if (!('profileId' in action) || action.profileId !== profileId) continue;
+      following = action.kind === 'follow';
+    }
+    return following;
   }
 
   /**

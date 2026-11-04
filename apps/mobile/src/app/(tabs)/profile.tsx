@@ -12,6 +12,7 @@ import {
   useDevMenu,
   usePretendOffline,
 } from '../../lib/dev';
+import { useLastLookOpenMs } from '../../looks/open-timing';
 import { outbox, sendWaiting, useWaitingCount } from '../../saves';
 import { Screen, spacing, ThemedText, useColors } from '../../theme';
 
@@ -26,6 +27,7 @@ export default function ProfileScreen() {
   const devMenu = useDevMenu();
   const pretendOffline = usePretendOffline();
   const waiting = useWaitingCount();
+  const lastLookOpenMs = useLastLookOpenMs();
   const [busy, setBusy] = useState(false);
   const profile = me?.profiles.find((p) => p.id === me.activeProfileId);
 
@@ -111,6 +113,11 @@ export default function ProfileScreen() {
           <ThemedText tone="muted" testID="dev-waiting">
             {t('profile.waiting', { count: waiting })}
           </ThemedText>
+          {lastLookOpenMs === null ? null : (
+            <ThemedText tone="muted" testID="dev-look-open">
+              {t('profile.lastLookOpen', { ms: lastLookOpenMs })}
+            </ThemedText>
+          )}
           {DEV_TOOLS ? (
             <View style={styles.row}>
               <ThemedText nativeID="pretend-offline-label">

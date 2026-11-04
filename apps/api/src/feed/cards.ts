@@ -40,6 +40,36 @@ export function showableLook(look: SQL): SQL {
           WHERE lm.look_id = ${look}.id AND lm.position = 0)`;
 }
 
+/** A photo's columns as stored (nullable until it's ready). */
+export interface PhotoColumns {
+  width: number | null;
+  height: number | null;
+  thumbhash: string | null;
+  dominantColor: string | null;
+  key1080: string | null;
+  key600: string | null;
+  key300: string | null;
+}
+
+/** The public photo (sizes and links) of a ready photo; null if it isn't complete. */
+export function toPhoto(storage: PhotoStorage, columns: PhotoColumns): FeedCard['photo'] | null {
+  const { width, height, thumbhash, dominantColor, key1080, key600, key300 } = columns;
+  // A ready photo always has these (media_ready_is_complete); this satisfies the types.
+  if (!width || !height || !thumbhash || !dominantColor) return null;
+  if (!key1080 || !key600 || !key300) return null;
+  return {
+    width,
+    height,
+    thumbhash,
+    dominantColor,
+    urls: {
+      1080: storage.publicUrl(key1080),
+      600: storage.publicUrl(key600),
+      300: storage.publicUrl(key300),
+    },
+  };
+}
+
 /** Which of these looks the profile has saved (none when logged out). */
 async function savedAmong(
   db: Db,
@@ -94,24 +124,13 @@ export async function loadCards(
       and(inArray(looks.id, [...ids]), eq(looks.status, 'published'), isNull(looks.deletedAt)),
     );
   const [rows, saved] = await Promise.all([rowsQuery, savedAmong(db, viewerProfileId, ids)]);
-  for (const { id, authorId, width, height, thumbhash, dominantColor, ...keys } of rows) {
-    // A ready photo always has these (media_ready_is_complete); this satisfies the types.
-    if (!width || !height || !thumbhash || !dominantColor) continue;
-    if (!keys.key1080 || !keys.key600 || !keys.key300) continue;
+  for (const { id, authorId, ...columns } of rows) {
+    const photo = toPhoto(storage, columns);
+    if (!photo) continue;
     cards.set(id, {
       id,
       authorId,
-      photo: {
-        width,
-        height,
-        thumbhash,
-        dominantColor,
-        urls: {
-          1080: storage.publicUrl(keys.key1080),
-          600: storage.publicUrl(keys.key600),
-          300: storage.publicUrl(keys.key300),
-        },
-      },
+      photo,
       itemCount: 0, // Shoppable pieces arrive with products (Phase 3).
       saved: saved.has(id),
     });

@@ -1,8 +1,17 @@
-import { InfiniteQueryObserver, QueryClient } from '@tanstack/react-query';
+import type { FeedPage } from '@outfitly/shared';
+import { type InfiniteData, InfiniteQueryObserver, QueryClient } from '@tanstack/react-query';
 import { themes } from '@outfitly/ui-tokens';
 import { describe, expect, it } from 'vitest';
-import { carryOverLoggedOutFeed, findCachedCard, replaceFeed } from './cache';
-import { feedQueryKey } from './keys';
+import { lookQueryKey, similarQueryKey } from '../looks/keys';
+import { removeFromLists, setSavedInLists } from '../saves/cache';
+import {
+  carryOverLoggedOutData,
+  findCachedCard,
+  listIdentity,
+  replaceFeed,
+  startList,
+} from './cache';
+import { FEED_QUERY_ROOT, feedQueryKey } from './keys';
 
 const card = (id: string) => ({
   id,
@@ -70,7 +79,7 @@ describe('replaceFeed', () => {
   });
 });
 
-describe('carryOverLoggedOutFeed', () => {
+describe('carryOverLoggedOutData', () => {
   const me = (profileId: string | null) => ({
     userId: '00000000-0000-4000-8000-000000000001',
     isAnonymous: true,
@@ -82,7 +91,7 @@ describe('carryOverLoggedOutFeed', () => {
   it('moves the logged-out For You to the first profile, unchanged', () => {
     const client = new QueryClient();
     client.setQueryData(feedQueryKey('for-you', null), feed, { updatedAt: 1234 });
-    carryOverLoggedOutFeed(client, null, me('p1'));
+    carryOverLoggedOutData(client, null, me('p1'));
     expect(client.getQueryData(feedQueryKey('for-you', 'p1'))).toBe(feed);
     expect(client.getQueryState(feedQueryKey('for-you', 'p1'))?.dataUpdatedAt).toBe(1234);
   });
@@ -92,16 +101,78 @@ describe('carryOverLoggedOutFeed', () => {
     client.setQueryData(feedQueryKey('for-you', null), feed);
     const own = { pages: [], pageParams: [] };
     client.setQueryData(feedQueryKey('for-you', 'p1'), own);
-    carryOverLoggedOutFeed(client, null, me('p1'));
+    carryOverLoggedOutData(client, null, me('p1'));
     expect(client.getQueryData(feedQueryKey('for-you', 'p1'))).toBe(own);
-    carryOverLoggedOutFeed(client, me('p1'), me('p2'));
+    carryOverLoggedOutData(client, me('p1'), me('p2'));
     expect(client.getQueryData(feedQueryKey('for-you', 'p2'))).toBeUndefined();
   });
 
   it('gives a sign-in to an existing account its own feed, not the logged-out one', () => {
     const client = new QueryClient();
     client.setQueryData(feedQueryKey('for-you', null), feed);
-    carryOverLoggedOutFeed(client, null, { ...me('account'), isAnonymous: false });
+    carryOverLoggedOutData(client, null, { ...me('account'), isAnonymous: false });
     expect(client.getQueryData(feedQueryKey('for-you', 'account'))).toBeUndefined();
+  });
+
+  it('keeps an open look page and its "More like this" through the first save', () => {
+    const client = new QueryClient();
+    const detail = { id: 'look-1' };
+    client.setQueryData(lookQueryKey(null, 'look-1'), detail, { updatedAt: 99 });
+    client.setQueryData(similarQueryKey(null, 'look-1'), feed);
+    carryOverLoggedOutData(client, null, me('guest'));
+    expect(client.getQueryData(lookQueryKey('guest', 'look-1'))).toBe(detail);
+    expect(client.getQueryState(lookQueryKey('guest', 'look-1'))?.dataUpdatedAt).toBe(99);
+    expect(client.getQueryData(similarQueryKey('guest', 'look-1'))).toBe(feed);
+  });
+});
+
+describe('listIdentity', () => {
+  const key = feedQueryKey('for-you', 'p');
+  const firstPage = (client: QueryClient) =>
+    client.getQueryData<InfiniteData<FeedPage, string | null>>(key)?.pages[0];
+  const withList = (client: QueryClient) => {
+    client.setQueryData(key, {
+      pages: [
+        startList({ items: [card('a'), card('b')], nextCursor: 'x' }),
+        { items: [card('c')], nextCursor: null },
+      ],
+      pageParams: [null, 'x'],
+    });
+    return listIdentity(firstPage(client));
+  };
+
+  it('stays the same when a look on the first page is saved (the grid keeps its place)', () => {
+    const client = new QueryClient();
+    const before = withList(client);
+    const page = firstPage(client);
+    setSavedInLists(client, 'b', true);
+    expect(firstPage(client)).not.toBe(page);
+    expect(listIdentity(firstPage(client))).toBe(before);
+  });
+
+  it('stays the same when a look on the first page is hidden ("see less")', () => {
+    const client = new QueryClient();
+    const before = withList(client);
+    removeFromLists(client, [FEED_QUERY_ROOT], 'a');
+    expect(firstPage(client)?.items.map((c) => c.id)).toEqual(['b']);
+    expect(listIdentity(firstPage(client))).toBe(before);
+  });
+
+  it('changes for a new list, even one with the same looks', async () => {
+    const client = new QueryClient();
+    const before = withList(client);
+    await replaceFeed(client, key, startList({ items: [card('a'), card('b')], nextCursor: 'x' }));
+    expect(listIdentity(firstPage(client))).toBeDefined();
+    expect(listIdentity(firstPage(client))).not.toBe(before);
+  });
+
+  it('survives being stored on the phone (JSON)', () => {
+    const page = startList({ items: [card('a')], nextCursor: null });
+    const stored = JSON.parse(JSON.stringify(page)) as FeedPage;
+    expect(listIdentity(stored)).toBe(listIdentity(page));
+  });
+
+  it('is undefined before the first page arrives', () => {
+    expect(listIdentity(undefined)).toBeUndefined();
   });
 });

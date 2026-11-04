@@ -1,0 +1,52 @@
+# Saving a look doesn't move Home: scroll a little, save a look and unsave it again (each
+# reaching the server), and Home must look as before (`home-saved-before` / `home-saved-after`):
+#   apps/mobile/.maestro/same-place.sh <maestro test output folder> home-saved-before home-saved-after
+#
+# Signs in with the test login, like save-sign-up.yaml:
+#   maestro test -e APP_ID=com.outfitly.app.dev -e TEST_EMAIL=… -e TEST_PASSWORD=… \
+#     apps/mobile/.maestro/save-keeps-place.yaml
+appId: ${APP_ID || 'com.outfitly.app'}
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: tab-profile
+- longPressOn:
+    id: profile-title
+- assertVisible:
+    id: dev-menu
+- tapOn:
+    id: profile-sign-in
+- runFlow: subflows/test-login.yaml
+
+# A short, slow drag: the cards on screen are still from the first page of the list.
+- tapOn:
+    id: tab-home
+- extendedWaitUntil:
+    visible:
+      id: feed-card
+    timeout: 20000
+- swipe:
+    start: 50%, 70%
+    end: 50%, 45%
+    duration: 900
+- waitForAnimationToEnd
+- takeScreenshot: home-saved-before
+
+# Save, then unsave the same look (the grid must not have moved in between).
+- tapOn:
+    id: feed-card-save
+    below:
+      id: feed-switch-for-you
+- runFlow: subflows/wait-synced.yaml
+- tapOn:
+    id: tab-home
+- tapOn:
+    id: feed-card-save
+    below:
+      id: feed-switch-for-you
+- runFlow: subflows/wait-synced.yaml
+- tapOn:
+    id: tab-home
+- waitForAnimationToEnd
+- takeScreenshot: home-saved-after

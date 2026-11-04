@@ -1,0 +1,94 @@
+# The look page: open a look from Home (its photo is already cached from the grid), check
+# what the page shows, follow "More like this" one level deeper, and come back.
+#   maestro test -e APP_ID=com.outfitly.app.dev apps/mobile/.maestro/look-page.yaml
+# It saves two screenshots of Home, before opening and after Back (look-page/home-before,
+# look-page/home-after): `apps/mobile/.maestro/same-place.sh` checks they are identical.
+# Needs looks with tags and several photos on the server the build talks to.
+appId: ${APP_ID || 'com.outfitly.app'}
+---
+- launchApp:
+    clearState: true
+# The developer menu shows how long the last look took to open.
+- tapOn:
+    id: tab-profile
+- longPressOn:
+    id: profile-title
+- tapOn:
+    id: tab-home
+- extendedWaitUntil:
+    visible:
+      id: feed-card
+    timeout: 20000
+# Somewhere down the feed, so "back keeps your place" means something.
+- repeat:
+    times: 3
+    commands:
+      - swipe:
+          start: 50%, 75%
+          end: 50%, 35%
+          duration: 400
+- waitForAnimationToEnd:
+    timeout: 5000
+- takeScreenshot: look-page/home-before
+
+# Open a look (left column, clear of the save button).
+- tapOn:
+    point: 25%, 45%
+- extendedWaitUntil:
+    visible:
+      id: look-author
+    timeout: 10000
+- assertVisible:
+    id: look-follow
+- assertVisible:
+    id: look-caption
+# Swipe to the next photo (looks with one photo have no dots).
+- runFlow:
+    when:
+      visible:
+        id: look-photo-dots
+    commands:
+      - swipe:
+          start: 85%, 30%
+          end: 10%, 30%
+          duration: 300
+      - assertVisible:
+          id: look-photo-1
+# Down to the shop placeholder, then "More like this" (one at a time: a single fling can
+# carry the page past the placeholder).
+- scrollUntilVisible:
+    element:
+      id: shop-placeholder
+    direction: DOWN
+- scrollUntilVisible:
+    element:
+      id: similar-card
+    direction: DOWN
+
+# One level deeper, then back twice.
+- tapOn:
+    id: similar-card
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: look-author
+    timeout: 10000
+- tapOn:
+    id: look-back
+# Back on the first look, where we left it.
+- assertVisible:
+    id: similar-card
+- tapOn:
+    id: look-back
+- assertVisible:
+    id: screen-home
+- waitForAnimationToEnd:
+    timeout: 5000
+- takeScreenshot: look-page/home-after
+
+# The last look (opened from "More like this", photo cached) took under 400 ms.
+- tapOn:
+    id: tab-profile
+- assertVisible:
+    id: dev-look-open
+    text: 'Last look open: ([0-9]|[1-9][0-9]|[1-3][0-9][0-9]) ms'

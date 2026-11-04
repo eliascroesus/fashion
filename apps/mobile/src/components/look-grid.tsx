@@ -33,12 +33,17 @@ import {
   pickPhotoUrl,
   shouldLoadMore,
 } from '../feed/layout';
-import type { CardList } from '../saves/queries';
+import type { CardList } from '../feed/card-list';
 import { grid, spacing, ThemedText, useColors } from '../theme';
 import { FeedCard as FeedCardView } from './feed-card';
 import { FeedMessage } from './feed-message';
 
 const METRICS: GridMetrics = { columns: grid.columns, gap: grid.gap, inset: grid.inset };
+
+/** The photo a grid card on this screen loads (so a look page can reuse the cached copy). */
+export function gridPhotoUrl(urls: FeedCard['photo']['urls'], screenWidth: number): string {
+  return pickPhotoUrl(urls, PixelRatio.getPixelSizeForLayoutSize(cardWidth(screenWidth, METRICS)));
+}
 
 /**
  * "On screen" = at least half of the card visible, reported as soon as it
@@ -72,13 +77,15 @@ interface LookGridProps {
   onScrollBeginDrag?: () => void;
   /** Under the last card once the list has ended (default "You're all caught up"); null for none. */
   endMessage?: string | null;
+  /** Pull to refresh (off on the look page, where pulling down may close an iOS zoom). */
+  refreshable?: boolean;
 }
 
 /**
  * Looks as a two-column masonry grid: sizes known before photos load, the
  * next page 60% of the way into the current one, photos for the next two
- * screens fetched ahead, pull to refresh. Tap opens a look; press and hold
- * opens its menu.
+ * screens fetched ahead, pull to refresh. Tap opens a look (FeedCard); press
+ * and hold opens its menu.
  */
 export function LookGrid({
   list,
@@ -91,6 +98,7 @@ export function LookGrid({
   onReset,
   onScrollBeginDrag,
   endMessage,
+  refreshable = true,
 }: LookGridProps) {
   const { t } = useTranslation();
   const colors = useColors();
@@ -153,9 +161,6 @@ export function LookGrid({
     if (shouldLoadMore(furthest, cards.length)) loadMore();
   };
 
-  const openLook = useCallback((id: string) => {
-    router.push({ pathname: '/look/[id]', params: { id } });
-  }, []);
   const openMenu = useCallback((id: string) => {
     router.push({ pathname: '/look-menu/[id]', params: { id } });
   }, []);
@@ -168,13 +173,12 @@ export function LookGrid({
           width={width}
           height={photoHeight(item.photo, width)}
           uri={pickPhotoUrl(item.photo.urls, widthPx)}
-          onOpen={openLook}
           onMenu={openMenu}
           testID={cardTestID}
         />
       </View>
     ),
-    [width, widthPx, openLook, openMenu, cardTestID],
+    [width, widthPx, openMenu, cardTestID],
   );
 
   let footer: ReactElement | null = null;
@@ -228,13 +232,15 @@ export function LookGrid({
         viewport.current = e.nativeEvent.layout.height;
       }}
       refreshControl={
-        <RefreshControl
-          refreshing={list.refreshing}
-          onRefresh={() => void list.refresh()}
-          tintColor={colors.textMuted}
-          colors={[colors.accent]}
-          progressBackgroundColor={colors.surface}
-        />
+        refreshable ? (
+          <RefreshControl
+            refreshing={list.refreshing}
+            onRefresh={() => void list.refresh()}
+            tintColor={colors.textMuted}
+            colors={[colors.accent]}
+            progressBackgroundColor={colors.surface}
+          />
+        ) : undefined
       }
       // iOS: keeps the last cards clear of the floating tab bar.
       contentInsetAdjustmentBehavior="automatic"

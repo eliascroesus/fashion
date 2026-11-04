@@ -1,16 +1,10 @@
 import type { Board, FeedCard, FeedPage } from '@outfitly/shared';
-import {
-  type QueryKey,
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query';
+import { type QueryKey, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { randomUUID } from 'expo-crypto';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { api, ApiRequestError } from '../api';
 import { useMe } from '../auth/store';
-import { dedupeCards } from '../feed/layout';
+import { type CardList, usePagedCards } from '../feed/card-list';
 import { useOutboxView } from './index';
 import {
   BOARD_LOOKS_QUERY_ROOT,
@@ -19,22 +13,6 @@ import {
   boardsQueryKey,
   savesQueryKey,
 } from './keys';
-
-/** What a look grid needs from a paged list of cards. */
-export interface CardList {
-  cards: FeedCard[];
-  isPending: boolean;
-  /** The first page failed and nothing is cached to show instead. */
-  isError: boolean;
-  hasNextPage: boolean;
-  isFetchingNextPage: boolean;
-  isFetchNextPageError: boolean;
-  loadMore: () => void;
-  retryNextPage: () => void;
-  retry: () => void;
-  refreshing: boolean;
-  refresh: () => Promise<void>;
-}
 
 /**
  * A saved list (Saves, or a board's looks), as it will be once everything
@@ -45,58 +23,21 @@ function useSavedList(
   fetchPage: (cursor: string | undefined, signal: AbortSignal) => Promise<FeedPage>,
   options: { enabled: boolean; boardId?: string },
 ): CardList {
-  const query = useInfiniteQuery({
-    queryKey,
-    queryFn: ({ pageParam, signal }) => fetchPage(pageParam ?? undefined, signal),
-    initialPageParam: null as string | null,
-    getNextPageParam: (last) => last.nextCursor,
-    enabled: options.enabled,
-  });
   const waiting = useOutboxView();
   const { boardId } = options;
-  const cards = useMemo(() => {
-    const kept = dedupeCards(query.data?.pages ?? []).filter((card) =>
-      boardId === undefined
-        ? (waiting.savedState(card.id) ?? card.saved)
-        : (waiting.boardState(boardId, card.id) ?? true),
-    );
-    const listed = new Set(kept.map((c) => c.id));
-    return [...waiting.waitingCards(boardId).filter((c) => !listed.has(c.id)), ...kept];
-  }, [query.data, waiting, boardId]);
-
-  const [refreshing, setRefreshing] = useState(false);
-  const { refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } = query;
-  const { enabled } = options;
-  const refresh = useCallback(async () => {
-    // Logged out there is nothing on the server yet (refetch would ignore `enabled`).
-    if (!enabled) return;
-    setRefreshing(true);
-    try {
-      await refetch();
-    } finally {
-      setRefreshing(false);
-    }
-  }, [refetch, enabled]);
-  const loadMore = useCallback(() => {
-    if (hasNextPage && !isFetchingNextPage && !isFetchNextPageError) void fetchNextPage();
-  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
-
-  return {
-    cards,
-    // Logged out there is nothing to load: not "loading".
-    isPending: enabled && query.isPending,
-    isError: query.isError && !query.data,
-    hasNextPage,
-    isFetchingNextPage,
-    isFetchNextPageError,
-    loadMore,
-    retryNextPage: () => void fetchNextPage(),
-    retry: () => {
-      if (enabled) void refetch();
+  const adjust = useCallback(
+    (cards: FeedCard[]) => {
+      const kept = cards.filter((card) =>
+        boardId === undefined
+          ? (waiting.savedState(card.id) ?? card.saved)
+          : (waiting.boardState(boardId, card.id) ?? true),
+      );
+      const listed = new Set(kept.map((c) => c.id));
+      return [...waiting.waitingCards(boardId).filter((c) => !listed.has(c.id)), ...kept];
     },
-    refreshing,
-    refresh,
-  };
+    [waiting, boardId],
+  );
+  return usePagedCards(queryKey, fetchPage, options.enabled, adjust);
 }
 
 /** Everything the active profile saved, newest first. */
