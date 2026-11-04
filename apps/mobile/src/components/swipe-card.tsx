@@ -44,13 +44,21 @@ export const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function Sw
 ) {
   const { width: screenWidth } = useWindowDimensions();
   const x = useSharedValue(0);
+  /** Picked and flying off: further drags and taps belong to the next card, not this one. */
+  const gone = useSharedValue(false);
   const offscreen = screenWidth * 1.5;
 
   const throwOff = (direction: SwipeDirection) => {
     'worklet';
-    x.value = withTiming(direction === 'like' ? offscreen : -offscreen, { duration: 220 }, () => {
-      scheduleOnRN(onSwiped, direction);
-    });
+    if (gone.value) return;
+    gone.value = true;
+    x.value = withTiming(
+      direction === 'like' ? offscreen : -offscreen,
+      { duration: 220 },
+      (finished) => {
+        if (finished) scheduleOnRN(onSwiped, direction);
+      },
+    );
   };
 
   useImperativeHandle(ref, () => ({ swipe: throwOff }));
@@ -59,10 +67,12 @@ export const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function Sw
     activeOffsetX: [-8, 8],
     onUpdate: (event) => {
       'worklet';
+      if (gone.value) return;
       x.value = event.translationX;
     },
     onDeactivate: (event) => {
       'worklet';
+      if (gone.value) return;
       const far = Math.abs(event.translationX) > screenWidth * PICK_DISTANCE;
       const fast = Math.abs(event.velocityX) > PICK_SPEED;
       if (far || fast) throwOff(event.translationX + event.velocityX * 0.1 > 0 ? 'like' : 'pass');

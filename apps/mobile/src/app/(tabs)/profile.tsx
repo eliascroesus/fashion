@@ -125,12 +125,14 @@ export default function ProfileScreen() {
               {t('profile.tasteTime', { seconds: (pickerMs / 1000).toFixed(1) })}
             </ThemedText>
           )}
-          <Button
-            testID="dev-taste-again"
-            variant="secondary"
-            label={t('profile.tasteAgain')}
-            onPress={showPickerAgain}
-          />
+          {DEV_TOOLS ? (
+            <Button
+              testID="dev-taste-again"
+              variant="secondary"
+              label={t('profile.tasteAgain')}
+              onPress={showPickerAgain}
+            />
+          ) : null}
           {DEV_TOOLS ? (
             <View style={styles.row}>
               <ThemedText nativeID="pretend-offline-label">

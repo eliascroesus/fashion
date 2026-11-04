@@ -12,10 +12,13 @@ export const PICKER_LOOKS = 10;
  * out) wins. Changing it later is a separate edit (Later).
  */
 export async function saveTaste(db: Db, profileId: string, taste: Taste): Promise<Taste> {
-  await db
-    .insert(tasteProfiles)
-    .values({ profileId, styles: taste.styles, brands: taste.brands })
-    .onConflictDoNothing({ target: tasteProfiles.profileId });
+  // Nothing picked stores nothing, so it never blocks real picks later.
+  if (taste.styles.length > 0 || taste.brands.length > 0) {
+    await db
+      .insert(tasteProfiles)
+      .values({ profileId, styles: taste.styles, brands: taste.brands })
+      .onConflictDoNothing({ target: tasteProfiles.profileId });
+  }
   const [stored] = await db
     .select({ styles: tasteProfiles.styles, brands: tasteProfiles.brands })
     .from(tasteProfiles)

@@ -135,7 +135,7 @@ async function seeLessKeys({ db }: FeedDeps, profileId: string | null): Promise<
 }
 
 /**
- * Styles the taste pool matches: the profile's stored taste when it has one,
+ * Styles the taste pool matches: the profile's stored styles when it has any,
  * else the ones the phone sent (logged out, or before its picks are uploaded).
  * Values no longer in STYLES are dropped.
  */
@@ -149,7 +149,8 @@ async function tasteStyles(
       .select({ styles: tasteProfiles.styles })
       .from(tasteProfiles)
       .where(eq(tasteProfiles.profileId, profileId));
-    if (stored) return knownStyles(stored.styles);
+    const styles = knownStyles(stored?.styles ?? []);
+    if (styles.length > 0) return styles;
   }
   return knownStyles(sent);
 }

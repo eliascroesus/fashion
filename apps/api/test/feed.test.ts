@@ -10,6 +10,7 @@ import {
   profiles,
   seen,
   sql,
+  swipes,
   tasteProfiles,
 } from '@outfitly/db';
 import {
@@ -397,6 +398,14 @@ describe('GET /v1/feed/for-you, taste picker styles', () => {
     }
   });
 
+  it("uses the phone's styles when the stored taste has none (brands only)", async () => {
+    const { token, profileId } = await viewer();
+    await ctx.db.insert(tasteProfiles).values({ profileId, styles: [], brands: ['cos'] });
+    expect(
+      await inStyle(await firstPageWith('streetwear', token), 'streetwear'),
+    ).toBeGreaterThanOrEqual(11);
+  });
+
   it("uses the phone's styles until the profile has a taste, then the stored one", async () => {
     const { token, profileId } = await viewer();
     expect(
@@ -448,9 +457,11 @@ describe('GET /v1/feed/for-you, taste picker styles', () => {
       .returning({ id: feedSnapshots.id });
     try {
       const reused = await firstPageWith('sporty');
-      expect(snapshotIdOf(reused.nextCursor ?? encodeCursor({ s: older?.id, i: 0 }))).toBe(
-        older?.id,
-      );
+      const [olderList] = await ctx.db
+        .select({ lookIds: feedSnapshots.lookIds })
+        .from(feedSnapshots)
+        .where(eq(feedSnapshots.id, older?.id ?? ''));
+      expect(reused.items.map((i) => i.id)).toEqual(olderList?.lookIds.slice(0, FEED_PAGE_SIZE));
       expect(await listsFor('sporty')).toBe(1);
 
       const fallback = await firstPageWith('edgy,romantic');
@@ -483,6 +494,12 @@ describe('GET /v1/feed/for-you, when few unseen looks are left', () => {
       .limit(40);
     const longAgo = new Set(catalogue.slice(0, 30).map((r) => r.id));
     const recent = new Set(catalogue.slice(30).map((r) => r.id));
+    // Seen days ago too, but never to come back: hidden since, your own, and "see less".
+    const hiddenSince = await createLook(ctx.db, { authorId: authors[2] ?? '', status: 'hidden' });
+    const own = await createLook(ctx.db, { authorId: profileId });
+    const lessLike = catalogue[0]?.id ?? '';
+    await ctx.db.insert(swipes).values({ profileId, lookId: lessLike, kind: 'see_less' });
+    allIds.push(hiddenSince, own);
     // Everything was seen within the week: nothing is unseen any more.
     await ctx.db.insert(seen).values(
       allIds.map((lookId) => ({
@@ -501,10 +518,11 @@ describe('GET /v1/feed/for-you, when few unseen looks are left', () => {
     expect(pages[0]?.items).toHaveLength(FEED_PAGE_SIZE);
     expect(shown.length).toBeGreaterThanOrEqual(FEED_RULES.snapshotSize);
     expect(shown.some((id) => recent.has(id))).toBe(false);
+    for (const never of [hiddenSince, own, lessLike]) expect(shown).not.toContain(never);
     expect(new Set(shown).size).toBe(shown.length);
     // Seen longest ago comes first (the diversity rules may move a few).
     const firstPage = pages[0]?.items.map((i) => i.id) ?? [];
-    expect(firstPage.filter((id) => longAgo.has(id)).length).toBeGreaterThanOrEqual(15);
+    expect(firstPage.filter((id) => longAgo.has(id)).length).toBeGreaterThanOrEqual(14);
     expect(diversityViolations(await candidatesFor(ctx.db, shown))).toEqual([]);
   });
 });

@@ -158,6 +158,7 @@
     "like": "Gilla",
     "pass": "Inte för mig",
     "lookLabel": "Look {{index}} av {{total}}",
+    "progress": "{{current}} / {{total}}",
     "skip": "Hoppa över",
     "chipsTitle": "Välj dina stilar",
     "chipsHint": "Vi har kryssat i stilarna från looksen du gillade. Ändra som du vill.",

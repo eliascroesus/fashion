@@ -95,9 +95,15 @@ export default function TasteScreen() {
   const swiping =
     step === 'swipe' && !tooSlow && !looks.isError && !(looks.isSuccess && items.length === 0);
 
-  const elapsed = () => Date.now() - startedAt.current;
+  /** Done or Skip happened (a quick second tap mustn't queue the answers twice). */
+  const finished = useRef(false);
+  const finish = (answers: Parameters<typeof finishPicker>[0]) => {
+    if (finished.current) return;
+    finished.current = true;
+    finishPicker(answers, Date.now() - startedAt.current);
+  };
   const skip = () => {
-    finishPicker(null, elapsed());
+    finish(null);
   };
 
   return (
@@ -138,7 +144,7 @@ export default function TasteScreen() {
             setBrands((current) => toggle(current, brand));
           }}
           onDone={() => {
-            finishPicker({ styles, brands }, elapsed());
+            finish({ styles, brands });
           }}
         />
       )}
@@ -228,7 +234,7 @@ function SwipeStep({
           }}
         />
         <ThemedText tone="muted" style={layout.progress}>
-          {current ? `${String(index + 1)} / ${String(items.length)}` : ''}
+          {current ? t('taste.progress', { current: index + 1, total: items.length }) : ''}
         </ThemedText>
         <RoundButton
           testID="taste-like"

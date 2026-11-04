@@ -158,6 +158,7 @@
     "like": "Like",
     "pass": "Not for me",
     "lookLabel": "Look {{index}} of {{total}}",
+    "progress": "{{current}} / {{total}}",
     "skip": "Skip",
     "chipsTitle": "Pick your styles",
     "chipsHint": "We've ticked the styles of the looks you liked. Change them as you like.",

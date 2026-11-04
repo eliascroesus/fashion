@@ -8,6 +8,7 @@ import { buildTestApp, createTestContext, type TestContext } from './helpers.ts'
 
 let ctx: TestContext;
 let app: FastifyInstance;
+let draftId = '';
 
 beforeAll(async () => {
   ctx = await createTestContext();
@@ -25,7 +26,7 @@ beforeAll(async () => {
       })),
     ),
   );
-  await createLooks(ctx.db, [
+  [draftId = ''] = await createLooks(ctx.db, [
     { authorId: authors[0] ?? '', styles: ['streetwear'], popularity: 5, status: 'draft' },
   ]);
 });
@@ -90,6 +91,19 @@ describe('PUT /v1/taste', () => {
     expect(await ctx.db.$count(tasteProfiles, eq(tasteProfiles.profileId, profileId))).toBe(1);
   });
 
+  it('stores nothing for an empty pick, so later picks still count', async () => {
+    const { token, profileId } = await viewer();
+    expect((await putTaste(token, { styles: [], brands: [] })).json()).toEqual({
+      styles: [],
+      brands: [],
+    });
+    expect(await ctx.db.$count(tasteProfiles, eq(tasteProfiles.profileId, profileId))).toBe(0);
+    expect((await putTaste(token, { styles: ['edgy'], brands: [] })).json()).toEqual({
+      styles: ['edgy'],
+      brands: [],
+    });
+  });
+
   it('refuses unknown styles or brands, and needs a login', async () => {
     const { token } = await viewer();
     expect((await putTaste(token, { styles: ['goth'], brands: [] })).statusCode).toBe(400);
@@ -108,6 +122,7 @@ describe('GET /v1/taste/picker', () => {
     const firstRound = items.slice(0, STYLES.length).flatMap((item) => item.styles);
     expect(new Set(firstRound)).toEqual(new Set(STYLES));
     expect(new Set(items.map((item) => item.card.id)).size).toBe(items.length);
+    expect(items.map((item) => item.card.id)).not.toContain(draftId);
     expect(items.every((item) => item.card.photo.urls[600].startsWith('https://'))).toBe(true);
   });
 });
