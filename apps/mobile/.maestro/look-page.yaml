@@ -8,6 +8,7 @@ appId: ${APP_ID || 'com.outfitly.app'}
 ---
 - launchApp:
     clearState: true
+- runFlow: subflows/skip-taste.yaml
 # The developer menu shows how long the last look took to open.
 - tapOn:
     id: tab-profile

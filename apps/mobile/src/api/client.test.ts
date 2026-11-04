@@ -149,6 +149,18 @@ describe('API client', () => {
     ]);
   });
 
+  it("sends For You the phone's picked styles on every page", async () => {
+    const { api, calls } = setup(() => jsonResponse(200, { items: [], nextCursor: null }));
+    await api.feed.forYou(undefined, undefined, ['edgy', 'minimal']);
+    await api.feed.forYou('c1', undefined, ['edgy']);
+    await api.feed.forYou(undefined, undefined, []);
+    expect(calls.map((c) => c.url)).toEqual([
+      'https://api.test/v1/feed/for-you?styles=minimal%2Cedgy',
+      'https://api.test/v1/feed/for-you?cursor=c1&styles=edgy',
+      'https://api.test/v1/feed/for-you',
+    ]);
+  });
+
   it('sends event batches with the key it is given', async () => {
     const { api, calls } = setup(() => jsonResponse(200, { accepted: 1 }));
     const batch = {

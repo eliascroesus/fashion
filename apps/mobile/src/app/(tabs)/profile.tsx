@@ -14,6 +14,7 @@ import {
 } from '../../lib/dev';
 import { useLastLookOpenMs } from '../../looks/open-timing';
 import { outbox, sendWaiting, useWaitingCount } from '../../saves';
+import { showPickerAgain, usePickerTime } from '../../taste';
 import { Screen, spacing, ThemedText, useColors } from '../../theme';
 
 /** Before signing out, saves still on the phone get this long to reach the server. */
@@ -28,6 +29,7 @@ export default function ProfileScreen() {
   const pretendOffline = usePretendOffline();
   const waiting = useWaitingCount();
   const lastLookOpenMs = useLastLookOpenMs();
+  const pickerMs = usePickerTime();
   const [busy, setBusy] = useState(false);
   const profile = me?.profiles.find((p) => p.id === me.activeProfileId);
 
@@ -118,6 +120,17 @@ export default function ProfileScreen() {
               {t('profile.lastLookOpen', { ms: lastLookOpenMs })}
             </ThemedText>
           )}
+          {pickerMs === undefined ? null : (
+            <ThemedText tone="muted" testID="dev-taste-time">
+              {t('profile.tasteTime', { seconds: (pickerMs / 1000).toFixed(1) })}
+            </ThemedText>
+          )}
+          <Button
+            testID="dev-taste-again"
+            variant="secondary"
+            label={t('profile.tasteAgain')}
+            onPress={showPickerAgain}
+          />
           {DEV_TOOLS ? (
             <View style={styles.row}>
               <ThemedText nativeID="pretend-offline-label">

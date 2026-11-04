@@ -111,7 +111,9 @@
     "unsyncedTitle": "Some saves haven't synced",
     "unsyncedBody_one": "{{count}} change hasn't reached Outfitly yet (you seem to be offline). If you sign out now, it will be lost.",
     "unsyncedBody_other": "{{count}} changes haven't reached Outfitly yet (you seem to be offline). If you sign out now, they will be lost.",
-    "lastLookOpen": "Last look open: {{ms}} ms"
+    "lastLookOpen": "Last look open: {{ms}} ms",
+    "tasteTime": "Last taste picker: {{seconds}} s",
+    "tasteAgain": "Show the taste picker again"
   },
   "board": {
     "options": "Board options",
@@ -149,5 +151,27 @@
     "empty": "No boards yet. Make your first one.",
     "loadFailed": "Couldn't load your boards. Check your connection and try again.",
     "done": "Done"
+  },
+  "taste": {
+    "swipeTitle": "What's your style?",
+    "swipeHint": "Swipe right on looks you like, left on the rest.",
+    "like": "Like",
+    "pass": "Not for me",
+    "lookLabel": "Look {{index}} of {{total}}",
+    "skip": "Skip",
+    "chipsTitle": "Pick your styles",
+    "chipsHint": "We've ticked the styles of the looks you liked. Change them as you like.",
+    "stylesHeading": "Styles",
+    "brandsHeading": "Favourite brands",
+    "done": "Done"
+  },
+  "styles": {
+    "minimal": "Minimal",
+    "streetwear": "Streetwear",
+    "classic": "Classic",
+    "sporty": "Sporty",
+    "romantic": "Romantic",
+    "edgy": "Edgy",
+    "colorful": "Colourful"
   }
 }

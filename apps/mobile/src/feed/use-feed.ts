@@ -3,6 +3,7 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useMe } from '../auth/store';
+import { getTasteStyles } from '../taste';
 import { listIdentity, replaceFeed, startList } from './cache';
 import { type FeedKind, feedQueryKey } from './keys';
 import { dedupeCards } from './layout';
@@ -19,7 +20,7 @@ async function fetchPage(
 ): Promise<FeedPage> {
   const page = cursor ?? undefined;
   const result = await (kind === 'for-you'
-    ? api.feed.forYou(page, signal)
+    ? api.feed.forYou(page, signal, getTasteStyles())
     : api.feed.following(page, signal));
   // A first page starts a new list (the grid starts over for it).
   return cursor === null ? startList(result) : result;

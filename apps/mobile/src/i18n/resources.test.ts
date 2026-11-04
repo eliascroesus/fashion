@@ -1,3 +1,4 @@
+import { STYLES } from '@outfitly/shared';
 import { describe, expect, it } from 'vitest';
 import { pickLanguage, resources } from './resources';
 
@@ -24,6 +25,10 @@ describe('translations', () => {
     for (const text of leaves(translation)) {
       expect(typeof text === 'string' && text.trim().length > 0).toBe(true);
     }
+  });
+
+  it('names every look style (the taste picker chips)', () => {
+    expect(Object.keys(resources.en.translation.styles).sort()).toEqual([...STYLES].sort());
   });
 
   it('picks the first device language we have, else English', () => {

@@ -227,6 +227,20 @@ describe('Outbox', () => {
     expect(sent).toHaveLength(0);
   });
 
+  it("keeps the taste picker's answers until there is a profile, without making one", async () => {
+    profile = false;
+    const outbox = new Outbox(deps());
+    outbox.add({ kind: 'taste', styles: ['streetwear'], brands: ['nike'] });
+    await vi.runAllTimersAsync();
+    expect(sessionStarts).toBe(0);
+    expect(sent).toHaveLength(0);
+
+    // The first save makes the guest; the answers go first, as that profile.
+    outbox.add({ kind: 'save', lookId: LOOK });
+    await vi.runAllTimersAsync();
+    expect(sent.map((p) => p.action.kind)).toEqual(['taste', 'save']);
+  });
+
   it('tells whether a profile will be followed once everything waiting is sent', () => {
     fail = offline();
     const outbox = new Outbox(deps());

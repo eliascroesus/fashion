@@ -9,6 +9,7 @@ env:
 ---
 - launchApp:
     clearState: true
+- runFlow: subflows/skip-taste.yaml
 - tapOn:
     id: tab-profile
 - longPressOn:

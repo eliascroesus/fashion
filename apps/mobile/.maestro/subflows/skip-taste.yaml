@@ -1,0 +1,15 @@
+# At the first open (also after clearState) the taste picker comes before Home: skip it.
+# Waits until either is on screen, so it works whether or not the picker shows.
+appId: ${APP_ID || 'com.outfitly.app'}
+---
+- extendedWaitUntil:
+    visible:
+      id: 'taste-skip|tab-home'
+    timeout: 20000
+- runFlow:
+    when:
+      visible:
+        id: taste-skip
+    commands:
+      - tapOn:
+          id: taste-skip

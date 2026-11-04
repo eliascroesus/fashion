@@ -10,6 +10,7 @@ appId: ${APP_ID || 'com.outfitly.app'}
 ---
 - launchApp:
     clearState: true
+- runFlow: subflows/skip-taste.yaml
 # The developer menu holds the test login and the "waiting to sync" count.
 - tapOn:
     id: tab-profile

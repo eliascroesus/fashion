@@ -111,7 +111,9 @@
     "unsyncedTitle": "Allt har inte synkats",
     "unsyncedBody_one": "{{count}} ändring har inte nått Outfitly än (du verkar vara offline). Om du loggar ut nu försvinner den.",
     "unsyncedBody_other": "{{count}} ändringar har inte nått Outfitly än (du verkar vara offline). Om du loggar ut nu försvinner de.",
-    "lastLookOpen": "Senaste öppning av look: {{ms}} ms"
+    "lastLookOpen": "Senaste öppning av look: {{ms}} ms",
+    "tasteTime": "Senaste smakväljaren: {{seconds}} s",
+    "tasteAgain": "Visa smakväljaren igen"
   },
   "board": {
     "options": "Val för tavlan",
@@ -149,5 +151,27 @@
     "empty": "Inga tavlor än. Skapa din första.",
     "loadFailed": "Det gick inte att ladda dina tavlor. Kontrollera din anslutning och försök igen.",
     "done": "Klar"
+  },
+  "taste": {
+    "swipeTitle": "Vad är din stil?",
+    "swipeHint": "Svep åt höger på looks du gillar och åt vänster på resten.",
+    "like": "Gilla",
+    "pass": "Inte för mig",
+    "lookLabel": "Look {{index}} av {{total}}",
+    "skip": "Hoppa över",
+    "chipsTitle": "Välj dina stilar",
+    "chipsHint": "Vi har kryssat i stilarna från looksen du gillade. Ändra som du vill.",
+    "stylesHeading": "Stilar",
+    "brandsHeading": "Favoritmärken",
+    "done": "Klar"
+  },
+  "styles": {
+    "minimal": "Minimalistisk",
+    "streetwear": "Streetwear",
+    "classic": "Klassisk",
+    "sporty": "Sportig",
+    "romantic": "Romantisk",
+    "edgy": "Edgy",
+    "colorful": "Färgglad"
   }
 }
