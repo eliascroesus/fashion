@@ -3,15 +3,12 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-**Phase 2 passed its gate (2026-11-04).** All seven steps are merged (PRs #8–#14).
-- **Gate items:**
-  - "Speed numbers recorded": PASS. See Measured numbers: For You p95 51 ms with 10,000 looks; look open about 30 ms with a cached photo; search suggestions 7 ms on the server; offline saves arrive about 8 s after reconnecting.
-  - "It feels like Pinterest": signed off by Elias.
-  - "Scrolled, saved, built boards and searched on both phones": done in the iPhone simulator only. Elias chose to go on and check on real phones when the hardware is ready (no Android phone yet; a real iPhone needs the Apple Developer membership). The Step 2.3 check ("mid-range Android, no blank cards or stutter") waits for the same phone.
-- Elias accepted 125 real outfits for now instead of Step 2.1's 300 (more photos later, see Waiting on Elias).
-- Phase 1 gate: everything passed except "app on both phones with login", for the same reason.
+**Phase 3 — Products and AI, in progress.** Step 3.1 (Product tables) is done: PR #16, waiting for Elias to merge.
 
-Next: Phase 3, Step 3.1 — Product tables.
+Next: Step 3.2 — The fingerprint service.
+
+- Phase 2 passed its gate on 2026-11-04 (PRs #8–#15). "Speed numbers recorded" PASS; "It feels like Pinterest" signed off by Elias. "Both phones" was done in the iPhone simulator only: the real-phone checks (and Step 2.3's mid-range Android check) wait for the hardware. 125 real outfits accepted instead of 300 for now.
+- Phase 1 gate: everything passed except "app on both phones with login", for the same reason.
 
 ## Done
 - Step 1.1 — Project skeleton and safety net (PR #1). Monorepo (pnpm + Turborepo), strict TypeScript, ESLint + Prettier, Vitest, GitHub Actions CI on every pull request. CI green.
@@ -117,9 +114,26 @@ Next: Phase 3, Step 3.1 — Product tables.
     - Suggestions offer typos only when nothing completes the typed word.
     - Tests for each.
   - **Flaky Step 2.6 test fixed:** "tops the list up with looks seen longest ago" asked for no diversity breaks in all 400 looks. But the arranger lets the similarity rule give way at the very end when only similar looks are left, and what is left depends on the random reshuffle. It failed now and then in a full run, and always when run alone. It now checks every page but the last. It failed the same way on `main`, so it was not caused by this step.
+- Step 3.1 — Product tables (PR #16) — **done, live on the dev database (2026-11-04).**
+  - **Migrations 0010–0011:** six new tables, locked like the rest (RLS on, no policies, no grants). 0011 came from the review (see below).
+    - `garments`: what the AI spots in a photo. Category, colour, other details (pattern, material, brand text) as JSON, a box in fractions of the photo (must lie inside it), fingerprint. Removed with their photo.
+    - `products`: name, brand, category (may be unknown at first), barcode (8–14 digits, unique when given), the shop's photo link + our processed copy, fingerprint, owning business profile.
+    - `offers`: two links, each up to 2 KB. `url` is the poster's link as given, affiliate tags kept: Shop opens it (one row per link). `page_url` is the shop's product page: price checks read that, so a check never counts as an affiliate click. Price in öre/cents with a 3-letter currency (both or neither), stock (in stock / out of stock / unknown), last checked, price history (a list).
+    - `look_items`: one row per look and offer (removing and re-adding revives it, like saves); optional garment, a dot on one of the look's photos (all or nothing, inside the photo), match score (−1…1), status pending / verified / rejected. Removed with the look.
+    - `link_checks`: every automatic check (score, the AI's yes / no / unsure, outcome verified / review / rejected, reason code, thresholds used). Removed with their look item.
+    - `clicks`: the id is the click id. Profile or logged-out session (at least one), look, offer, the look's poster, feed position, screen, platform. No foreign keys, like `events`.
+  - **Fingerprints:** `halfvec(768)` (768 half-precision numbers) on garments and products, each with an HNSW index (cosine). 768 comes from Marqo-FashionSigLIP's `open_clip_config.json` (`"embed_dim": 768`, ViT-B-16-SigLIP); its model card examples normalise the vectors and compare them by dot product, i.e. cosine. `FINGERPRINT_DIMENSIONS` and the 28 `GARMENT_CATEGORIES` (OK'd by Elias) are in `@outfitly/shared`.
+  - **API:** the guest merge also moves a guest's products (the test that every column pointing at a profile is handled caught the new `products.owner_profile_id`).
+  - **Tests:** `packages/db/test/products.test.ts`: the nearest products and garments come back in the right order by cosine distance, and `EXPLAIN` shows the HNSW index answering; both columns are `halfvec(768)` and another length is refused; every rule above (incl. the 2 KB link cap). The migration test covers the six tables (RLS on, no client access).
+  - **Review (step-reviewer):** passed, nothing blocking. Acted on in migration 0011, while the tables were still empty: fingerprints half-size (`halfvec`: half the disk and index memory, the same ranking in practice); indexes on `look_items.media_id` and `products.image_media_id` so deleting photos (e.g. `seed:fake-looks --remove`) doesn't read those tables in full; offer links capped at 2 KB by name (a 3,000-character link failed with the unique index's size error, which would have been a 500). 0010 was already on `outfitly-dev`, so the changes are a new migration rather than an edit. The rest is under Later.
+  - **Live (`outfitly-dev`, shared with staging):** both migrations applied (12 in total); the columns are `halfvec(768)` and all four new indexes are there; live lock test 23/23; three test products inserted and searched in a transaction that was rolled back: nearest first (distances 0.006 / 0.293 / 1.000) through `Index Scan using products_embedding_idx` (pgvector 0.8.2), none left afterwards. Staging redeployed (release step: nothing new to apply), `/v1/health` 200 and For You serves the looks as before.
 
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
+- 2026-11-04 — Garment categories (Step 3.1, OK'd by Elias): 28, in the order a look's item list reads: coat, jacket, blazer, knitwear, sweatshirt, shirt, t_shirt, top, dress, jumpsuit, trousers, jeans, skirt, shorts, swimwear, sneakers, boots, heels, flats, sandals, bag, hat, sunglasses, scarf, jewelry, watch, belt, accessory. Permanent ids (database enum): add new ones, never rename. "Similar pieces" (Step 3.8) compares within one category.
+- 2026-11-04 — Fingerprints are 768 numbers (from the model's config, not guessed) compared by cosine distance, stored as `halfvec(768)` (half-precision: half the disk and HNSW memory, running cost; cosine ranking is the same in practice) with HNSW indexes. Migrations name `extensions.halfvec` and `extensions.halfvec_cosine_ops` with their schema.
+- 2026-11-04 — An offer keeps two links: the poster's link exactly as given (affiliate tags kept, what Shop opens) and the shop's product page (what price and stock checks read), so a daily check never registers as a click on someone's affiliate link. Prices are whole öre/cents, never decimals.
+- 2026-11-04 — Clicks have no foreign keys (like `events`): they're history and stay as they happened, even if the look or offer goes. A click row's id is the random click id passed to shops.
 - 2026-11-04 — Phase 2 gate passed: Elias signed off that it feels like Pinterest. The real-phone checks (both phones, and the Step 2.3 Android smoothness check) are deferred until the hardware is ready, like at the Phase 1 gate; Phase 3 doesn't depend on them. 125 real outfits are enough for now (Step 2.1 asked for 300); more photos come later, and the content gate before launch needs 300+ shoppable looks anyway.
 - 2026-11-04 — Search (Step 2.7): Postgres full-text search with the `'simple'` config (no stemming: English and Swedish words behave the same; plurals and typos come from the vocabulary instead). A typed word the vocabulary knows is searched as itself; an unknown word also matches its closest typos (pg_trgm offers similar words, the fewest letter changes win: at most 1 for words up to 4 letters, 2 for longer), so "linnen" finds linen and "jeens" finds jeans, but "linen" never finds "lined" and "minimel" never finds "mini". Only the last word is also a prefix (the plan said every word of 3+ letters): a finished word shouldn't widen to longer ones ("tan" → tank). Small words (with, and, med, och…) are dropped. Ranked by match (tags and caption above the AI description), then popularity, then newest.
 - 2026-11-04 — Search cursors carry the rank as a 6-decimal number in text, never a float: Supabase prints floats with 15 digits (`extra_float_digits = 0`), so a float read back is not the same number. Test databases now do the same. Popularity can stay a float in cursors because it is stored rounded to 4 decimals.
@@ -207,6 +221,10 @@ Next: Phase 3, Step 3.1 — Product tables.
 - 2026-11-02 — Elias asked Claude to work through Phase 1 and Phase 2 overnight without stopping. Each step still gets its own branch + PR, stacked on the previous step's branch; nothing is merged into `main` without Elias.
 
 ## Waiting on Elias
+- **For Phase 3 (BUILD_PLAN "You provide"):**
+  - A Gemini API key from Google AI Studio, with billing on: needed for Step 3.3 (garment spotting).
+  - 30 real product links from Nordic shops you want to support (Zalando, H&M, Boozt, NA-KD, Nelly, ASOS…): needed for Step 3.4.
+  - The seed looks' product links, where you know them: helps Steps 3.4–3.6.
 - **More outfit photos (2026-11-04):** Streetwear and Sporty have no outfits yet (those folders held only products), Edgy has 6 and Colorful 13. Aim for about 20 each: a person wearing the whole look, or the whole outfit laid out (not one item on its own). Same Drive folders; Claude loads them the same way (`~/Downloads/outfitly-seed`, `looks.json`, `pnpm seed:looks`).
 - **300 outfit photos (Step 2.1), first batch done 2026-11-04 (125 outfits):** put them in one folder (any of JPG / PNG / WebP / HEIC, max 25 MB each, each picture once), then `pnpm seed:looks <folder> --init` writes `looks.json` with one look per photo; fill in caption, tags (occasions/seasons above) and author handle, put several photos in one look if wanted, and run `pnpm seed:looks <folder>`. Claude can do the commands; Elias only needs to give the folder (and captions if he wants them).
 - **A real iPhone photo** (the R2 check used the generated 12 MP test HEIC) (taken somewhere neutral, location on) to add as a test file, so tests use a true iPhone capture.
@@ -296,6 +314,18 @@ Next: Phase 3, Step 3.1 — Product tables.
 - Change your taste after onboarding (Profile → "Your styles"): needs an overwrite mode for `PUT /v1/taste` (today it only fills an empty taste).
 - Styles in "More like this" (today it matches occasion and season tags; AI similarity replaces both in Phase 3).
 - Brands in For You once looks have products (Phase 3): `taste_profiles.brands` is stored already.
+- The whole-photo fingerprint (Step 3.3 makes it, Step 3.8's "More like this" uses it) has no column yet: add `media.embedding vector(768)` with an HNSW index in Step 3.3 and keep the data-model table in sync.
+- Garment category labels (English + Swedish) go in the app's i18n files when categories first show (Step 3.6).
+- "Similar pieces in the same category" (Step 3.8) filters an HNSW search, and that returns too few: the reviewer measured 5 rows for `LIMIT 20` (2,000 products in 10 categories, default settings). Turn on pgvector's iterative index scans (`hnsw.iterative_scan`, 0.8+) and measure; per-category partial indexes only if that's slow. Not optional.
+- From the Step 3.1 review, for the steps that write these tables:
+  - Boxes and scores are checked to lie in 0–1 (scores −1…1), and `1.0000001` is refused: Step 3.3 clamps boxes to the photo and drops zero-size ones before a multi-row insert (one bad box fails them all); Step 3.5 computes similarity in SQL (`1 - (a <=> b)`, which pgvector keeps in range) or clamps it.
+  - Step 3.4: store links as `new URL(x).href` (lowercase `https://`, which the check needs; the query and affiliate tags stay), refuse links over 2 KB in its zod schema, and turn barcodes into 14 digits (zero-padded) so a UPC and an EAN for one product don't make two products (then tighten `products_gtin_format`).
+  - Step 3.4 / 3.9: add an index on `offers.page_url` (find the product when a second poster pastes another affiliate link to the same page; fetch each page once a day, not once per link) and update every offer of a page together, or their prices drift apart.
+  - Soft-deleted rows keep their unique keys (`offers.url`, `products.gtin`, a look item's look + offer): revive the old row, don't insert a new one.
+  - Step 3.5: record what was compared (garment id, offer id) in `link_checks.details`: a look item's garment can change when a photo is spotted again, and the 100-pair evaluation and audits need the original pair.
+  - Step 3.6 / Phase 4: the API checks that a look item's dot photo is one of the look's photos, and the garment's photo (the database doesn't; a composite foreign key would block the seed loader, which rewrites `look_media`).
+  - Phase 4 web Shop (works with JavaScript off): make a session id when there's no cookie, since a click needs a profile or a session.
+  - A guest's clicks stay on the guest profile after a merge (no foreign keys, like `events`).
 - The taste picker's looks (`GET /v1/taste/picker`) rank every styled look on each first open (fine at 300 looks, slow at 100,000): before launch, take the top two per style from the popularity index, or keep the answer in memory for a few minutes (it's the same for everyone).
 - Re-check "Streetwear makes most of page 1" once there are Streetwear outfits (none in the first batch of real photos; Step 2.6 was checked with the stand-ins). All real looks have one poster (`@outfitly.picks`), so the "never the same poster twice in a row" rule can't apply until creators post.
 - Profile switching (Step 4.1): reset the impression tracker explicitly when the active profile changes. Today a profile change means another feed (another list tag), but a restored list is the same list, so make the tracker's reset not depend on that.

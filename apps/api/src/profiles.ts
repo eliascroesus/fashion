@@ -6,6 +6,7 @@ import {
   isNull,
   looks,
   media,
+  products,
   profileMembers,
   profiles,
   sql,
@@ -230,6 +231,10 @@ async function moveProfileContent(
     .update(boards)
     .set({ profileId: toProfileId })
     .where(eq(boards.profileId, fromProfileId));
+  await tx
+    .update(products)
+    .set({ ownerProfileId: toProfileId })
+    .where(eq(products.ownerProfileId, fromProfileId));
 
   // One row per pair: the account keeps its own, and gets the guest's new ones.
   await moveUnlessDuplicate(tx, 'saves', 'profile_id', 'look_id', fromProfileId, toProfileId);
@@ -271,6 +276,7 @@ export const PROFILE_REFERENCES_HANDLED_BY_MERGE = [
   'follows.follower_profile_id',
   'looks.author_profile_id',
   'media.owner_profile_id',
+  'products.owner_profile_id',
   'profile_members.profile_id',
   'saves.profile_id',
   'seen.profile_id',

@@ -6,6 +6,7 @@ import {
   isNull,
   looks,
   media,
+  products,
   profileMembers,
   profiles,
   saves,
@@ -190,10 +191,14 @@ describe('acting as a profile (X-Profile-Id)', () => {
 });
 
 describe('POST /v1/session/merge-guest (email already had an account)', () => {
-  it("moves the guest's photos to the account and closes the guest profile", async () => {
+  it("moves the guest's photos and products to the account and closes the guest profile", async () => {
     const guest = await login({ isAnonymous: true });
     const guestProfile = (await startSession(guest.token)).activeProfileId ?? '';
     const photo = await addPhoto(guestProfile);
+    const [product] = await ctx.db
+      .insert(products)
+      .values({ name: 'Wool coat', ownerProfileId: guestProfile })
+      .returning({ id: products.id });
 
     const existing = await login({ email: 'existing@example.com' });
     const account = await startSession(existing.token);
@@ -206,6 +211,11 @@ describe('POST /v1/session/merge-guest (email already had an account)', () => {
 
     const [moved] = await ctx.db.select().from(media).where(eq(media.id, photo));
     expect(moved?.ownerProfileId).toBe(account.activeProfileId);
+    const [movedProduct] = await ctx.db
+      .select()
+      .from(products)
+      .where(eq(products.id, product?.id ?? ''));
+    expect(movedProduct?.ownerProfileId).toBe(account.activeProfileId);
     const [closed] = await ctx.db.select().from(profiles).where(eq(profiles.id, guestProfile));
     expect(closed?.deletedAt).not.toBeNull();
     expect(await ctx.db.$count(profileMembers, eq(profileMembers.userId, guest.userId))).toBe(0);
