@@ -3,7 +3,15 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-Phase 2, Step 2.7 — Search and profiles: built and checked in the iPhone simulator and on staging (2026-11-04), PR #14. That is the last step of Phase 2; Steps 2.4–2.6 are merged (PRs #11–#13). Search tab: popular tags as chips, recent searches, suggestions while typing (searches and people), results as a grid; typos work ("linnen" finds linen, "minimel" finds Minimal) and Swedish tag words too ("sommar"). Profiles: tap the poster on a look page, or a person in search, for their profile (looks, followers, following, Follow); your own Profile tab shows the same top part. Following someone fills the Following tab without a pull to refresh. The 125 outfits now have captions (written by Claude, OK'd by Elias, loaded 2026-11-04), so search finds pieces too ("cardigen" → 7 cardigans, "jeens" → jeans, "wide-leg jeans"). Still open from earlier steps: "mid-range Android, no blank cards or stutter" (2.3), waiting on the phone. Phase 1 gate: everything passed except "app on both phones with login" (no Android phone yet; a real iPhone needs the Apple Developer membership). Next: the Phase 2 gate, item by item with Elias.
+**Phase 2 passed its gate (2026-11-04).** All seven steps are merged (PRs #8–#14).
+- **Gate items:**
+  - "Speed numbers recorded": PASS. See Measured numbers: For You p95 51 ms with 10,000 looks; look open about 30 ms with a cached photo; search suggestions 7 ms on the server; offline saves arrive about 8 s after reconnecting.
+  - "It feels like Pinterest": signed off by Elias.
+  - "Scrolled, saved, built boards and searched on both phones": done in the iPhone simulator only. Elias chose to go on and check on real phones when the hardware is ready (no Android phone yet; a real iPhone needs the Apple Developer membership). The Step 2.3 check ("mid-range Android, no blank cards or stutter") waits for the same phone.
+- Elias accepted 125 real outfits for now instead of Step 2.1's 300 (more photos later, see Waiting on Elias).
+- Phase 1 gate: everything passed except "app on both phones with login", for the same reason.
+
+Next: Phase 3, Step 3.1 — Product tables.
 
 ## Done
 - Step 1.1 — Project skeleton and safety net (PR #1). Monorepo (pnpm + Turborepo), strict TypeScript, ESLint + Prettier, Vitest, GitHub Actions CI on every pull request. CI green.
@@ -112,6 +120,7 @@ Phase 2, Step 2.7 — Search and profiles: built and checked in the iPhone simul
 
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
+- 2026-11-04 — Phase 2 gate passed: Elias signed off that it feels like Pinterest. The real-phone checks (both phones, and the Step 2.3 Android smoothness check) are deferred until the hardware is ready, like at the Phase 1 gate; Phase 3 doesn't depend on them. 125 real outfits are enough for now (Step 2.1 asked for 300); more photos come later, and the content gate before launch needs 300+ shoppable looks anyway.
 - 2026-11-04 — Search (Step 2.7): Postgres full-text search with the `'simple'` config (no stemming: English and Swedish words behave the same; plurals and typos come from the vocabulary instead). A typed word the vocabulary knows is searched as itself; an unknown word also matches its closest typos (pg_trgm offers similar words, the fewest letter changes win: at most 1 for words up to 4 letters, 2 for longer), so "linnen" finds linen and "jeens" finds jeans, but "linen" never finds "lined" and "minimel" never finds "mini". Only the last word is also a prefix (the plan said every word of 3+ letters): a finished word shouldn't widen to longer ones ("tan" → tank). Small words (with, and, med, och…) are dropped. Ranked by match (tags and caption above the AI description), then popularity, then newest.
 - 2026-11-04 — Search cursors carry the rank as a 6-decimal number in text, never a float: Supabase prints floats with 15 digits (`extra_float_digits = 0`), so a float read back is not the same number. Test databases now do the same. Popularity can stay a float in cursors because it is stored rounded to 4 decimals.
 - 2026-11-04 — Recent searches are kept only on the phone (last 10) and forgotten at sign-out; nothing about searches is stored on the server yet. Suggestions include up to 3 people, only those who have looks (guests and people who haven't posted can't be found).
