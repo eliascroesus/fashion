@@ -5,6 +5,7 @@ import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import Animated, { FadeIn, useSharedValue } from 'react-native-reanimated';
 import {
   PixelRatio,
   Pressable,
@@ -167,17 +168,22 @@ function SwipeStep({
   const [index, setIndex] = useState(0);
   const liked = useRef<PickerItem[]>([]);
   const top = useRef<SwipeCardHandle>(null);
+  /** How far the top card is on its way out; the card behind rises with it. */
+  const leaving = useSharedValue(0);
 
   const size = cardSize(screenWidth, screenHeight);
   const uriOf = (item: PickerItem) => cardPhoto(item, size.width);
 
-  // Dragged off or thrown by a button: a like gets a tap of the phone.
+  // Dragged off or thrown by a button: a like gets a tap of the phone as it goes.
+  const onPick = (direction: SwipeDirection) => {
+    if (direction === 'like') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    }
+  };
+  // Out of sight: the card behind (already risen into place) becomes the top card.
   const onSwiped = (direction: SwipeDirection) => {
     const item = items[index];
-    if (item && direction === 'like') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-      liked.current.push(item);
-    }
+    if (item && direction === 'like') liked.current.push(item);
     if (index + 1 >= items.length) onDone(liked.current);
     else setIndex(index + 1);
   };
@@ -196,29 +202,25 @@ function SwipeStep({
         <ThemedText tone="muted">{t('taste.swipeHint')}</ThemedText>
       </View>
       <View style={layout.stack}>
-        {next ? (
-          <View style={[layout.under, size, { backgroundColor: next.card.photo.dominantColor }]}>
-            <Image
-              source={{ uri: uriOf(next) }}
-              placeholder={{ thumbhash: next.card.photo.thumbhash }}
-              contentFit="cover"
-              cachePolicy="memory-disk"
-              style={StyleSheet.absoluteFill}
-              accessible={false}
+        {/* The card behind first (drawn underneath), then the top one. Keyed by look, so the
+            card behind stays the same view when it moves up. */}
+        {[next, current].map((item) =>
+          item ? (
+            <SwipeCard
+              key={item.card.id}
+              {...(item === current ? { ref: top } : {})}
+              card={item.card}
+              uri={uriOf(item)}
+              {...size}
+              isTop={item === current}
+              leaving={leaving}
+              label={t('taste.lookLabel', { index: index + 1, total: items.length })}
+              onPick={onPick}
+              onSwiped={onSwiped}
             />
-          </View>
-        ) : null}
-        {current ? (
-          <SwipeCard
-            key={current.card.id}
-            ref={top}
-            card={current.card}
-            uri={uriOf(current)}
-            {...size}
-            label={t('taste.lookLabel', { index: index + 1, total: items.length })}
-            onSwiped={onSwiped}
-          />
-        ) : loading ? (
+          ) : null,
+        )}
+        {!current && loading ? (
           <View style={[layout.placeholder, size, { backgroundColor: colors.surfaceMuted }]} />
         ) : null}
       </View>
@@ -304,7 +306,7 @@ function ChipsStep({
 }) {
   const { t } = useTranslation();
   return (
-    <View style={layout.fill}>
+    <Animated.View entering={FadeIn.duration(250)} style={layout.fill}>
       <ScrollView contentContainerStyle={layout.chipsContent}>
         <View style={layout.texts}>
           <ThemedText variant="headline" accessibilityRole="header">
@@ -346,7 +348,7 @@ function ChipsStep({
         </View>
       </ScrollView>
       <Button testID="taste-done" label={t('taste.done')} onPress={onDone} style={layout.done} />
-    </View>
+    </Animated.View>
   );
 }
 
@@ -355,13 +357,6 @@ const layout = StyleSheet.create({
   topBar: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: spacing.xl },
   texts: { gap: spacing.xs, paddingHorizontal: spacing.xl, paddingVertical: spacing.md },
   stack: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  under: {
-    position: 'absolute',
-    borderRadius: radii.lg,
-    overflow: 'hidden',
-    // Peeks out under the top card, so it reads as a stack.
-    transform: [{ translateY: spacing.lg }, { scale: 0.95 }],
-  },
   placeholder: { borderRadius: radii.lg },
   heading: { paddingHorizontal: spacing.xl },
   buttons: {
