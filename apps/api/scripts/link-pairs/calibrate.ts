@@ -1,4 +1,5 @@
 // The link check's numbers from labelled pairs (`pnpm links:calibrate --file pairs.csv`).
+import { type Thresholds, thresholdsSchema } from '../../src/links/check.ts';
 
 export interface LabelledPair {
   garmentId: string;
@@ -27,8 +28,12 @@ export interface ThresholdRow {
   toReview: number;
 }
 
-/** The Done-when goal: fewer than this share of wrong items is auto-verified. */
+/** The Done-when goal: fewer than this share of wrong items is auto-verified, on at least 100 pairs. */
 export const MAX_WRONG_VERIFIED = 0.05;
+export const MIN_LABELLED_PAIRS = 100;
+/** Fewer than these and a suggestion would be noise. */
+const MIN_DIFFERENT_TO_SUGGEST = 30;
+const MIN_SAME_TO_SUGGEST = 10;
 /** The fingerprint alone may let through at most this, leaving room for the AI's own mistakes. */
 const FINGERPRINT_BUDGET = 0.02;
 /** At most this share of good links may be rejected without the AI looking. */
@@ -70,9 +75,10 @@ export function evaluate(
  * verifies at most 2% of different items (the AI gets the rest of the 5%),
  * and the highest `rejectBelow` that rejects at most 5% of same items.
  */
-export function suggest(pairs: LabelledPair[]): { verifyAt: number; rejectBelow: number } {
+export function suggest(pairs: LabelledPair[]): Thresholds | null {
   const different = pairs.filter((p) => !p.same);
   const same = pairs.filter((p) => p.same);
+  if (different.length < MIN_DIFFERENT_TO_SUGGEST || same.length < MIN_SAME_TO_SUGGEST) return null;
   // In hundredths, so the steps add up exactly.
   let verifyAt = 100;
   for (let v = 99; v >= 30; v--) {
@@ -80,13 +86,17 @@ export function suggest(pairs: LabelledPair[]): { verifyAt: number; rejectBelow:
     if (share(through, different.length) > FINGERPRINT_BUDGET) break;
     verifyAt = v;
   }
-  let rejectBelow = -100;
-  for (let r = -100; r <= verifyAt; r++) {
+  let rejectBelow = 0;
+  for (let r = 0; r < verifyAt; r++) {
     const lost = same.filter((p) => p.similarity < r / 100).length;
     if (share(lost, same.length) > MAX_RIGHT_REJECTED) break;
     rejectBelow = r;
   }
-  return { verifyAt: verifyAt / 100, rejectBelow: rejectBelow / 100 };
+  // Within what the check accepts (verifyAt at least 0.5).
+  return thresholdsSchema.parse({
+    verifyAt: Math.max(verifyAt, 50) / 100,
+    rejectBelow: Math.min(rejectBelow, Math.max(verifyAt, 50) - 1) / 100,
+  });
 }
 
 /** `garment_id,product_id,same` lines (yes/no; a header and # comments are fine). */
@@ -106,4 +116,25 @@ export function parsePairsCsv(
     pairs.push({ garmentId, productId, same: same === 'yes' });
   }
   return pairs;
+}
+
+/** `--set <verifyAt> <rejectBelow>`: two plain numbers the check accepts, else an error. */
+export function parseThresholdArgs(
+  verifyAt: string | undefined,
+  rejectBelow: string | undefined,
+): Thresholds {
+  const number = /^\d+(\.\d+)?$/;
+  if (!verifyAt || !rejectBelow || !number.test(verifyAt) || !number.test(rejectBelow)) {
+    throw new Error('Use --set <verifyAt> <rejectBelow>, e.g. --set 0.85 0.6.');
+  }
+  const parsed = thresholdsSchema.safeParse({
+    verifyAt: Number(verifyAt),
+    rejectBelow: Number(rejectBelow),
+  });
+  if (!parsed.success) {
+    throw new Error(
+      'verifyAt must be from 0.5 to 1, and rejectBelow from 0 up to (not including) verifyAt.',
+    );
+  }
+  return parsed.data;
 }

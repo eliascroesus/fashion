@@ -79,6 +79,10 @@ export interface GeminiRequest {
   /** JSON Schema of the answer (`responseJsonSchema`). */
   schema: object;
   maxOutputTokens: number;
+  /** This request's own thinking level, instead of the client's (`GEMINI_THINKING_LEVEL`). */
+  thinkingLevel?: ThinkingLevel;
+  /** This request's own image detail; `MODEL_DEFAULT` sends none, whatever the client's is. */
+  mediaResolution?: 'LOW' | 'MEDIUM' | 'HIGH' | 'MODEL_DEFAULT';
 }
 
 export interface GeminiAnswer {
@@ -139,8 +143,12 @@ export class GeminiClient {
   }
 
   async generateJson(request: GeminiRequest): Promise<GeminiAnswer> {
-    const { thinkingLevel, mediaResolution } = this.#options;
-    const thinking = thinkingConfig(this.model, thinkingLevel);
+    const thinking = thinkingConfig(
+      this.model,
+      request.thinkingLevel ?? this.#options.thinkingLevel,
+    );
+    const resolution = request.mediaResolution ?? this.#options.mediaResolution;
+    const mediaResolution = resolution === 'MODEL_DEFAULT' ? undefined : resolution;
     const body = {
       contents: [
         {

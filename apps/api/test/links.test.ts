@@ -1,4 +1,4 @@
-import { eq, featureFlags, offers, products, sql } from '@outfitly/db';
+import { eq, featureFlags, lookItems, offers, products, sql } from '@outfitly/db';
 import { readShopLink } from '../src/links/resolve.ts';
 import { readWithMicrolink } from '../src/links/microlink.ts';
 import { IDEMPOTENT_REPLAY_HEADER, type ResolvedLink, resolvedLinkSchema } from '@outfitly/shared';
@@ -6,7 +6,8 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { PRODUCT_QUEUES } from '../src/links/product-photos.ts';
-import { createLogin } from './feed-fixtures.ts';
+import { LINK_CHECK_QUEUES } from '../src/links/check.ts';
+import { createAuthor, createLogin, createLook } from './feed-fixtures.ts';
 import { createTestContext, type TestContext, testConfig, testJwks } from './helpers.ts';
 import { type LocalShop, page, redirect, startLocalShop } from './local-shop.ts';
 import { articlePage, jsonLdProductPage, metaOnlyPage } from './shop-pages.ts';
@@ -296,11 +297,29 @@ describe('which product a link is', () => {
     const other = await resolved(shop.url('/p/wool-coat?aff=staying'));
     expect(other.product.id).toBe(first.product.id);
 
+    // A look shows this link, already checked against the coat.
+    const lookId = await createLook(ctx.db, { authorId: await createAuthor(ctx.db, 'mover') });
+    const [item] = await ctx.db
+      .insert(lookItems)
+      .values({ lookId, offerId: first.offer.id, status: 'verified', matchScore: 0.9 })
+      .returning({ id: lookItems.id });
+
     await age(first.offer.id);
     target = '/dress';
+    ctx.queued.length = 0;
     const moved = await resolved(link);
     expect(moved.offer.id).toBe(first.offer.id);
     expect(moved.product.id).not.toBe(first.product.id);
+    // Checked again against the dress.
+    const [after] = await ctx.db
+      .select()
+      .from(lookItems)
+      .where(eq(lookItems.id, item?.id ?? ''));
+    expect(after).toMatchObject({ status: 'pending', matchScore: null });
+    expect(ctx.queued).toContainEqual({
+      name: LINK_CHECK_QUEUES.linkCheck,
+      data: { lookItemId: item?.id },
+    });
     expect(moved.product.name).toBe('Satin slip dress');
     expect((await product(first.product.id))?.name).toBe('Wool-blend coat & belt');
     // The link's price history starts again for the item it now shows.

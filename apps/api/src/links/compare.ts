@@ -10,8 +10,8 @@ import type { Box } from '../ai/spot.ts';
  */
 export const COMPARE_PROMPT_VERSION = 'link-check-v1';
 
-/** A yes/no/unsure and one short sentence; also caps a runaway answer's cost. */
-export const COMPARE_MAX_OUTPUT_TOKENS = 256;
+/** A yes/no/unsure and one short sentence (with room for a little thinking); caps a runaway answer's cost. */
+export const COMPARE_MAX_OUTPUT_TOKENS = 512;
 
 /** Longest side of each photo sent: enough to tell two pieces apart, fewer tokens. */
 const SIDE = 512;

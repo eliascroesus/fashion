@@ -16,18 +16,23 @@ import { join, resolve } from 'node:path';
 import { createDb, eq, settings, sql } from '@outfitly/db';
 import { photoAiClients } from '../src/ai/clients.ts';
 import { loadConfig, r2Config } from '../src/config.ts';
+import type { GarmentCategory } from '@outfitly/shared';
 import {
+  chooseGarment,
   compareWithAi,
+  decideByScore,
+  garmentCandidates,
   linkCheckThresholds,
   THRESHOLDS_SETTING,
-  thresholdsSchema,
 } from '../src/links/check.ts';
 import { R2Storage } from '../src/storage.ts';
 import {
   evaluate,
   type LabelledPair,
   MAX_WRONG_VERIFIED,
+  MIN_LABELLED_PAIRS,
   parsePairsCsv,
+  parseThresholdArgs,
   suggest,
 } from './link-pairs/calibrate.ts';
 import { type PagePair, renderPairPage } from './link-pairs/page.ts';
@@ -59,17 +64,55 @@ async function makePage(): Promise<void> {
     : join(homedir(), 'Downloads', 'outfitly-link-pairs');
   const thresholds = await linkCheckThresholds(db);
 
-  const { rows: linked } = await db.execute<PairRow>(
-    sql`SELECT DISTINCT g.id AS garment_id, p.id AS product_id, 'linked' AS source,
-               1 - (g.embedding OPERATOR(extensions.<=>) p.embedding) AS similarity
+  // Links on looks, with the piece the check compares them with (the poster's pick, the piece it
+  // matched, else the one it would choose: under the dot, or the look's most alike piece).
+  const { rows: items } = await db.execute<{
+    id: string;
+    look_id: string;
+    garment_id: string | null;
+    matched_garment_id: string | null;
+    media_id: string | null;
+    dot_x: number | null;
+    dot_y: number | null;
+    product_id: string;
+    category: GarmentCategory | null;
+    model: string | null;
+  }>(
+    sql`SELECT li.id, li.look_id, li.garment_id, li.matched_garment_id, li.media_id, li.dot_x,
+               li.dot_y, o.product_id, p.category, p.embedding_model AS model
           FROM look_items li
           JOIN offers o ON o.id = li.offer_id
           JOIN products p ON p.id = o.product_id
-          JOIN garments g ON g.id = li.garment_id
-         WHERE li.deleted_at IS NULL AND g.deleted_at IS NULL AND p.deleted_at IS NULL
-           AND g.embedding IS NOT NULL AND p.embedding IS NOT NULL
-           AND g.embedding_model = p.embedding_model`,
+         WHERE li.deleted_at IS NULL AND p.deleted_at IS NULL AND p.embedding IS NOT NULL
+         ORDER BY li.created_at`,
   );
+  const linked: PairRow[] = [];
+  for (const item of items) {
+    const { candidates } = await garmentCandidates(
+      db,
+      { lookId: item.look_id, garmentId: item.garment_id, mediaId: item.media_id },
+      item.id,
+      item.product_id,
+    );
+    const usable = candidates.filter(
+      (c) => c.similarity !== null && c.embeddingModel === item.model,
+    );
+    const matched = usable.find((c) => c.id === item.matched_garment_id);
+    const garment =
+      matched ??
+      chooseGarment(
+        usable,
+        { garmentId: item.garment_id, mediaId: item.media_id, dotX: item.dot_x, dotY: item.dot_y },
+        item.category,
+      )?.garment;
+    if (garment?.similarity == null) continue;
+    linked.push({
+      garment_id: garment.id,
+      product_id: item.product_id,
+      similarity: garment.similarity,
+      source: 'linked',
+    });
+  }
   // Each seed garment's two most alike products: the hard cases for the "verified" threshold.
   const { rows: nearest } = await db.execute<PairRow>(
     sql`SELECT g.id AS garment_id, n.id AS product_id, 'nearest' AS source, n.similarity
@@ -219,6 +262,7 @@ async function report(file: string): Promise<void> {
         { db, storage, gemini: ai.gemini, dailyCapMicros: ai.dailyCapMicros },
         {
           lookId: r.look_id,
+          lookItemId: null,
           productPhotoKey: r.product_key,
           garment: {
             id: label.garmentId,
@@ -232,6 +276,7 @@ async function report(file: string): Promise<void> {
           },
         },
       );
+      // Refused counts as unsure (a person decides); no answer at all stays unknown.
       pair.ai = 'same' in asked ? asked.same : 'refusal' in asked ? 'unsure' : null;
     }
     pairs.push(pair);
@@ -242,9 +287,13 @@ async function report(file: string): Promise<void> {
     `${String(pairs.length)} labelled pairs: ${String(same)} same, ${String(pairs.length - same)} different` +
       (missing > 0 ? ` (${String(missing)} skipped: no fingerprint, or different models)` : ''),
   );
+  const suggested = suggest(pairs);
+  if (!suggested) {
+    console.log('Too few pairs to suggest thresholds (needs 30 different and 10 same).');
+  }
   const rows = [
     { name: 'now', ...thresholds },
-    { name: 'suggested', ...suggest(pairs) },
+    ...(suggested ? [{ name: 'suggested', ...suggested }] : []),
     ...[0.7, 0.75, 0.8, 0.85, 0.9].map((v) => ({
       name: '',
       verifyAt: v,
@@ -266,24 +315,32 @@ async function report(file: string): Promise<void> {
     }),
   );
   const now = evaluate(pairs, thresholds.verifyAt, thresholds.rejectBelow);
+  // In between, the AI's answer counts: without it (no --ai, or no answer) nothing is measured.
+  const unanswered = pairs.filter(
+    (p) =>
+      decideByScore(p.similarity, thresholds) === 'ask' && (p.ai === undefined || p.ai === null),
+  ).length;
   const verdict =
-    pairs.length < 100
-      ? 'not measured yet (needs 100 labelled pairs)'
-      : now.wrongVerifiedShare < MAX_WRONG_VERIFIED
-        ? 'PASS'
-        : 'FAIL';
+    pairs.length < MIN_LABELLED_PAIRS
+      ? `not measured yet (needs ${String(MIN_LABELLED_PAIRS)} labelled pairs)`
+      : !askAi
+        ? 'not measured yet (run with --ai: the AI decides the pairs in between)'
+        : unanswered > 0
+          ? `not measured yet (${String(unanswered)} pairs in between got no AI answer)`
+          : now.wrongVerifiedShare < MAX_WRONG_VERIFIED
+            ? 'PASS'
+            : 'FAIL';
   console.log(
     `Done when (fewer than 5% of wrong items auto-verified, at least 100 pairs): ` +
-      `${pct(now.wrongVerifiedShare)} of ${String(pairs.length - same)} different pairs → ${verdict}` +
-      (askAi ? '' : ' (fingerprint only: add --ai to include the AI’s answers in between)'),
+      `${pct(now.wrongVerifiedShare)} of ${String(pairs.length - same)} different pairs → ${verdict}`,
   );
 }
 
-async function setThresholds(verifyAt: string, rejectBelow: string): Promise<void> {
-  const value = thresholdsSchema.parse({
-    verifyAt: Number(verifyAt),
-    rejectBelow: Number(rejectBelow),
-  });
+async function setThresholds(
+  verifyAt: string | undefined,
+  rejectBelow: string | undefined,
+): Promise<void> {
+  const value = parseThresholdArgs(verifyAt, rejectBelow);
   const updated = await db
     .update(settings)
     .set({ value })
@@ -301,7 +358,7 @@ try {
   const file = option('file');
   if (args.includes('--make-page')) await makePage();
   else if (file) await report(file);
-  else if (set !== -1) await setThresholds(args[set + 1] ?? '', args[set + 2] ?? '');
+  else if (set !== -1) await setThresholds(args[set + 1], args[set + 2]);
   else {
     console.error('Use --make-page, --file pairs.csv [--ai] or --set <verifyAt> <rejectBelow>.');
     process.exitCode = 1;

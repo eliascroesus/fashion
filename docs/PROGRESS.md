@@ -3,14 +3,15 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-**Phase 3 — Products and AI, in progress.** Steps 3.1–3.4 are built; 3.3's real-photo check waits for the Gemini key, and 3.4's link check waits for Elias's 30 links (and a decision about shops that block link readers).
+**Phase 3 — Products and AI, in progress.** Steps 3.1–3.5 are built; 3.3's real-photo check waits for the Gemini key, 3.4's link check waits for Elias's 30 links (and a decision about shops that block link readers), and 3.5's 100-pair check waits for the key, the seed looks' product links and Elias's labels.
 - Step 3.1 (Product tables): PR #16, waiting for Elias to merge.
 - Step 3.2 (The fingerprint service): PR #17, stacked on #16 (merge #16 first).
 - Step 3.3 (Garment spotting): PR #18, stacked on #17. Built and tested with a stand-in Gemini; the 50-photo check and the cost per 1,000 photos wait for the key (see Waiting on Elias).
 - Step 3.4 (Paste a link, get a product): PR #19, stacked on #18. "80% of 30 links": FAIL for now (15 of 30 provisional links, 50%): H&M, Arket and Lindex block automated readers and ASOS doesn't answer (see Open decisions). Elias's own 30 links are still to come.
-- Claude isn't allowed to merge in this setup (see Waiting on Elias). Elias was asleep for Steps 3.3 and 3.4 (2026-11-05 night) and said to keep going, so their plans and decisions are in the PRs instead of a plan approval.
+- Step 3.5 (Automatic link check): PR #20, stacked on #19. Built and tested with a stand-in Gemini and stand-in fingerprints; provisional thresholds from a first measurement (see Measured numbers). "100 labelled pairs, under 5% wrong items auto-verified": WAITING (see Waiting on Elias).
+- Claude isn't allowed to merge in this setup (see Waiting on Elias). Elias was asleep for Steps 3.3–3.5 (2026-11-05 night) and said to keep going, so their plans and decisions are in the PRs instead of a plan approval.
 
-Next: Step 3.5 — Automatic link check.
+Next: Step 3.6 — The shoppable look page.
 
 - Phase 2 passed its gate on 2026-11-04 (PRs #8–#15). "Speed numbers recorded" PASS; "It feels like Pinterest" signed off by Elias. "Both phones" was done in the iPhone simulator only: the real-phone checks (and Step 2.3's mid-range Android check) wait for the hardware. 125 real outfits accepted instead of 300 for now.
 - Phase 1 gate: everything passed except "app on both phones with login", for the same reason.
@@ -219,6 +220,29 @@ Next: Step 3.5 — Automatic link check.
     - A hostile page could keep the server busy for minutes (the tag search re-read the page for every unclosed tag). Now one pass; a test reads 3 MB of each kind in well under 300 ms.
     - Reading a link again could rewrite a product other posters share into a different item. Now the read decides which product it is, and the offer moves instead.
     - Also fixed: odd JSON-LD that crashed the reader, control characters, `&constructor;`; ambiguous prices ("199.000") give no price instead of a wrong one, 0 is no price, unknown currency codes are refused; barcode merges need the same brand; removed products stay removed; a lock on the link itself (concurrent resolves); a lost photo job is asked for again; temporary problems free the idempotency key; unwanted answer bodies aren't downloaded; trailing punctuation after a pasted link is dropped; every ownerless photo must have a source link (0014); the test script's money format; the answer only shows our own photo copy.
+- Step 3.5 — Automatic link check (PR #20) — **built and tested with stand-ins (2026-11-05); live on staging; the 100-pair check waits for the Gemini key, the seed looks' product links and Elias's labels.**
+  - **What it does:** every product link on a look (a look item) gets checked once: is the shop's product really the piece in the photo? Job `link-check`:
+    - the link is gone → rejected (`link_removed`); sold out → rejected (`sold_out`);
+    - otherwise the piece is chosen: the poster's own pick, else the piece under their dot, else (once every photo it could be on has been read by the AI) the piece most like the product, in the product's category if known, preferring pieces no other item uses;
+    - the piece and the shop photo are compared by fingerprint: from `verifyAt` → verified; below `rejectBelow` → rejected (`not_similar`); in between Gemini sees the cut-out piece next to the shop photo (prompt `link-check-v1`) and says yes → verified, no → rejected (`ai_different`), unsure or refuses → a person decides (`ai_unsure`);
+    - a person also decides when the shop gave no usable photo (`no_product_photo`), the AI found no piece (`no_garment`), the dot is on no piece (`dot_not_on_piece`), or something never came within 3 days (`check_failed`).
+  - **Never decided without the AI** when it's needed: without a Gemini key those items wait. The AI call is logged and counts towards the daily cap; it uses little thinking and a small answer whatever spotting's settings are. Two paid answers we couldn't use (cut off, timed out) and a person decides instead of paying a third time.
+  - **Every decision is saved once** in `link_checks` (score, the AI's answer, reason, the piece and how it was chosen, thresholds, fingerprint model, the AI call). A decision is dropped if the item changed meanwhile (another offer, product or shop photo, or the poster's pick), and two items of a look can't claim the same free piece at once. Waiting for a person: look item status `review` plus one open `moderation_queue` item (kind `link_check`), closed when the item is checked again or removed.
+  - **The poster's pick stays theirs:** `look_items.garment_id` is only the poster's; the check's piece is `matched_garment_id`.
+  - **When it runs:** when an item is added (`addLookItem`, for Phase 4's posting), when its photo is read or fingerprinted, when its product's photo is copied in, refused or fingerprinted, when a re-read link now shows another item (its items start over), and hourly (`link-check-sweep`, up to 500 waiting items, least recently tried first).
+  - **Thresholds live in the database** (`settings` row `link_check_thresholds`, read once a minute): provisional verified from 0.85, rejected below 0.60. Change them with `pnpm links:calibrate --set 0.85 0.6` (it refuses anything else than two numbers the check accepts).
+  - **Messages for the poster:** a reason code per decision, with English and Swedish texts in the app (`linkCheck.*`); the database refuses other codes. The app shows them in Phase 4.
+  - **Seed looks' links:** an optional `links` list per look in `looks.json`; `pnpm seed:items ~/Downloads/outfitly-seed` reads each link (at most one request a second per shop), copies and fingerprints the product photo, reads the look's photos with Gemini if needed, checks the items right away and prints a table with the share verified (the Phase 3 gate wants 70%). Links taken out of the file come off the look; a link that can't be read this time keeps its item.
+  - **The 100-pair check:** `pnpm links:calibrate --make-page` writes `~/Downloads/outfitly-link-pairs/index.html`: a cut-out piece next to a product photo (links on looks, plus each seed piece's two most alike products), with Same / Different / Can't tell and "Copy CSV". `pnpm links:calibrate --file pairs.csv --ai` then reports wrong items auto-verified (the goal: under 5%), good links rejected and the share sent to the AI, with suggested thresholds; it only says PASS with the AI's answers and 100 pairs.
+  - **Migrations 0015 + 0016** (applied on `outfitly-dev`): the `settings` table, look item status `review`, `moderation_queue.look_item_id`, `ai_calls.look_item_id`, `look_items.matched_garment_id` / `pending_since` / `checked_at`, `products.image_failed_at`, and a check on reason codes.
+  - **Tests:** API 478 (the link check 43, its jobs end to end 7, seed links 3, calibration and the pair page 9), db 69 (live lock test 26/26).
+  - **Review (step-reviewer):** five blocking issues, fixed (each now has a test).
+    - A link that moved to another product while the AI was being asked could be verified against the old product. Now the product and its photo are part of what must not change before a decision is saved.
+    - A look with several photos could be decided before all were read (its piece may be on the last one). Now it waits.
+    - A piece the check chose became "the poster's pick" when the link was checked again. Now they're kept apart.
+    - Unusable paid answers could be retried without end, sharing the daily cap with spotting. Now never retried at once, and the second sends the item to a person; the comparison has its own small settings.
+    - `--set` with nothing after it set both thresholds to 0. Now refused, and the database value follows the same rules.
+    - Also fixed: review items close when an item is checked again, decided or removed; the sweep rotates and long waits end with a person; a link that fails to read keeps its item and shops get one request a second; the calibration report needs the AI and enough pairs, and compares links with the piece the check would use; a refused shop photo goes to a person at once (and the hour's wait is from the read, not the last product change); the product's category comes only from a clear fingerprint match; unknown reason codes are refused; a piece replaced meanwhile or a look photo that's gone are handled; "not_similar" now says it was compared with the piece in the photo.
 
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
@@ -236,6 +260,14 @@ Next: Step 3.5 — Automatic link check.
 - 2026-11-05 — How Pinterest does it, for reference: its own detectors and fingerprint models, trained on huge numbers of photos labelled by people and run on its own graphics-card servers by hundreds of engineers. That only pays off at their size. Our path to the same: see Later ("train our own detector").
 - 2026-11-05 — The dev screen that draws the boxes is a page on Elias's own Mac (`pnpm ai:spot-check`), not a web page: `apps/web` doesn't exist yet, and a local page puts nothing online. The AI's text goes into the page only as text, never as code.
 - 2026-11-05 — Flagged photos: their looks are hidden at once (any status) and a `moderation_queue` item holds what each look's status was. `moderation_queue` moved from Phase 4 to Phase 3, since this is its first use; reports and blocks stay in Phase 4.
+- 2026-11-05 — Link check (Step 3.5), decided while Elias slept:
+  - An item waiting for a person has its own status (`review`), so a retry never pays the AI again; the review queue holds it like flagged photos.
+  - Thresholds live in a small new `settings` table (feature flags only hold on/off), with no defaults in code.
+  - Provisional thresholds: verified from 0.85, rejected below 0.60 (see Measured numbers). Same-kind pieces in another colour or wash reach 0.84, so 0.85 leaves those to the AI.
+  - The AI is only asked in between, sees the cut-out piece and the shop photo at 512 px, and gets two paid tries per item before a person decides.
+  - Missing parts wait; a shop photo still missing an hour after the link was read, or one that was refused, goes to a person; anything else needed that hasn't come in 3 days goes to a person (`check_failed`). Waiting for photos to be read or for a Gemini key has no limit: that's the whole system's state.
+  - The seed looks' links go in `looks.json` with their own command (`seed:items`), so `seed:looks` never needs the network.
+  - A product's category comes from the first piece its fingerprint clearly matches (not from the AI's yes).
 - 2026-11-05 — The spend cap counts Gemini only (the fingerprint service is our own machine, paid by the hour) and uses the UTC day. A call that timed out counts as a typical photo plus the most output we allow (≈ $0.007).
 - 2026-11-04 — Fingerprint service on Fly performance-1x with 2 GB, suspended when idle: a dedicated core is never throttled (shared CPUs were ~10× slower once their allowance ran out, which bulk work like Step 3.3's backlog would hit), it's billed only while awake, and 2 GB is the most a machine can have and still suspend (wakes in ~1 s with the model in memory, instead of ~20 s). Production may split it (a cheap always-on machine for search words, this one for photos): decide in Phase 5 with real traffic.
 - 2026-11-04 — Photos reach the fingerprint service as links to our own R2 photos only (an allow-list, plus a public-address check): shop images get copied into our photo pipeline first (Step 3.4), which also strips their metadata. `/embed-image` takes several boxes so a photo is downloaded once for all its garments.
@@ -330,7 +362,7 @@ Next: Step 3.5 — Automatic link check.
 - 2026-11-02 — Elias asked Claude to work through Phase 1 and Phase 2 overnight without stopping. Each step still gets its own branch + PR, stacked on the previous step's branch; nothing is merged into `main` without Elias.
 
 ## Waiting on Elias
-- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2), then PR #18 (Step 3.3), then PR #19 (Step 3.4), in that order.** Each is built on the one before. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub, or allow Claude to merge (add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings). On GitHub: open the PR → "Merge pull request" → "Confirm merge" → "Delete branch", then do the next one (GitHub then points it at `main` by itself).
+- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2), then PR #18 (Step 3.3), then PR #19 (Step 3.4), then PR #20 (Step 3.5), in that order.** Each is built on the one before. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub, or allow Claude to merge (add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings). On GitHub: open the PR → "Merge pull request" → "Confirm merge" → "Delete branch", then do the next one (GitHub then points it at `main` by itself).
 - **Gemini key for Step 3.3** (garment spotting is built and waits only for this):
   1. Go to https://aistudio.google.com → "Get API key" (left side) → "Create API key", on a Google Cloud project with billing on (the free tier isn't allowed for an app used in the EU).
   2. In the project folder's `.env`, fill in the line `GEMINI_API_KEY=` with the key (Claude can do this if you paste the key in the chat).
@@ -343,7 +375,12 @@ Next: Step 3.5 — Automatic link check.
 - **For Phase 3 (BUILD_PLAN "You provide"):**
   - The Gemini API key: see above.
   - 30 real product links from Nordic shops you want to support (Zalando, H&M, Boozt, NA-KD, Nelly, ASOS…): needed for Step 3.4's check. Put them in a text file, one per line (e.g. `~/Downloads/links.txt`), and tell Claude, or run `pnpm links:try --file ~/Downloads/links.txt --out ~/Downloads/link-report.md` yourself. Then open the report and fill in the "Right?" column by eye: "OK" only means a name and a price came out, not that they're the right ones. Also decide about the shops that block us (Open decisions).
-  - The seed looks' product links, where you know them: helps Steps 3.4–3.6.
+  - The seed looks' product links, where you know them: needed for Step 3.5's check and the Phase 3 gate ("70% of seed items have verified products"). Add them to `~/Downloads/outfitly-seed/looks.json` as `"links": ["https://…", "https://…"]` on each look (or give them to Claude per photo), then `pnpm seed:items ~/Downloads/outfitly-seed` (after the Gemini key, so the looks' pieces are found).
+- **Step 3.5's 100-pair check** (after the key and the seed links):
+  1. `pnpm links:calibrate --make-page`, then open `~/Downloads/outfitly-link-pairs/index.html`.
+  2. For each pair, click **Same** (same product: same item, brand and colour), **Different**, or **Can't tell**. At least 100 Same/Different answers.
+  3. Click **Copy CSV** at the top, paste it into a new text file and save it as `~/Downloads/pairs.csv`.
+  4. `pnpm links:calibrate --file ~/Downloads/pairs.csv --ai` (asks Gemini about the pairs in between, a few cents). It prints PASS when fewer than 5% of wrong items would be verified, and suggests thresholds; Claude sets them with `--set` if they're better.
 - **More outfit photos (2026-11-04):** Streetwear and Sporty have no outfits yet (those folders held only products), Edgy has 6 and Colorful 13. Aim for about 20 each: a person wearing the whole look, or the whole outfit laid out (not one item on its own). Same Drive folders; Claude loads them the same way (`~/Downloads/outfitly-seed`, `looks.json`, `pnpm seed:looks`).
 - **300 outfit photos (Step 2.1), first batch done 2026-11-04 (125 outfits):** put them in one folder (any of JPG / PNG / WebP / HEIC, max 25 MB each, each picture once), then `pnpm seed:looks <folder> --init` writes `looks.json` with one look per photo; fill in caption, tags (occasions/seasons above) and author handle, put several photos in one look if wanted, and run `pnpm seed:looks <folder>`. Claude can do the commands; Elias only needs to give the folder (and captions if he wants them).
 - **A real iPhone photo** (the R2 check used the generated 12 MP test HEIC) (taken somewhere neutral, location on) to add as a test file, so tests use a true iPhone capture.
@@ -372,6 +409,11 @@ Next: Step 3.5 — Automatic link check.
 - 18+ only or teens allowed (Step 5.5)
 
 ## Known issues
+- Link check (Step 3.5):
+  - Nothing is checked on staging yet: it has no Gemini key and no fingerprint service settings (see Waiting on Elias). Waiting items are asked about again every hour (database only, at most 500 an hour).
+  - A verified item isn't checked again when its product's photo changes (same product, new picture), or when its look's photo is read again (`--again`, which replaces the pieces): its matched piece then points at a removed one until the item is checked again.
+  - The review queue has no screen yet (Phase 4's admin page); approving or removing a link check item by hand needs Claude.
+  - The provisional thresholds come from a small sample with boxes drawn by eye; real AI boxes on Elias's photos may score same pairs lower, sending more of them to the AI (a few cents per 1,000).
 - Link reader (Step 3.4):
   - Barcode merges trust the shop's catalogue: a shop with a wrong barcode (and the same brand) could join two different items. And copied product photos get no safety check (only look photos are read by the AI). Both matter more once anyone can post links (Phase 4).
   - Phase 4: when looks or avatars attach a photo, the API must require that the photo's owner is the active profile; ownerless (shop) photos must never be attachable.
@@ -436,6 +478,12 @@ Next: Step 3.5 — Automatic link check.
 - Feed p95 (Step 2.2, staging, 10,000 looks, 2026-11-03, after review fixes): For You logged out over HTTP from the Mac — page 1 p95 51 ms (p50 43), next pages p95 44 ms (40 runs, final deploy); server's own time page 1 ~29 ms, next pages ~21 ms (Fly logs). Logged in, feed code on the Mac against the staging database (≈ 16 ms per round trip, so mostly network): `@loadtest.01` (5 follows, taste, 300 seen) page 1 p95 114 ms, next pages 41 ms; Following p95 66 ms; worst case `@loadtest.07` (taste no look matches, so the taste pool reads the whole catalogue) page 1 p95 165 ms. Before fixing the query shape: logged-in page 1 600 ms.
 - Cold start to cached feed: —
 - AI cost per 1,000 photos: — (Step 3.3; measured by `pnpm ai:spot-check` once the Gemini key exists. Estimate ≈ $1: about 1,500 input and 400 output tokens per photo on 3.1 Flash-Lite)
+- Link check thresholds, **provisional** (Step 3.5, 2026-11-05; not the Done-when measurement, which needs Elias's 100 labelled pairs). Marqo-FashionSigLIP on the Mac; "piece" = a box drawn by eye around the garment on a worn photo, compared with another photo of the product:
+  - Same product (8 products from Zalando, Ellos and Gina Tricot, worn-photo piece vs the product's other photos, packshots included): 127 pairs, min 0.694, p5 0.748, median 0.842, max 0.954.
+  - Hard different (same kind of piece, often the same colour; includes the same coat model in other colours, and a cardigan in another colour): 719 pairs, median 0.669, p98 0.822, max 0.880.
+  - Easy different (another kind of piece): 638 pairs, max 0.748.
+  - Elias's 125 outfits (rough upper-body / lower-body / feet regions) vs his 166 single-product photos: 62,250 pairs, median 0.535, max 0.842. The highest pairs by eye: one is really the same cardigan and lace top (an outfit laid out flat), the others are near-misses: jeans in another wash 0.842, a lace top 0.831, a striped top in another colour 0.831.
+  - At verified-from 0.85: 46.5% of same pairs are verified without the AI; 0.97% of hard different pairs (0.008% of all different pairs) would be. At rejected-below 0.60: no same pair is rejected, 81% of different pairs are (no AI needed). Hence the provisional 0.85 / 0.60.
 - Link-resolve success rate (Step 3.4, 2026-11-05): **provisional 15 of 30 (50%)**, read from the Mac, on 30 product links Claude found by web search (Elias's own 30 still to come). Zalando 4/4, Nelly 3/3, Boozt 2/2, Ellos 2/2, Gina Tricot 2/2, NA-KD 2/3 (the third now redirects to a category: the product is gone), H&M 0/4, Arket 0/3, Lindex 0/2 (all "403" from Akamai bot protection), ASOS 0/3 (no answer in 10 s), Stayhard 0/2 (pages gone, 404). Without the 3 dead links: 15 of 27 (56%). Names, prices and stock checked by eye on the results: right. From the Stockholm staging machine: Zalando, Boozt, Nelly, Ellos and Gina Tricot read fine; H&M and Lindex blocked; NA-KD once no product data, then fine. Time per link: 0.1–1.1 s (ASOS 10 s, the time limit); with `--save` (photo copy + fingerprint) 3–5 s.
 - Popularity recompute on 10,000 looks (dev DB, from the Mac): 0.8 s first run (every score written), 39 ms when nothing changed (2026-11-03)
 - Monthly running cost estimate (fingerprint service, from Fly's prices × 1.038 for Stockholm; 2026-11-04):
@@ -451,8 +499,12 @@ Next: Step 3.5 — Automatic link check.
 - First EAS Android preview build (free plan): ~40 min in queue + ~15 min building; APK 107 MB (2026-11-02)
 
 ## Later (parked ideas, not in current scope)
+- Link check (Step 3.5):
+  - Check verified items again when their product's photo changes or their look's photo is read again.
+  - Phase 4: removing a look item must use `removeLookItems` (it closes the review item); the posting UI uses `addLookItem`; the look page (3.6) shows a dot from `coalesce(garment_id, matched_garment_id)`.
+  - Phase 4 admin page: approve / reject link check items (set the item's status, close the review item).
+  - Measure the compare prompt on real pairs (the first `--ai` run) and adjust it if Gemini is often unsure.
 - Link reader (Step 3.4):
-  - Step 3.5 can set `products.category` from the linked garment (the reader leaves it empty).
   - Step 3.9's refresh: read an offer's `page_url` and save the read with the offer's own `url` through `saveLinkRead`; the same matching rules then apply (a page that changed item moves the offer).
   - Delete the R2 files of retired product photos with a cleanup job.
   - Show a "try again" button in the app when an answer says `temporary: true`.

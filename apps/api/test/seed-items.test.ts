@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { and, eq, isNull, lookItems } from '@outfitly/db';
+import { and, eq, isNull, lookItems, offers, sql } from '@outfitly/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { placeholderPhoto } from '../scripts/seed/fake-looks.ts';
 import { seedLookItems, type SeedItemsOptions } from '../scripts/seed/items.ts';
@@ -84,6 +84,7 @@ function options(overrides: Partial<SeedItemsOptions> = {}): SeedItemsOptions {
     embedder: embedder.client,
     dailyCapMicros: 5_000_000,
     network: shop.network,
+    minGapMs: 0,
     ...overrides,
   };
 }
@@ -119,7 +120,7 @@ describe('pnpm seed:items (the seed looks’ shop links)', () => {
       .where(and(eq(lookItems.lookId, lookId), isNull(lookItems.deletedAt)));
     expect(items).toHaveLength(1);
     expect(items[0]?.status).toBe('verified');
-    expect(items[0]?.garmentId).not.toBeNull();
+    expect(items[0]?.matchedGarmentId).not.toBeNull();
 
     // Again: nothing new, and the earlier decision is reported.
     const again = await seedLookItems(options());
@@ -130,6 +131,18 @@ describe('pnpm seed:items (the seed looks’ shop links)', () => {
         .from(lookItems)
         .where(and(eq(lookItems.lookId, lookId), isNull(lookItems.deletedAt))),
     ).toHaveLength(1);
+
+    // The shop is down for a run: the link keeps its item.
+    shop.route('/p/coat', (_req, res) => res.writeHead(503).end());
+    await ctx.db.update(offers).set({ lastCheckedAt: sql`now() - interval '2 hours'` });
+    const down = await seedLookItems(options());
+    expect(down.rows[0]).toMatchObject({ outcome: 'problem', reason: 'link: blocked' });
+    expect(down.removed).toBe(0);
+    shop.route('/p/coat', (_req, res) =>
+      res
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(productPage('Wool coat', shop.url('/coat.jpg'))),
+    );
 
     // A link taken out of the file comes off the look.
     await writeLooks([{ photos: ['look.jpg'], tags: [], author: 'seed.items', links: [] }]);

@@ -333,7 +333,8 @@ async function updateProduct(
       };
   await tx
     .update(products)
-    .set({ ...next, gtin })
+    // A new shop photo gets a new try at being copied in.
+    .set({ ...next, gtin, ...(next.imageUrl !== current.imageUrl ? { imageFailedAt: null } : {}) })
     .where(eq(products.id, current.id));
   return (
     next.imageUrl !== null && (next.imageUrl !== current.imageUrl || current.imageMediaId === null)

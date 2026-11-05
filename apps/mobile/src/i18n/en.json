@@ -219,11 +219,13 @@
   },
   "linkCheck": {
     "sold_out": "This item is sold out, so it isn’t shown on your look.",
-    "not_similar": "This product doesn’t look like any piece in your photo. Check that the link is for the right item.",
+    "not_similar": "This product doesn’t look like the piece in your photo. Check that the link is for the right item.",
     "ai_different": "This looks like a different piece from the one in your photo. Check that the link is for the right item.",
     "link_removed": "The shop link no longer works, so it isn’t shown on your look.",
     "ai_unsure": "We’re checking that this is the same piece. It shows on your look once it’s confirmed.",
     "no_product_photo": "The shop gave no photo of this item, so we’re checking it by hand.",
-    "no_garment": "We couldn’t find this piece in your photo, so we’re checking it by hand."
+    "no_garment": "We couldn’t find this piece in your photo, so we’re checking it by hand.",
+    "dot_not_on_piece": "We couldn’t find a piece where you put the dot, so we’re checking it by hand.",
+    "check_failed": "We couldn’t check this link automatically, so we’re checking it by hand."
   }
 }

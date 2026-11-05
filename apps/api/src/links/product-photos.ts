@@ -68,6 +68,7 @@ export async function copyProductPhoto(
     photo = { body: answer.body, contentType: answer.contentType.split(';')[0] ?? '' };
   } catch (error) {
     if (error instanceof LinkFetchError && !isTemporary(error)) {
+      await markPhotoRefused(db, productId, sourceUrl);
       return { outcome: 'refused', reason: error.message };
     }
     throw error;
@@ -94,6 +95,7 @@ export async function copyProductPhoto(
       throw error;
     }
     await markMediaFailed(db, mediaId, error.message);
+    await markPhotoRefused(db, productId, sourceUrl);
     return { outcome: 'refused', reason: error.message };
   }
 
@@ -101,7 +103,7 @@ export async function copyProductPhoto(
     // Only if the shop photo is still the one copied (a newer read may have changed it).
     const [swapped] = await tx
       .update(products)
-      .set({ imageMediaId: mediaId, embedding: null, embeddingModel: null })
+      .set({ imageMediaId: mediaId, imageFailedAt: null, embedding: null, embeddingModel: null })
       .where(and(eq(products.id, productId), eq(products.imageUrl, sourceUrl)))
       .returning({ id: products.id });
     // The photo no longer shown: the old copy, or this one if the shop photo changed meanwhile.
@@ -114,6 +116,14 @@ export async function copyProductPhoto(
     }
   });
   return { outcome: 'copied', mediaId };
+}
+
+/** The shop photo couldn't be used: link checks waiting for it go to a person now. */
+async function markPhotoRefused(db: Db, productId: string, sourceUrl: string): Promise<void> {
+  await db
+    .update(products)
+    .set({ imageFailedAt: sql`now()` })
+    .where(and(eq(products.id, productId), eq(products.imageUrl, sourceUrl)));
 }
 
 export type ProductFingerprintOutcome =

@@ -19,7 +19,12 @@ import type { EmbedderClient } from '../../src/ai/embedder.ts';
 import type { GeminiClient } from '../../src/ai/gemini.ts';
 import { fingerprintPhoto, SpendCapReachedError, spotPhoto } from '../../src/ai/photos.ts';
 import type { JobQueue } from '../../src/jobs.ts';
-import { addLookItem, checkLookItem, type LinkCheckOutcome } from '../../src/links/check.ts';
+import {
+  addLookItem,
+  checkLookItem,
+  type LinkCheckOutcome,
+  removeLookItems,
+} from '../../src/links/check.ts';
 import { LinkFetchError, type NetworkPolicy } from '../../src/links/fetch.ts';
 import { copyProductPhoto, fingerprintProduct } from '../../src/links/product-photos.ts';
 import { parseLink, readShopLink, saveLinkRead } from '../../src/links/resolve.ts';
@@ -40,6 +45,8 @@ export interface SeedItemsOptions {
   dailyCapMicros: number;
   /** Tests point names at a local shop. */
   network?: NetworkPolicy;
+  /** At least this long between two requests to the same site (default 1 s; tests use 0). */
+  minGapMs?: number;
   log?: (line: string) => void;
 }
 
@@ -83,6 +90,7 @@ export async function seedLookItems(options: SeedItemsOptions): Promise<SeedItem
   const photoDeps = { db, storage, gemini, embedder, dailyCapMicros: options.dailyCapMicros };
   let removed = 0;
   let capReached = false;
+  const pace = pacer(options.minGapMs ?? 1000);
 
   for (const entry of entries) {
     const first = entry.photos[0] ?? '';
@@ -120,7 +128,7 @@ export async function seedLookItems(options: SeedItemsOptions): Promise<SeedItem
       };
       rows.push(row);
       try {
-        const offer = await offerFor(options, link);
+        const offer = await offerFor(options, link, pace);
         row.product = offer.product;
         offerIds.push(offer.offerId);
         const item = await addLookItem(db, queue, { lookId, offerId: offer.offerId });
@@ -129,21 +137,27 @@ export async function seedLookItems(options: SeedItemsOptions): Promise<SeedItem
         if (!(error instanceof LinkFetchError)) throw error;
         row.reason = `link: ${error.problem}`;
         log(`  ${link}: ${error.message}`);
+        // A link that can't be read this time keeps the item it already has.
+        const known = await knownOffer(db, link, options.network);
+        if (known) offerIds.push(known);
       }
     }
 
-    // Links taken out of the file come off the look.
+    // Links taken out of the file come off the look (their review items close).
     const gone = await db
-      .update(lookItems)
-      .set({ deletedAt: sql`now()` })
+      .select({ id: lookItems.id })
+      .from(lookItems)
       .where(
         and(
           eq(lookItems.lookId, lookId),
           isNull(lookItems.deletedAt),
           ...(offerIds.length > 0 ? [notInArray(lookItems.offerId, offerIds)] : []),
         ),
-      )
-      .returning({ id: lookItems.id });
+      );
+    await removeLookItems(
+      db,
+      gone.map((g) => g.id),
+    );
     removed += gone.length;
   }
 
@@ -221,10 +235,43 @@ async function readLookPhotos(
   return true;
 }
 
+type Pace = (url: string) => Promise<void>;
+
+/** Waits so that two requests to the same site are at least `gapMs` apart (polite to shops). */
+function pacer(gapMs: number): Pace {
+  const last = new Map<string, number>();
+  return async (url) => {
+    const host = new URL(url).hostname;
+    const wait = (last.get(host) ?? 0) + gapMs - Date.now();
+    if (wait > 0) await new Promise((done) => setTimeout(done, wait));
+    last.set(host, Date.now());
+  };
+}
+
+/** The offer a link already has, if any (without reading the shop). */
+async function knownOffer(
+  db: Db,
+  link: string,
+  network: NetworkPolicy | undefined,
+): Promise<string | null> {
+  let url: URL;
+  try {
+    url = parseLink(link, network);
+  } catch {
+    return null;
+  }
+  const [offer] = await db
+    .select({ id: offers.id })
+    .from(offers)
+    .where(and(eq(offers.url, url.href), isNull(offers.deletedAt)));
+  return offer?.id ?? null;
+}
+
 /** The offer for a link: read from the shop (unless read in the last hour), photo copied in. */
 async function offerFor(
   options: SeedItemsOptions,
   link: string,
+  pace: Pace,
 ): Promise<{ offerId: string; product: string }> {
   const { db, storage, embedder, network } = options;
   const url = parseLink(link, network);
@@ -246,6 +293,7 @@ async function offerFor(
     offerId = known.offerId;
     productId = known.productId;
   } else {
+    await pace(url.href);
     const read = await readShopLink(url, { network });
     const saved = await saveLinkRead(db, read);
     offerId = saved.offerId;
@@ -253,6 +301,11 @@ async function offerFor(
   }
   const photoDeps = { db, storage, embedder, network };
   try {
+    const [photo] = await db
+      .select({ imageUrl: products.imageUrl, copied: products.imageMediaId })
+      .from(products)
+      .where(eq(products.id, productId));
+    if (photo?.imageUrl && !photo.copied) await pace(photo.imageUrl);
     await copyProductPhoto(photoDeps, productId);
     if (embedder) await fingerprintProduct(photoDeps, productId);
   } catch (error) {

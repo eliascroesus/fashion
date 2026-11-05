@@ -4,8 +4,10 @@ import {
   evaluate,
   type LabelledPair,
   parsePairsCsv,
+  parseThresholdArgs,
   suggest,
 } from '../scripts/link-pairs/calibrate.ts';
+import { thresholdsSchema } from '../src/links/check.ts';
 import { type PairPageData, renderPairPage } from '../scripts/link-pairs/page.ts';
 
 const G = '00000000-0000-4000-8000-00000000000';
@@ -44,12 +46,32 @@ describe('link check calibration', () => {
   it('suggests thresholds that let at most 2% of wrong items through on the fingerprint', () => {
     const suggested = suggest(pairs);
     // 1 of 50 different pairs (2%) is at 0.79: verified from 0.79 lets exactly that one through.
-    expect(suggested.verifyAt).toBe(0.79);
-    expect(
-      evaluate(pairs, suggested.verifyAt, suggested.rejectBelow).wrongVerifiedShare,
-    ).toBeLessThanOrEqual(0.02);
+    expect(suggested).toEqual({ verifyAt: 0.79, rejectBelow: 0.75 });
     // No good pair is below 0.75, so nothing good is rejected up to there.
-    expect(suggested.rejectBelow).toBe(0.75);
+    expect(evaluate(pairs, 0.79, 0.75).wrongVerifiedShare).toBeLessThanOrEqual(0.02);
+  });
+
+  it('suggests nothing from too few pairs', () => {
+    expect(suggest([...same, ...different.slice(0, 29)])).toBeNull();
+    expect(suggest([...same.slice(0, 9), ...different])).toBeNull();
+  });
+
+  it('`--set` takes two plain numbers the check accepts, nothing else', () => {
+    expect(parseThresholdArgs('0.85', '0.6')).toEqual({ verifyAt: 0.85, rejectBelow: 0.6 });
+    for (const [v, r] of [
+      [undefined, undefined],
+      ['', ''],
+      ['0.85', undefined],
+      ['abc', '0.5'],
+      ['0.85', '-0.1'],
+      ['0.4', '0.3'],
+      ['0.8', '0.8'],
+      ['1.2', '0.5'],
+    ] as const) {
+      expect(() => parseThresholdArgs(v, r)).toThrow();
+    }
+    // The same rules guard the database value: 0/0 (what empty input once became) is refused.
+    expect(thresholdsSchema.safeParse({ verifyAt: 0, rejectBelow: 0 }).success).toBe(false);
   });
 
   it('reads the CSV the page copies, and refuses anything else', () => {

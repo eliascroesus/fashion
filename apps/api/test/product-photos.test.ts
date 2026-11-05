@@ -120,6 +120,17 @@ describe('product photos', () => {
     expect((await copyProductPhoto(deps, missing)).outcome).toBe('refused');
     const internal = await product('http://169.254.169.254/latest/meta-data/photo.jpg');
     expect((await copyProductPhoto(deps, internal)).outcome).toBe('refused');
+    // Recorded, so link checks waiting for these photos go to a person right away.
+    for (const id of [fake, html, missing, internal]) {
+      expect((await productRow(id))?.imageFailedAt).not.toBeNull();
+    }
+    // A working photo later clears it.
+    await ctx.db
+      .update(products)
+      .set({ imageUrl: shop.url('/red.jpg') })
+      .where(eq(products.id, fake));
+    expect((await copyProductPhoto(deps, fake)).outcome).toBe('copied');
+    expect((await productRow(fake))?.imageFailedAt).toBeNull();
     expect(await copyProductPhoto(deps, await product(null))).toEqual({
       outcome: 'skipped',
       reason: 'no shop photo',

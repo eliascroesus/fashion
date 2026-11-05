@@ -1,4 +1,4 @@
-import { GARMENT_CATEGORIES } from '@outfitly/shared';
+import { GARMENT_CATEGORIES, LINK_CHECK_REASONS } from '@outfitly/shared';
 import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
@@ -87,6 +87,8 @@ export const products = pgTable(
     gtin: text('gtin'),
     imageUrl: text('image_url'),
     imageMediaId: uuid('image_media_id').references(() => media.id, { onDelete: 'set null' }),
+    /** When copying the shop's photo in was refused (a broken or unusable picture); cleared by a new one. */
+    imageFailedAt: timestamp('image_failed_at', { withTimezone: true }),
     ...fingerprint(),
     ownerProfileId: uuid('owner_profile_id').references((): AnyPgColumn => profiles.id),
     ...softDelete(),
@@ -147,10 +149,14 @@ export const offers = pgTable(
 ).enableRLS();
 
 /**
- * The "shop the look" list: an offer shown on a look, usually for a garment
- * the AI spotted. The dot sits on a photo, in fractions of it like garment
- * boxes (no photo = no dot); the API makes sure it's one of the look's photos. `match_score` is the cosine
- * similarity of the garment's and product's fingerprints (Step 3.5).
+ * The "shop the look" list: an offer shown on a look. `garment_id` is the
+ * piece the poster picked (if they did); `matched_garment_id` the piece the
+ * link check compared the product with (Step 3.5: the poster's pick, the
+ * piece under their dot, or the most alike piece). The dot sits on a photo,
+ * in fractions of it like garment boxes (no photo = no dot); the API makes
+ * sure it's one of the look's photos. `match_score` is the cosine similarity
+ * of the matched garment's and product's fingerprints. `pending_since`: when
+ * it last started waiting for a check; `checked_at`: when the check last ran.
  */
 export const lookItems = pgTable(
   'look_items',
@@ -163,11 +169,16 @@ export const lookItems = pgTable(
       .notNull()
       .references(() => offers.id),
     garmentId: uuid('garment_id').references(() => garments.id, { onDelete: 'set null' }),
+    matchedGarmentId: uuid('matched_garment_id').references(() => garments.id, {
+      onDelete: 'set null',
+    }),
     mediaId: uuid('media_id').references(() => media.id),
     dotX: real('dot_x'),
     dotY: real('dot_y'),
     matchScore: real('match_score'),
     status: lookItemStatus('status').notNull().default('pending'),
+    pendingSince: timestamp('pending_since', { withTimezone: true }).defaultNow(),
+    checkedAt: timestamp('checked_at', { withTimezone: true }),
     ...softDelete(),
   },
   (t) => [
@@ -175,6 +186,11 @@ export const lookItems = pgTable(
     uniqueIndex('look_items_look_offer_key').on(t.lookId, t.offerId),
     index('look_items_offer_id_idx').on(t.offerId),
     index('look_items_garment_id_idx').on(t.garmentId),
+    index('look_items_matched_garment_id_idx').on(t.matchedGarmentId),
+    // The hourly sweep: pending items, least recently tried first.
+    index('look_items_pending_idx')
+      .on(t.checkedAt)
+      .where(sql`${t.status} = 'pending' and ${t.deletedAt} is null`),
     index('look_items_media_id_idx')
       .on(t.mediaId)
       .where(sql`${t.mediaId} is not null`),
@@ -212,6 +228,10 @@ export const linkChecks = pgTable(
   (t) => [
     index('link_checks_look_item_id_idx').on(t.lookItemId),
     check('link_checks_similarity_range', sql`${t.similarity} between -1 and 1`),
+    check(
+      'link_checks_reason_known',
+      sql`${t.reason} in (${sql.raw(LINK_CHECK_REASONS.map((r) => `'${r}'`).join(', '))})`,
+    ),
     check('link_checks_details_is_object', sql`jsonb_typeof(${t.details}) = 'object'`),
   ],
 ).enableRLS();

@@ -24,6 +24,7 @@ import {
 import { deleteOldSeen } from './events.ts';
 import { deleteOldFeedSnapshots, recomputePopularity } from './feed/popularity.ts';
 import {
+  CompareAnswerError,
   checkLookItem,
   LINK_CHECK_QUEUES,
   type LinkCheckDeps,
@@ -290,8 +291,10 @@ async function startLinkCheckJobs(boss: PgBoss, options: WorkerDeps): Promise<vo
           });
           continue;
         }
-        // Retried; after its retries it stays pending, and the hourly sweep asks again.
         log.error({ err: error, lookItemId: data.lookItemId }, 'link check failed');
+        // An unusable paid answer isn't retried now (cost): the hourly sweep asks again, and
+        // the second one sends the item to a person. Everything else is retried.
+        if (error instanceof CompareAnswerError) continue;
         throw error;
       }
     }
