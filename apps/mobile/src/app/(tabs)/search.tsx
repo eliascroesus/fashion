@@ -94,6 +94,7 @@ export default function SearchScreen() {
         <View style={[styles.fill, showPanel && styles.hidden]}>
           <LookGrid
             list={results}
+            origin="search"
             testID="search-results"
             cardTestID="search-card"
             onVisibleChange={impressions.onVisibleChange}

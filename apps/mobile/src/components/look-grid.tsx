@@ -1,4 +1,4 @@
-import type { FeedCard } from '@outfitly/shared';
+import type { ClickSource, FeedCard } from '@outfitly/shared';
 import {
   FlashList,
   type FlashListRef,
@@ -84,6 +84,8 @@ interface LookGridProps {
   scrollRef?: RefObject<FlashListRef<FeedCard> | null>;
   /** Extra room under the last cards, for something floating over the bottom. */
   bottomInset?: number;
+  /** Which list this is, so a Shop tap on a look opened from it says where the look came from. */
+  origin?: ClickSource;
 }
 
 /**
@@ -106,6 +108,7 @@ export function LookGrid({
   refreshable = true,
   scrollRef,
   bottomInset = 0,
+  origin,
 }: LookGridProps) {
   const { t } = useTranslation();
   const colors = useColors();
@@ -174,7 +177,7 @@ export function LookGrid({
   }, []);
 
   const renderItem = useCallback(
-    ({ item }: ListRenderItemInfo<FeedCard>) => (
+    ({ item, index }: ListRenderItemInfo<FeedCard>) => (
       <View style={styles.cell}>
         <FeedCardView
           card={item}
@@ -182,11 +185,13 @@ export function LookGrid({
           height={photoHeight(item.photo, width)}
           uri={pickPhotoUrl(item.photo.urls, widthPx)}
           onMenu={openMenu}
+          origin={origin}
+          position={index}
           testID={cardTestID}
         />
       </View>
     ),
-    [width, widthPx, openMenu, cardTestID],
+    [width, widthPx, openMenu, origin, cardTestID],
   );
 
   let footer: ReactElement | null = null;

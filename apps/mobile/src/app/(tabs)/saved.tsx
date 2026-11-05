@@ -42,6 +42,7 @@ function SavesPart({ guest }: { guest: boolean }) {
   return (
     <LookGrid
       list={saves}
+      origin="saved"
       testID="saved-looks"
       cardTestID="saved-card"
       endMessage={null}

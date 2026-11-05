@@ -1,6 +1,7 @@
 import {
   boardItems,
   boards,
+  clicks,
   garments,
   lookItems,
   lookMedia,
@@ -452,6 +453,16 @@ describe('the shop test look (pnpm shop:test-look)', () => {
       ['Real piece', 'in_stock', 129900], // a hat: after bags
     ]);
     expect(detail.items.filter((i) => i.dot !== null)).toHaveLength(5);
+    // A Shop tap on a test piece and one on the real piece.
+    const tapped = (offerId: string) => ({
+      id: crypto.randomUUID(),
+      sessionId: crypto.randomUUID(),
+      lookId: look,
+      offerId,
+      platform: 'ios' as const,
+    });
+    const realOffer = detail.items.find((i) => i.id === real)?.offerId ?? '';
+    await ctx.db.insert(clicks).values([tapped(detail.items[0]?.offerId ?? ''), tapped(realOffer)]);
 
     expect(await removeShopTestPieces(ctx.db)).toBe(5);
     expect((await detailOf(look)).items.map((i) => i.id)).toEqual([real]);
@@ -459,5 +470,10 @@ describe('the shop test look (pnpm shop:test-look)', () => {
       sql`SELECT count(*)::int AS n FROM products WHERE brand = 'Outfitly test'`,
     );
     expect(rows[0]?.n).toBe(0);
+    const left = await ctx.db
+      .select({ offerId: clicks.offerId })
+      .from(clicks)
+      .where(sql`${clicks.lookId} = ${look}`);
+    expect(left).toEqual([{ offerId: realOffer }]);
   });
 });

@@ -86,6 +86,8 @@
     "checkedDaysAgo_other": "Priset kollat för {{count}} dagar sedan",
     "shop": "Handla",
     "shopLabel": "Handla {{name}} hos {{shop}}",
+    "shopHint": "Öppnar {{shop}} i Outfitly",
+    "shopFailed": "Det gick inte att öppna butiken. Försök igen.",
     "tickLabel": "Räkna med {{name}} i summan",
     "dotLabel": "Visa {{name}}",
     "moreLikeThis": "Mer som det här",

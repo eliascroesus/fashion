@@ -108,6 +108,9 @@ export async function addShopTestLook(db: Db, lookId: string): Promise<number> {
 export async function removeShopTestPieces(db: Db): Promise<number> {
   return db.transaction(async (tx) => {
     const like = `${TEST_LINK}%`;
+    // Shop taps made while trying it out (clicks have no foreign keys, so they'd stay).
+    await tx.execute(sql`
+      DELETE FROM clicks WHERE offer_id IN (SELECT id FROM offers WHERE url LIKE ${like})`);
     const items = await tx.execute(sql`
       DELETE FROM look_items WHERE offer_id IN (SELECT id FROM offers WHERE url LIKE ${like})`);
     await tx.execute(sql`DELETE FROM offers WHERE url LIKE ${like}`);

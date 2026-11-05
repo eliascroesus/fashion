@@ -1,0 +1,55 @@
+# Shop: tapping Shop opens the shop inside the app (the Safari view on iPhone, never Safari
+# or the shop's own app), and Done brings you back to the same place on the look page, ticks
+# kept. The tap is kept as a click on the phone first and sent in the background.
+#   pnpm shop:test-look        (prints the look id; test pieces on the server in .env)
+#   maestro test -e APP_ID=com.outfitly.app.dev -e SCHEME=outfitly-dev -e LOOK_ID=<id> \
+#     apps/mobile/.maestro/shop-click.yaml
+#   apps/mobile/.maestro/same-place.sh <output folder> look-before look-after
+#   pnpm shop:test-look --remove   (also removes the test pieces' clicks)
+# Then the database has exactly one click for the look (the one tap below).
+appId: ${APP_ID || 'com.outfitly.app'}
+---
+- launchApp:
+    clearState: true
+- runFlow: subflows/skip-taste.yaml
+- openLink: ${SCHEME || 'outfitly'}://look/${LOOK_ID}
+- extendedWaitUntil:
+    visible:
+      id: look-author
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      id: shop-item-shop
+    direction: DOWN
+- tapOn:
+    id: shop-item-tick
+    index: 0
+- assertVisible:
+    id: shop-selected-total
+    text: '1 piece selected: .+'
+- waitForAnimationToEnd
+- takeScreenshot: shop/look-before
+
+- tapOn:
+    id: shop-item-shop
+    index: 0
+- extendedWaitUntil:
+    visible:
+      text: 'Done'
+    timeout: 15000
+- assertNotVisible:
+    id: shop-selected-total
+- waitForAnimationToEnd
+- takeScreenshot: shop/in-app-browser
+- tapOn:
+    text: 'Done'
+
+- extendedWaitUntil:
+    visible:
+      id: shop-selected-total
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: shop/look-after
+- assertVisible:
+    id: shop-selected-total
+    text: '1 piece selected: .+'

@@ -6,6 +6,8 @@ import {
   boardItemStateSchema,
   boardListSchema,
   boardSchema,
+  type ClickBatch,
+  clickBatchResultSchema,
   type CreateUploadBody,
   type EventBatch,
   eventBatchResultSchema,
@@ -324,6 +326,11 @@ export function createApiClient(options: ApiClientOptions) {
       /** Resending a batch is safe: the server skips event ids it already has. */
       send: (batch: EventBatch, idempotencyKey: string) =>
         request('POST', '/events', { schema: eventBatchResultSchema, body: batch, idempotencyKey }),
+    },
+    clicks: {
+      /** Resending a batch is safe: the server skips click ids it already has. */
+      send: (batch: ClickBatch, idempotencyKey: string) =>
+        request('POST', '/clicks', { schema: clickBatchResultSchema, body: batch, idempotencyKey }),
     },
   };
 }

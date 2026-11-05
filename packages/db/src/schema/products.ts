@@ -253,7 +253,7 @@ export const clicks = pgTable(
     authorProfileId: uuid('author_profile_id'),
     /** Place of the look in the feed it was opened from (0-based). */
     position: integer('position'),
-    /** Which screen, like `events.source`. */
+    /** Which list (screen) the look was opened from, like `events.source` (`CLICK_SOURCES`). */
     source: text('source'),
     platform: clientPlatform('platform').notNull(),
   },

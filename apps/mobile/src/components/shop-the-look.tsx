@@ -40,7 +40,7 @@ interface ItemRowProps {
   tickable: boolean;
   highlighted: boolean;
   onTick: (id: string) => void;
-  /** Opens the shop (Step 3.7); until then the button shows but can't be pressed. */
+  /** Opens the piece's shop (logs the click first); without it the button shows but can't be pressed. */
   onShop: ((item: LookItem) => void) | undefined;
   onLayout: (id: string, event: LayoutChangeEvent) => void;
 }
@@ -152,6 +152,7 @@ function ItemRow({
           testID="shop-item-shop"
           accessibilityRole="link"
           accessibilityLabel={t('look.shopLabel', { name: title, shop: item.shop })}
+          accessibilityHint={t('look.shopHint', { shop: item.shop })}
           accessibilityState={{ disabled: !onShop }}
           disabled={!onShop}
           onPress={() => {
