@@ -11,7 +11,7 @@ import { z } from 'zod';
  * answer becomes rows. Change the prompt or schema → bump the version, so the
  * log shows which answers came from which.
  */
-export const SPOT_PROMPT_VERSION = 'spot-v1';
+export const SPOT_PROMPT_VERSION = 'spot-v2';
 
 /** More than this is noise (or a shop shelf); the rest is dropped. */
 export const MAX_GARMENTS = 20;
@@ -38,13 +38,17 @@ Then for the whole photo:
 
 If no outfit is visible, return an empty garments list.`;
 
-/** The answer's shape (Gemini `responseJsonSchema`). Lengths are checked again on our side. */
+/**
+ * The answer's shape (Gemini `responseJsonSchema`). Gemini answers 400 "invalid argument" when a
+ * format has too many limits (measured 2026-11-05 on gemini-3.1-flash-lite: these enums plus
+ * number bounds plus list caps was one too many), so counts and box values are only checked on
+ * our side (`parseSpotAnswer`, `boxFromGemini`).
+ */
 export const SPOT_SCHEMA = {
   type: 'object',
   properties: {
     garments: {
       type: 'array',
-      maxItems: MAX_GARMENTS,
       items: {
         type: 'object',
         properties: {
@@ -56,7 +60,7 @@ export const SPOT_SCHEMA = {
           box_2d: {
             type: 'array',
             description: 'The box as [ymin, xmin, ymax, xmax] normalized to 0-1000.',
-            items: { type: 'integer', minimum: 0, maximum: 1000 },
+            items: { type: 'integer' },
             minItems: 4,
             maxItems: 4,
           },
@@ -65,7 +69,7 @@ export const SPOT_SCHEMA = {
       },
     },
     description: { type: 'string' },
-    tags: { type: 'array', items: { type: 'string' }, maxItems: MAX_TAGS },
+    tags: { type: 'array', items: { type: 'string' } },
     safety: {
       type: 'object',
       properties: {

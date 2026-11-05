@@ -139,7 +139,7 @@ describe('reading a look photo (garment spotting)', () => {
         purpose: 'spot_garments',
         model: 'gemini-3.1-flash-lite',
         modelVersion: 'gemini-3.1-flash-lite-001',
-        promptVersion: 'spot-v1',
+        promptVersion: 'spot-v2',
         status: 'ok',
         inputTokens: 1500,
         outputTokens: 300,

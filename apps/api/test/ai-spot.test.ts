@@ -107,6 +107,13 @@ describe('a spotting answer', () => {
     expect(items.properties.box_2d).toMatchObject({ minItems: 4, maxItems: 4 });
     expect(SPOT_SCHEMA.required).toEqual(['garments', 'description', 'tags', 'safety']);
   });
+
+  it('leaves number bounds and list caps out of the format (Gemini refuses the request with them)', () => {
+    const format = JSON.stringify(SPOT_SCHEMA);
+    expect(format).not.toMatch(/"minimum"|"maximum"/);
+    expect(SPOT_SCHEMA.properties.garments).not.toHaveProperty('maxItems');
+    expect(SPOT_SCHEMA.properties.tags).not.toHaveProperty('maxItems');
+  });
 });
 
 describe('the Gemini client', () => {
