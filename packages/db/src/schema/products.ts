@@ -110,12 +110,28 @@ export const products = pgTable(
 ).enableRLS();
 
 /**
+ * What an offer's last price and stock check found (Step 3.9): read fine,
+ * the page now shows another item, the page is gone, the shop turned us away,
+ * it didn't answer, or the page had no product we could read.
+ */
+export const OFFER_REFRESH_OUTCOMES = [
+  'ok',
+  'moved',
+  'gone',
+  'blocked',
+  'failed',
+  'unreadable',
+] as const;
+
+/**
  * Which shop sells a product, at what price. `url` is the poster's link as
  * given, affiliate tags kept: Shop opens it. `page_url` is the shop's product
  * page it lands on (after redirects, tracking removed): price and stock checks
  * read that one, so a check never counts as a click on someone's affiliate link.
  * Prices are in minor units (öre, cents). `price_history` gets an entry each
- * time the price changes (Step 3.9).
+ * time the price changes. `last_checked_at` is the last time the page was
+ * read; the `refresh_*` columns are the daily / weekly check's own record
+ * (Step 3.9), failed tries included.
  */
 export const offers = pgTable(
   'offers',
@@ -131,11 +147,29 @@ export const offers = pgTable(
     stock: offerStock('stock').notNull().default('unknown'),
     lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
     priceHistory: jsonb('price_history').$type<unknown[]>().notNull().default([]),
+    /** The last check's try, whatever it found. */
+    refreshTriedAt: timestamp('refresh_tried_at', { withTimezone: true }),
+    refreshOutcome: text('refresh_outcome', { enum: OFFER_REFRESH_OUTCOMES }),
+    /** Checks in a row that couldn't read the page; a successful read starts over. */
+    refreshFailures: integer('refresh_failures').notNull().default(0),
+    /** Checks in a row that found the page gone; at `goneAfter` the offer counts as sold out. */
+    refreshGone: integer('refresh_gone').notNull().default(0),
+    /** Not checked again before this: tomorrow after a read, later after each failure. */
+    refreshDueAt: timestamp('refresh_due_at', { withTimezone: true }),
     ...softDelete(),
   },
   (t) => [
     uniqueIndex('offers_url_key').on(t.url),
     index('offers_product_id_idx').on(t.productId),
+    // Every link to a shop page is found (and checked) together.
+    index('offers_page_url_idx')
+      .on(t.pageUrl)
+      .where(sql`${t.deletedAt} is null`),
+    check(
+      'offers_refresh_outcome_known',
+      sql`${t.refreshOutcome} in (${sql.raw(OFFER_REFRESH_OUTCOMES.map((o) => `'${o}'`).join(', '))})`,
+    ),
+    check('offers_refresh_counts', sql`${t.refreshFailures} >= 0 and ${t.refreshGone} >= 0`),
     check('offers_url_web', sql`${t.url} ~ '^https?://' and ${t.pageUrl} ~ '^https?://'`),
     check(
       'offers_url_length',
@@ -145,6 +179,50 @@ export const offers = pgTable(
     check('offers_price_not_negative', sql`${t.priceMinor} >= 0`),
     check('offers_currency_format', sql`${t.currency} ~ '^[A-Z]{3}$'`),
     check('offers_price_history_is_list', sql`jsonb_typeof(${t.priceHistory}) = 'array'`),
+  ],
+).enableRLS();
+
+/**
+ * One run of the price and stock check (Step 3.9, every 10 minutes): shop
+ * pages read for saved or popular looks and for the rest (the two daily caps
+ * count these), and what was found (`{ ok, priceChanged, soldOut, … }`).
+ */
+export const priceRefreshRuns = pgTable(
+  'price_refresh_runs',
+  {
+    ...baseColumns(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    readsSavedOrPopular: integer('reads_saved_or_popular').notNull().default(0),
+    readsOthers: integer('reads_others').notNull().default(0),
+    found: jsonb('found').$type<Record<string, number>>().notNull().default({}),
+  },
+  (t) => [
+    index('price_refresh_runs_created_at_idx').on(t.createdAt),
+    check(
+      'price_refresh_runs_reads_not_negative',
+      sql`${t.readsSavedOrPopular} >= 0 and ${t.readsOthers} >= 0`,
+    ),
+    check('price_refresh_runs_found_is_object', sql`jsonb_typeof(${t.found}) = 'object'`),
+  ],
+).enableRLS();
+
+/**
+ * Shops (sites, `www.` / `m.` left out) that turned the check away or didn't
+ * answer: none of their pages is read before `rest_until`, which gets longer
+ * each time in a row (`strikes`). A successful read removes the row.
+ */
+export const priceRefreshSites = pgTable(
+  'price_refresh_sites',
+  {
+    ...baseColumns(),
+    site: text('site').notNull(),
+    restUntil: timestamp('rest_until', { withTimezone: true }).notNull(),
+    lastProblem: text('last_problem').notNull(),
+    strikes: integer('strikes').notNull().default(1),
+  },
+  (t) => [
+    uniqueIndex('price_refresh_sites_site_key').on(t.site),
+    check('price_refresh_sites_strikes_positive', sql`${t.strikes} >= 1`),
   ],
 ).enableRLS();
 

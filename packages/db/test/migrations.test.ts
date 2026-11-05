@@ -25,6 +25,8 @@ const EXPECTED_TABLES = [
   'media',
   'moderation_queue',
   'offers',
+  'price_refresh_runs',
+  'price_refresh_sites',
   'products',
   'profile_members',
   'profiles',

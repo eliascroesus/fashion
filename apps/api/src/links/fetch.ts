@@ -28,13 +28,30 @@ export class LinkFetchError extends Error {
   readonly problem: LinkProblem;
   /** The shop's HTTP status, when it answered. */
   readonly httpStatus: number | null;
+  /** How long a busy shop (429 / 503) asked us to wait (`Retry-After`), when it said. */
+  readonly retryAfterMs: number | null;
 
-  constructor(problem: LinkProblem, message: string, httpStatus: number | null = null) {
+  constructor(
+    problem: LinkProblem,
+    message: string,
+    httpStatus: number | null = null,
+    retryAfterMs: number | null = null,
+  ) {
     super(message);
     this.name = 'LinkFetchError';
     this.problem = problem;
     this.httpStatus = httpStatus;
+    this.retryAfterMs = retryAfterMs;
   }
+}
+
+/** `Retry-After` as seconds or an HTTP date, in ms from `now`; null when missing or unreadable. */
+export function retryAfterMs(header: string | null, now = Date.now()): number | null {
+  if (header === null) return null;
+  const value = header.trim();
+  if (/^\d{1,9}$/.test(value)) return Number(value) * 1000;
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : Math.max(0, at - now);
 }
 
 /** Worth trying again later: the shop was down, slow or busy (429 / 503), not refusing. */
@@ -135,6 +152,7 @@ async function readBody(
 interface Answer {
   status: number;
   location: string | null;
+  retryAfter: string | null;
   contentType: string;
   body: Buffer;
   truncated: boolean;
@@ -178,10 +196,18 @@ function requestOnce(
       const status = response.statusCode ?? 0;
       const contentType = (response.headers['content-type'] ?? '').toLowerCase();
       const location = response.headers.location ?? null;
+      const retryAfter = response.headers['retry-after'] ?? null;
       if (status !== 200) {
         // The body of a redirect or an error page isn't wanted: don't download it.
         response.destroy();
-        resolve({ status, location, contentType, body: Buffer.alloc(0), truncated: false });
+        resolve({
+          status,
+          location,
+          retryAfter,
+          contentType,
+          body: Buffer.alloc(0),
+          truncated: false,
+        });
         return;
       }
       if (!options.contentTypes.some((type) => contentType.startsWith(type))) {
@@ -206,7 +232,7 @@ function requestOnce(
       readBody(stream, options.maxBytes, options.overLimit)
         .then(({ body, truncated }) => {
           response.destroy();
-          resolve({ status, location, contentType, body, truncated });
+          resolve({ status, location, retryAfter, contentType, body, truncated });
         })
         .catch(reject);
     });
@@ -233,11 +259,15 @@ function problemFor(error: unknown, signal: AbortSignal): LinkFetchError {
   return new LinkFetchError('unreachable', "The shop couldn't be reached.");
 }
 
-function problemForStatus(status: number): LinkFetchError {
+function problemForStatus(status: number, retryAfter: string | null): LinkFetchError {
   if (status === 404 || status === 410) {
     return new LinkFetchError('not_found', 'The shop says this page no longer exists.', status);
   }
-  if (status === 401 || status === 403 || status === 429 || status === 503 || status === 999) {
+  if (status === 429 || status === 503) {
+    const wait = retryAfterMs(retryAfter);
+    return new LinkFetchError('blocked', 'The shop turned our link reader away.', status, wait);
+  }
+  if (status === 401 || status === 403 || status === 999) {
     return new LinkFetchError('blocked', 'The shop turned our link reader away.', status);
   }
   return new LinkFetchError('unreachable', `The shop answered ${String(status)}.`, status);
@@ -267,7 +297,7 @@ export async function safeFetch(start: URL, options: FetchOptions): Promise<Fetc
       }
       continue;
     }
-    if (answer.status !== 200) throw problemForStatus(answer.status);
+    if (answer.status !== 200) throw problemForStatus(answer.status, answer.retryAfter);
     return { url, contentType: answer.contentType, body: answer.body, truncated: answer.truncated };
   }
 }

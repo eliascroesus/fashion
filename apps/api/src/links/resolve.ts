@@ -77,38 +77,66 @@ export async function readShopLink(
   url: URL,
   options: { network?: NetworkPolicy; fallback?: FallbackReader | null },
 ): Promise<LinkRead> {
-  let finalUrl = url;
-  let product: PageProduct | null = null;
-  let canonicalUrl: string | null = null;
-  let truncated = false;
+  let page: ShopPage | null = null;
   let failure: LinkFetchError | null = null;
   try {
-    const page = await safeFetch(url, {
-      accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
-      maxBytes: PAGE_BYTES,
-      overLimit: 'truncate',
-      contentTypes: ['text/html', 'application/xhtml+xml'],
-      network: options.network,
-    });
-    finalUrl = page.url;
-    truncated = page.truncated;
-    const read = readProductPage(pageText(page.body, page.contentType), page.url);
-    product = read.product;
-    canonicalUrl = read.canonicalUrl;
+    page = await readShopPage(url, options.network);
   } catch (error) {
     if (!(error instanceof LinkFetchError)) throw error;
     failure = error;
   }
-  if (!product && options.fallback && failure === null) {
-    product = await options.fallback(finalUrl.href).catch(() => null);
+  let product = page?.product ?? null;
+  if (page && !product && options.fallback) {
+    product = await options.fallback(page.finalUrl.href).catch(() => null);
   }
   if (!product) {
     throw failure ?? linkProblem('no_product', 'We found no product on that page.');
   }
-  if (product.imageUrl && !fitsLinkLimit(product.imageUrl)) {
-    product = { ...product, imageUrl: null };
-  }
-  return { url: url.href, pageUrl: shopPageUrl(finalUrl, canonicalUrl), product, truncated };
+  return {
+    url: url.href,
+    pageUrl: page?.pageUrl ?? shopPageUrl(url, null),
+    product: withUsablePhoto(product),
+    truncated: page?.truncated ?? false,
+  };
+}
+
+/** One shop page as read: where it ended up, and its product if the page has one. */
+export interface ShopPage {
+  /** Where the answer came from, after redirects. */
+  finalUrl: URL;
+  /** The shop's own page for it (canonical link if any, tracking removed): `offers.page_url`. */
+  pageUrl: string;
+  product: PageProduct | null;
+  truncated: boolean;
+}
+
+/**
+ * Fetches a shop page (redirects followed, every limit of `safeFetch`) and
+ * reads its product data, if any. Throws `LinkFetchError`. The paste flow
+ * (`readShopLink`) and the daily price check (Step 3.9) both read pages here.
+ */
+export async function readShopPage(url: URL, network?: NetworkPolicy): Promise<ShopPage> {
+  const page = await safeFetch(url, {
+    accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
+    maxBytes: PAGE_BYTES,
+    overLimit: 'truncate',
+    contentTypes: ['text/html', 'application/xhtml+xml'],
+    network,
+  });
+  const read = readProductPage(pageText(page.body, page.contentType), page.url);
+  return {
+    finalUrl: page.url,
+    pageUrl: shopPageUrl(page.url, read.canonicalUrl),
+    product: read.product ? withUsablePhoto(read.product) : null,
+    truncated: page.truncated,
+  };
+}
+
+/** A photo link longer than we keep is dropped (the product is still saved). */
+function withUsablePhoto(product: PageProduct): PageProduct {
+  return product.imageUrl && !fitsLinkLimit(product.imageUrl)
+    ? { ...product, imageUrl: null }
+    : product;
 }
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -194,10 +222,18 @@ async function matchProduct(
     .from(products)
     .where(and(eq(products.gtin, found.gtin), isNull(products.deletedAt)));
   if (!byBarcode || brandKey(byBarcode.brand) !== brandKey(found.brand)) return null;
+  // The link's own page from before doesn't count: a shop that moved the page (a new
+  // address for the same barcode) still sells the same item.
   const pages = await tx
     .select({ pageUrl: offers.pageUrl })
     .from(offers)
-    .where(and(eq(offers.productId, byBarcode.id), isNull(offers.deletedAt)));
+    .where(
+      and(
+        eq(offers.productId, byBarcode.id),
+        isNull(offers.deletedAt),
+        sameLink ? ne(offers.id, sameLink.id) : undefined,
+      ),
+    );
   // The same page with or without www. / m. is still the same page.
   const here = new URL(read.pageUrl);
   const otherPageHere = pages.some((p) => {

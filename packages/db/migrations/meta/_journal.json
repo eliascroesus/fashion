@@ -134,6 +134,13 @@
       "when": 1793856646300,
       "tag": "0018_look_lists_profile_index",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793858345316,
+      "tag": "0019_price_refresh",
+      "breakpoints": true
     }
   ]
 }

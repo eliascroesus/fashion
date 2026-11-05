@@ -31,7 +31,9 @@
     "links:calibrate": "pnpm --filter @outfitly/api links-calibrate",
     "embedder:test": "cd services/embedder && uv run pytest",
     "embedder:speed": "cd services/embedder && uv run --env-file ../../.env python scripts/speed.py",
-    "dev:app": "pnpm --filter @outfitly/mobile start"
+    "dev:app": "pnpm --filter @outfitly/mobile start",
+    "prices:refresh": "pnpm --filter @outfitly/api price-refresh",
+    "refresh:demo": "pnpm --filter @outfitly/api refresh-demo"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
