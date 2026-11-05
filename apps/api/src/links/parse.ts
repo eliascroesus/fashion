@@ -229,48 +229,39 @@ const MAX_TAGS = 2000;
 /** Longer meta / link tags are skipped (real ones are a few hundred bytes). */
 const MAX_TAG_LENGTH = 16 * 1024;
 
-/** Whether `html` has `<name` (any case) at `at`, followed by a space, `/` or `>`. */
-function opensTag(html: string, at: number, name: string): boolean {
-  for (let k = 0; k < name.length; k++) {
-    // `| 0x20` lower-cases ASCII letters; names are lower-case letters.
-    if ((html.charCodeAt(at + 1 + k) | 0x20) !== name.charCodeAt(k)) return false;
-  }
-  const next = html.charCodeAt(at + 1 + name.length);
-  return (
-    Number.isNaN(next) || next === 0x2f || next === 0x3e || /\s/.test(String.fromCharCode(next))
-  );
-}
-
 /**
  * Each `<name …>` tag (and with `content`, what's up to its `</name`), in one
  * pass over the page: every search starts where the last one ended, and an
- * unclosed tag ends the scan, so a hostile page can't make it slow.
+ * unclosed tag ends the scan, so a hostile page can't make it slow. The
+ * patterns are a fixed word plus a one-character look-ahead (nothing to
+ * backtrack over).
  */
 function* elements(
   html: string,
   name: string,
   content: boolean,
 ): Generator<{ tag: string; content: string }> {
+  const opener = new RegExp(`<${name}(?=[\\s/>]|$)`, 'gi');
+  const closer = new RegExp(`</${name}(?=[\\s/>]|$)`, 'gi');
   let from = 0;
-  for (let found = 0; found < MAX_TAGS;) {
-    const open = html.indexOf('<', from);
-    if (open === -1) return;
-    from = open + 1;
-    if (!opensTag(html, open, name)) continue;
-    const end = html.indexOf('>', open);
+  for (let found = 0; found < MAX_TAGS; found++) {
+    opener.lastIndex = from;
+    const open = opener.exec(html);
+    if (!open) return;
+    const end = html.indexOf('>', open.index);
     if (end === -1) return;
     from = end + 1;
-    found += 1;
     if (!content) {
-      if (end - open <= MAX_TAG_LENGTH) yield { tag: html.slice(open, end + 1), content: '' };
+      if (end - open.index <= MAX_TAG_LENGTH)
+        yield { tag: html.slice(open.index, end + 1), content: '' };
       continue;
     }
-    let close = html.indexOf('</', from);
-    while (close !== -1 && !opensTag(html, close + 1, name)) close = html.indexOf('</', close + 2);
-    if (close === -1) return;
-    const closeEnd = html.indexOf('>', close);
+    closer.lastIndex = from;
+    const close = closer.exec(html);
+    if (!close) return;
+    const closeEnd = html.indexOf('>', close.index);
     if (closeEnd === -1) return;
-    yield { tag: html.slice(open, end + 1), content: html.slice(end + 1, close) };
+    yield { tag: html.slice(open.index, end + 1), content: html.slice(end + 1, close.index) };
     from = closeEnd + 1;
   }
 }
