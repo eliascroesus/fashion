@@ -1,4 +1,5 @@
 import { createDb } from '@outfitly/db';
+import { photoAiClients } from './ai/clients.ts';
 import { buildApp } from './app.ts';
 import { supabaseJwks } from './auth.ts';
 import { loadConfig, r2Config } from './config.ts';
@@ -16,7 +17,12 @@ const app = await buildApp({
   storage,
   queue: boss,
 });
-await startJobs(boss, { db, storage, log: app.log });
+const ai = photoAiClients(config);
+app.log.info(
+  { spotting: ai.gemini?.model ?? 'off', fingerprints: ai.embedder ? 'on' : 'off' },
+  'photo AI',
+);
+await startJobs(boss, { db, storage, log: app.log, ai });
 await boss.send(QUEUES.ping, { reason: 'startup' });
 await boss.send(QUEUES.eventPartitions, {});
 await boss.send(QUEUES.searchTerms, {});

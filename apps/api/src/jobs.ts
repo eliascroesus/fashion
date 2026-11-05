@@ -1,6 +1,26 @@
-import { type Db, ensureEventPartitions, idempotencyKeys, lt, sql } from '@outfitly/db';
+import {
+  and,
+  type Db,
+  ensureEventPartitions,
+  eq,
+  idempotencyKeys,
+  isNull,
+  lt,
+  media,
+  sql,
+} from '@outfitly/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { PgBoss } from 'pg-boss';
+import type { PhotoAiClients } from './ai/clients.ts';
+import { EmbedderError } from './ai/embedder.ts';
+import {
+  fingerprintPhoto,
+  looksOfPhoto,
+  nextUtcDay,
+  type PhotoAiDeps,
+  SpendCapReachedError,
+  spotPhoto,
+} from './ai/photos.ts';
 import { deleteOldSeen } from './events.ts';
 import { deleteOldFeedSnapshots, recomputePopularity } from './feed/popularity.ts';
 import { ImageRejectedError } from './media/image.ts';
@@ -26,6 +46,12 @@ export const QUEUES = {
   seenCleanup: 'seen-cleanup',
   /** Rebuilds search's vocabulary (typos, suggestions, popular tags) from the looks. */
   searchTerms: 'search-terms',
+  /** Reads one of a look's photos with Gemini: garments, sentence, search words, safety. */
+  photoSpot: 'photo-spot',
+  /** Photos whose reading ran out of retries; marks them failed. */
+  photoSpotFailed: 'photo-spot-failed',
+  /** Fingerprints a photo and its garments (services/embedder). */
+  photoFingerprint: 'photo-fingerprint',
 } as const;
 
 /** What routes need to enqueue work. */
@@ -53,6 +79,32 @@ export interface WorkerDeps {
   pollingIntervalSeconds?: number;
   /** Seconds between photo-processing retries (tests use 0). */
   mediaRetryDelaySeconds?: number;
+  /** Gemini and the fingerprint service (either may be off), and the daily AI spend cap. */
+  ai?: PhotoAiClients;
+  /** Seconds before the first AI retry; later ones wait longer (tests use 0). */
+  aiRetryDelaySeconds?: number;
+}
+
+/**
+ * After one of a look's photos is ready: read it with Gemini (which then
+ * fingerprints it), or, without Gemini, at least fingerprint the whole photo.
+ * Photos that aren't in a look (yet) are left alone.
+ */
+export async function queuePhotoAi(
+  queue: JobQueue,
+  db: Db,
+  ai: PhotoAiClients | undefined,
+  mediaId: string,
+): Promise<void> {
+  if (!ai || (!ai.gemini && !ai.embedder)) return;
+  if ((await looksOfPhoto(db, mediaId)).length === 0) return;
+  await queue.send(
+    ai.gemini ? QUEUES.photoSpot : QUEUES.photoFingerprint,
+    { mediaId },
+    {
+      singletonKey: mediaId,
+    },
+  );
 }
 
 /** Starts the queue and every worker. */
@@ -144,11 +196,100 @@ export async function startJobs(boss: PgBoss, options: WorkerDeps): Promise<void
       try {
         await processUploadedMedia(db, storage, data.mediaId);
         log.info({ mediaId: data.mediaId }, 'photo processed');
+        await queuePhotoAi(boss, db, options.ai, data.mediaId);
       } catch (error) {
         log.error({ err: error, mediaId: data.mediaId }, 'photo failed');
         // A photo we can't use won't get better with retries; anything else is retried.
         if (!(error instanceof ImageRejectedError)) throw error;
         await markMediaFailed(db, data.mediaId, error.message);
+      }
+    }
+  });
+
+  await startPhotoAiJobs(boss, options);
+}
+
+/** Garment spotting and fingerprints (Step 3.3). */
+async function startPhotoAiJobs(boss: PgBoss, options: WorkerDeps): Promise<void> {
+  const { db, storage, log } = options;
+  const workOptions = { pollingIntervalSeconds: options.pollingIntervalSeconds ?? 2 };
+  const deps: PhotoAiDeps = {
+    db,
+    storage,
+    gemini: options.ai?.gemini ?? null,
+    embedder: options.ai?.embedder ?? null,
+    dailyCapMicros: options.ai?.dailyCapMicros ?? 0,
+  };
+  const retryDelay = options.aiRetryDelaySeconds;
+  let capReportedFor = '';
+
+  await boss.createQueue(QUEUES.photoSpotFailed);
+  await boss.work<{ mediaId: string }>(QUEUES.photoSpotFailed, workOptions, async (jobs) => {
+    for (const { data } of jobs) {
+      await db
+        .update(media)
+        .set({ spotStatus: 'failed', spottedAt: new Date() })
+        .where(and(eq(media.id, data.mediaId), isNull(media.spotStatus)));
+      log.error({ mediaId: data.mediaId }, 'photo reading failed after retries');
+    }
+  });
+  await boss.createQueue(QUEUES.photoSpot, {
+    // One queued and one running per photo: a job paused by the spend cap can queue its own rerun.
+    policy: 'stately',
+    retryLimit: 3,
+    retryDelay: retryDelay ?? 30,
+    retryBackoff: true,
+    expireInSeconds: 180,
+    deadLetter: QUEUES.photoSpotFailed,
+  });
+  await boss.work<{ mediaId: string }>(QUEUES.photoSpot, workOptions, async (jobs) => {
+    for (const { data } of jobs) {
+      try {
+        const result = await spotPhoto(deps, data.mediaId);
+        log.info({ mediaId: data.mediaId, ...result }, 'photo read');
+        if (deps.embedder && result.outcome !== 'failed') {
+          await boss.send(QUEUES.photoFingerprint, data, { singletonKey: data.mediaId });
+        }
+      } catch (error) {
+        if (error instanceof SpendCapReachedError) {
+          const today = new Date().toISOString().slice(0, 10);
+          if (capReportedFor !== today) {
+            capReportedFor = today;
+            log.error(
+              { spentMicros: error.spentMicros, capMicros: error.capMicros },
+              'daily AI spend cap reached: photo reading paused until 00:00 UTC',
+            );
+          }
+          await boss.send(QUEUES.photoSpot, data, {
+            singletonKey: data.mediaId,
+            startAfter: nextUtcDay(),
+          });
+          continue;
+        }
+        log.error({ err: error, mediaId: data.mediaId }, 'photo reading failed');
+        throw error;
+      }
+    }
+  });
+
+  await boss.createQueue(QUEUES.photoFingerprint, {
+    policy: 'stately',
+    retryLimit: 4,
+    retryDelay: retryDelay ?? 20,
+    retryBackoff: true,
+    // Up to 45 s per 20 boxes, plus a machine waking after a deploy.
+    expireInSeconds: 300,
+  });
+  await boss.work<{ mediaId: string }>(QUEUES.photoFingerprint, workOptions, async (jobs) => {
+    for (const { data } of jobs) {
+      try {
+        const result = await fingerprintPhoto(deps, data.mediaId);
+        log.info({ mediaId: data.mediaId, ...result }, 'photo fingerprinted');
+      } catch (error) {
+        log.error({ err: error, mediaId: data.mediaId }, 'fingerprinting failed');
+        // A refused photo or bad answer won't change by retrying.
+        if (error instanceof EmbedderError && !error.retryable) continue;
+        throw error;
       }
     }
   });

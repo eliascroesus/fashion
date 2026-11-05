@@ -1,4 +1,4 @@
-import { FINGERPRINT_DIMENSIONS, GARMENT_CATEGORIES } from '@outfitly/shared';
+import { GARMENT_CATEGORIES } from '@outfitly/shared';
 import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
@@ -12,10 +12,9 @@ import {
   text,
   timestamp,
   uniqueIndex,
-  halfvec,
   uuid,
 } from 'drizzle-orm/pg-core';
-import { baseColumns, softDelete } from './columns.ts';
+import { baseColumns, fingerprint, softDelete } from './columns.ts';
 import { clientPlatform } from './events.ts';
 import { looks } from './looks.ts';
 import { media } from './media.ts';
@@ -26,16 +25,6 @@ export const offerStock = pgEnum('offer_stock', ['in_stock', 'out_of_stock', 'un
 export const lookItemStatus = pgEnum('look_item_status', ['pending', 'verified', 'rejected']);
 export const linkCheckAnswer = pgEnum('link_check_answer', ['yes', 'no', 'unsure']);
 export const linkCheckOutcome = pgEnum('link_check_outcome', ['verified', 'review', 'rejected']);
-
-/**
- * A fingerprint: how an image (or words) looks to Marqo-FashionSigLIP. Nearest
- * ones are found by cosine distance (`<=>`) through an HNSW index. Stored as
- * half-precision numbers: half the disk and index memory, and ranking by
- * cosine is the same in practice (migration 0011).
- */
-function fingerprint() {
-  return halfvec('embedding', { dimensions: FINGERPRINT_DIMENSIONS });
-}
 
 /** Longest link we keep: the unique index on `offers.url` can't hold much more. */
 const MAX_URL_BYTES = 2048;
@@ -60,7 +49,7 @@ export const garments = pgTable(
     boxTop: real('box_top').notNull(),
     boxRight: real('box_right').notNull(),
     boxBottom: real('box_bottom').notNull(),
-    embedding: fingerprint(),
+    ...fingerprint(),
     ...softDelete(),
   },
   (t) => [
@@ -92,7 +81,7 @@ export const products = pgTable(
     gtin: text('gtin'),
     imageUrl: text('image_url'),
     imageMediaId: uuid('image_media_id').references(() => media.id, { onDelete: 'set null' }),
-    embedding: fingerprint(),
+    ...fingerprint(),
     ownerProfileId: uuid('owner_profile_id').references((): AnyPgColumn => profiles.id),
     ...softDelete(),
   },

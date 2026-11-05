@@ -27,4 +27,21 @@ describe('settings', () => {
     });
     expect(config.DATABASE_CA_CERT).toBeUndefined();
   });
+
+  it('turn the photo AI off without keys and only take priced Gemini models', () => {
+    const config = loadConfig({ ...REQUIRED, GEMINI_API_KEY: '', EMBEDDER_URL: '' });
+    expect(config).toMatchObject({
+      GEMINI_MODEL: 'gemini-3.1-flash-lite',
+      GEMINI_THINKING_LEVEL: 'MINIMAL',
+      AI_DAILY_CAP_USD: 5,
+    });
+    expect(config.GEMINI_API_KEY).toBeUndefined();
+    expect(config.EMBEDDER_URL).toBeUndefined();
+    expect(config.GEMINI_MEDIA_RESOLUTION).toBeUndefined();
+    expect(() => loadConfig({ ...REQUIRED, GEMINI_MODEL: 'gemini-9-ultra' })).toThrow(
+      /GEMINI_MODEL/,
+    );
+    expect(() => loadConfig({ ...REQUIRED, EMBEDDER_SECRET: 'short' })).toThrow(/EMBEDDER_SECRET/);
+    expect(() => loadConfig({ ...REQUIRED, AI_DAILY_CAP_USD: '0' })).toThrow(/AI_DAILY_CAP_USD/);
+  });
 });

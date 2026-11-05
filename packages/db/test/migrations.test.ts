@@ -6,6 +6,7 @@ import { seed } from '../src/seed.ts';
 import { createTestDatabase, type TestDatabase, withDb } from './test-database.ts';
 
 const EXPECTED_TABLES = [
+  'ai_calls',
   'board_items',
   'boards',
   'clicks',
@@ -21,6 +22,7 @@ const EXPECTED_TABLES = [
   'look_media',
   'looks',
   'media',
+  'moderation_queue',
   'offers',
   'products',
   'profile_members',

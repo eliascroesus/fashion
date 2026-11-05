@@ -49,3 +49,23 @@ export type GarmentCategory = (typeof GARMENT_CATEGORIES)[number];
  * by cosine similarity, as in the model card's examples.
  */
 export const FINGERPRINT_DIMENSIONS = 768;
+
+/** A garment's pattern as the AI reads it (Step 3.3). Stored in `garments.attributes`. */
+export const GARMENT_PATTERNS = [
+  'solid',
+  'striped',
+  'checked',
+  'floral',
+  'dotted',
+  'animal',
+  'graphic',
+  'other',
+] as const;
+export type GarmentPattern = (typeof GARMENT_PATTERNS)[number];
+
+/**
+ * Why the AI held a photo back (Step 3.3): its look is hidden and queued for
+ * review. `blocked` means Gemini refused to read the photo at all.
+ */
+export const SAFETY_FLAGS = ['nudity', 'violence', 'spam_text', 'blocked'] as const;
+export type SafetyFlag = (typeof SAFETY_FLAGS)[number];
