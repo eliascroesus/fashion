@@ -1,4 +1,4 @@
-import type { OfferStock } from '@outfitly/shared';
+import { currencyDigits, type OfferStock } from '@outfitly/shared';
 
 /**
  * Reads a shop's product page without an HTML library: schema.org JSON-LD
@@ -91,17 +91,13 @@ function clean(value: unknown, maxLength = 300): string | null {
 
 const CURRENCIES = new Set(Intl.supportedValuesOf('currency'));
 
-/** Fraction digits of a currency (2 for SEK, 0 for ISK and JPY), or null if it isn't one. */
+/**
+ * Fraction digits of a currency (2 for SEK, 0 for ISK and JPY), or null if it
+ * isn't one. The digits come from the table the app reads prices back with.
+ */
 export function minorDigits(currency: string): number | null {
   if (!CURRENCIES.has(currency)) return null;
-  try {
-    return (
-      new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions()
-        .maximumFractionDigits ?? null
-    );
-  } catch {
-    return null;
-  }
+  return currencyDigits(currency);
 }
 
 /**

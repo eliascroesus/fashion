@@ -1,5 +1,6 @@
 # The look page: open a look from Home (its photo is already cached from the grid), check
-# what the page shows, follow "More like this" one level deeper, and come back.
+# what the page shows, follow "More like this" one level deeper, and come back. Its pieces
+# are checked by shop-the-look.yaml.
 #   maestro test -e APP_ID=com.outfitly.app.dev apps/mobile/.maestro/look-page.yaml
 # It saves two screenshots of Home, before opening and after Back (look-page/home-before,
 # look-page/home-after): `apps/mobile/.maestro/same-place.sh` checks they are identical, and
@@ -61,12 +62,7 @@ appId: ${APP_ID || 'com.outfitly.app'}
           duration: 300
       - assertVisible:
           id: look-photo-1
-# Down to the shop placeholder, then "More like this" (one at a time: a single fling can
-# carry the page past the placeholder).
-- scrollUntilVisible:
-    element:
-      id: shop-placeholder
-    direction: DOWN
+# Down past the pieces (if the look has any) to "More like this".
 - scrollUntilVisible:
     element:
       id: similar-card

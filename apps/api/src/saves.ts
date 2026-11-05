@@ -17,6 +17,7 @@ import {
   microsTime,
   showableLook,
 } from './feed/cards.ts';
+import { SHOWN_ITEM, SHOWN_ITEM_JOINS } from './shown-items.ts';
 
 /*
  * Saves, boards and "see less like this", always as the acting profile.
@@ -124,7 +125,27 @@ interface BoardRow extends Record<string, unknown> {
   look_count: number;
   cover_ids: string[];
   has_look: boolean | null;
+  /** Sums as text (bigint), one per currency. */
+  totals: { currency: string; amount: string }[];
 }
+
+/**
+ * What board `b`'s pieces cost together, one sum per currency (most pieces
+ * first): the pieces its shown looks show, each shop link once even if it's
+ * in several of them, sold-out and unpriced ones left out (the look page's
+ * rule).
+ */
+const BOARD_TOTALS = sql`
+  SELECT coalesce(json_agg(json_build_object('currency', t.currency, 'amount', t.amount::text)
+                           ORDER BY t.pieces DESC, t.currency), '[]'::json)
+    FROM (SELECT d.currency, sum(d.price_minor) AS amount, count(*) AS pieces
+            FROM (SELECT DISTINCT o.id, o.currency, o.price_minor
+                    FROM board_items bi JOIN looks l ON l.id = bi.look_id
+                    JOIN look_items li ON li.look_id = l.id ${SHOWN_ITEM_JOINS}
+                   WHERE bi.board_id = b.id AND bi.deleted_at IS NULL AND ${showableLook(sql`l`)}
+                     AND ${SHOWN_ITEM} AND o.price_minor IS NOT NULL
+                     AND o.stock <> 'out_of_stock') d
+           GROUP BY d.currency) t`;
 
 /** Looks on board `b` that can be shown (`b` is the boards alias in the surrounding query). */
 function shownItems(select: SQL): SQL {
@@ -134,7 +155,7 @@ function shownItems(select: SQL): SQL {
 
 /**
  * The profile's boards, most recently changed first, with how many looks
- * each holds and its newest looks' photos. With `lookId`, also whether each
+ * each holds, its newest looks' photos and what its pieces cost. With `lookId`, also whether each
  * holds that look; with `boardId`, only that board.
  */
 async function loadBoards(
@@ -147,6 +168,7 @@ async function loadBoards(
            (${shownItems(sql`count(*)::int`)}) AS look_count,
            ARRAY(${shownItems(sql`bi.look_id`)}
                  ORDER BY bi.updated_at DESC, bi.id DESC LIMIT ${BOARD_COVERS}) AS cover_ids,
+           (${BOARD_TOTALS}) AS totals,
            ${
              lookId
                ? sql`EXISTS (SELECT 1 FROM board_items i WHERE i.board_id = b.id
@@ -168,6 +190,7 @@ async function loadBoards(
     name: r.name,
     lookCount: r.look_count,
     covers: r.cover_ids.flatMap((id) => cards.get(id)?.photo ?? []),
+    totals: r.totals.map((t) => ({ currency: t.currency, amountMinor: Number(t.amount) })),
     ...(r.has_look === null ? {} : { hasLook: r.has_look }),
   }));
 }

@@ -1,0 +1,69 @@
+# Shop the look: a look with pieces shows a dot on each, a list with prices and "Total look",
+# and ticking pieces adds up just those. Sold-out pieces are greyed and can't be ticked.
+#   maestro test -e APP_ID=com.outfitly.app.dev -e SCHEME=outfitly-dev -e LOOK_ID=<id> \
+#     apps/mobile/.maestro/shop-the-look.yaml
+# Needs a look on the server the build talks to with at least three verified pieces with a
+# dot: two priced and in stock first, then one sold out (Step 3.6 used test pieces on a seed
+# look, see PROGRESS.md). It saves screenshots shop/look-dots and shop/look-ticked.
+appId: ${APP_ID || 'com.outfitly.app'}
+---
+- launchApp:
+    clearState: true
+- runFlow: subflows/skip-taste.yaml
+- openLink: ${SCHEME || 'outfitly'}://look/${LOOK_ID}
+- extendedWaitUntil:
+    visible:
+      id: look-author
+    timeout: 20000
+- extendedWaitUntil:
+    visible:
+      id: look-dot
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: shop/look-dots
+
+# A dot scrolls the page to its piece (the photo goes off the top).
+- tapOn:
+    id: look-dot
+    index: 1
+- waitForAnimationToEnd
+- assertNotVisible:
+    id: look-dot
+- assertVisible:
+    id: shop-item
+# "Total look" sits just above the first piece.
+- scrollUntilVisible:
+    element:
+      id: shop-total
+    direction: UP
+- assertVisible:
+    id: shop-total
+    text: 'Total look .+'
+
+# Tick the first two pieces: "2 pieces selected" with their total.
+- assertNotVisible:
+    id: shop-selected
+- tapOn:
+    id: shop-item-tick
+    index: 0
+- assertVisible:
+    id: shop-selected-total
+    text: '1 piece selected: .+'
+- tapOn:
+    id: shop-item-tick
+    index: 1
+- assertVisible:
+    id: shop-selected-total
+    text: '2 pieces selected: .+'
+# The sold-out piece can't be ticked.
+- tapOn:
+    id: shop-item-tick
+    index: 3
+- assertVisible:
+    id: shop-selected-total
+    text: '2 pieces selected: .+'
+- takeScreenshot: shop/look-ticked
+- tapOn:
+    id: shop-clear
+- assertNotVisible:
+    id: shop-selected

@@ -15,6 +15,7 @@ import {
 import type { FeedCard } from '@outfitly/shared';
 import { z } from 'zod';
 import { ApiError } from '../errors.ts';
+import { itemCountOf } from '../shown-items.ts';
 import type { PhotoStorage } from '../storage.ts';
 
 export interface FeedDeps {
@@ -126,6 +127,7 @@ export async function loadCards(
     .select({
       id: looks.id,
       authorId: looks.authorProfileId,
+      itemCount: itemCountOf(sql`${looks.id}`),
       width: media.width,
       height: media.height,
       thumbhash: media.thumbhash,
@@ -145,16 +147,10 @@ export async function loadCards(
       and(inArray(looks.id, [...ids]), eq(looks.status, 'published'), isNull(looks.deletedAt)),
     );
   const [rows, saved] = await Promise.all([rowsQuery, savedAmong(db, viewerProfileId, ids)]);
-  for (const { id, authorId, ...columns } of rows) {
+  for (const { id, authorId, itemCount, ...columns } of rows) {
     const photo = toPhoto(storage, columns);
     if (!photo) continue;
-    cards.set(id, {
-      id,
-      authorId,
-      photo,
-      itemCount: 0, // Shoppable pieces arrive with products (Phase 3).
-      saved: saved.has(id),
-    });
+    cards.set(id, { id, authorId, photo, itemCount, saved: saved.has(id) });
   }
   return cards;
 }

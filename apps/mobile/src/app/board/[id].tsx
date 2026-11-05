@@ -1,18 +1,24 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { formatTotals } from '@outfitly/shared';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { Alert, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeedMessage } from '../../components/feed-message';
 import { LookGrid } from '../../components/look-grid';
+import { useMoneyLocale } from '../../components/shop-the-look';
 import { showToast } from '../../components/toast';
 import { useBoardLooks, useBoardMutations, useBoards } from '../../saves/queries';
 import { radii, Screen, spacing, ThemedText, useColors } from '../../theme';
 
-/** One board: its looks, newest first, and the options to rename or delete it. */
+/**
+ * One board: its looks, newest first, what their pieces cost together, and
+ * the options to rename or delete it.
+ */
 export default function BoardScreen() {
   const { t } = useTranslation();
   const colors = useColors();
+  const locale = useMoneyLocale();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const board = useBoards().boards.find((b) => b.id === id);
@@ -95,6 +101,14 @@ export default function BoardScreen() {
           <Ionicons name="ellipsis-horizontal" size={20} color={colors.text} />
         </Pressable>
       </View>
+      {board && board.totals.length > 0 ? (
+        <ThemedText tone="muted" style={styles.summary} testID="board-summary">
+          {t('board.summary', {
+            count: board.lookCount,
+            total: formatTotals(board.totals, locale),
+          })}
+        </ThemedText>
+      ) : null}
       <LookGrid
         list={looks}
         testID="board-looks"
@@ -115,6 +129,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   title: { flex: 1, textAlign: 'center' },
+  summary: { textAlign: 'center', paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
   round: {
     width: 40,
     height: 40,
