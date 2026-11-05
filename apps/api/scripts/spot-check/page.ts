@@ -6,6 +6,8 @@ export interface PagePhoto {
   width: number;
   height: number;
   status: string | null;
+  /** When this reading was made: ticks belong to one reading (`--again` starts fresh). */
+  readAt: string | null;
   description: string | null;
   tags: string[];
   flags: string[];
@@ -25,9 +27,17 @@ export interface PageData {
   createdAt: string;
   photos: PagePhoto[];
   cost: {
-    calls: number;
+    /** Calls made by this run, and what they cost. */
+    runCalls: number;
     runMicros: number;
-    averageMicros: number;
+    /** Every call for these photos ever (retries, failures, estimates) and the readings bought. */
+    calls: number;
+    readings: number;
+    totalMicros: number;
+    /** totalMicros ÷ readings: the honest cost of reading one photo. */
+    perPhotoMicros: number;
+    /** What a successful call alone costs, on average. */
+    perSuccessMicros: number;
     averageInput: number;
     averageOutput: number;
   };
@@ -95,13 +105,16 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 const c = data.cost;
 document.getElementById('meta').textContent =
   data.photos.length + ' photos · ' + data.model + ' · prompt ' + data.promptVersion +
-  ' · average $' + (c.averageMicros / 1e6).toFixed(5) + ' per photo (' + c.averageInput + ' in + ' + c.averageOutput +
-  ' out tokens) → $' + (c.averageMicros * 1000 / 1e6).toFixed(2) + ' per 1,000 photos';
+  ' · $' + (c.perPhotoMicros * 1000 / 1e6).toFixed(2) + ' per 1,000 photos (' + c.calls + ' calls for ' + c.readings +
+  ' readings, retries included; a successful call alone $' + (c.perSuccessMicros / 1e6).toFixed(5) + ', ' +
+  c.averageInput + ' in + ' + c.averageOutput + ' out tokens)';
+// Ticks belong to one reading of a photo: reading it again (--again) starts fresh.
+const readKey = (p) => p.mediaId + '@' + p.readAt;
 
 function score() {
   let right = 0, wrong = 0, not = 0, missed = 0, checked = 0;
   for (const p of data.photos) {
-    const m = marks[p.mediaId] || {};
+    const m = marks[readKey(p)] || {};
     const pieces = p.garments.map((g) => (m.pieces || {})[g.id]);
     if (pieces.every(Boolean) && m.missed != null) checked += 1;
     for (const v of pieces) { if (v === 'right') right++; else if (v === 'wrong') wrong++; else if (v === 'not') not++; }
@@ -117,7 +130,7 @@ function score() {
 
 const painters = [];
 for (const p of data.photos) {
-  const m = (marks[p.mediaId] ||= { pieces: {} });
+  const m = (marks[readKey(p)] ||= { pieces: {} });
   m.pieces ||= {};
   const card = el('div', 'card' + (p.flags.length ? ' flagged' : ''));
   const photo = el('div', 'photo');
@@ -137,7 +150,7 @@ for (const p of data.photos) {
     photo.append(box);
     const row = el('div', 'row');
     const extras = [g.color, g.attributes.pattern, g.attributes.material, g.attributes.brandText].filter(Boolean).join(', ');
-    row.append(el('b', null, String(i + 1)), el('span', 'what', g.category.replace('_', '-') + (extras ? ' — ' + extras : '') + (g.fingerprinted ? '' : ' (no fingerprint)')));
+    row.append(el('b', null, String(i + 1)), el('span', 'what', g.category.replaceAll('_', '-') + (extras ? ' — ' + extras : '') + (g.fingerprinted ? '' : ' (no fingerprint)')));
     const buttons = [['right', 'right'], ['wrong', 'wrong box'], ['not', 'not a piece']].map(([v, label]) => {
       const btn = el('button', v, label);
       btn.onclick = () => { m.pieces[g.id] = m.pieces[g.id] === v ? undefined : v; save(); paint(); };
@@ -167,7 +180,7 @@ paint();
 
 document.getElementById('copy').onclick = async () => {
   const s = score();
-  const text = JSON.stringify({ promptVersion: data.promptVersion, model: data.model, photos: data.photos.length, ...s, costPer1000Usd: +(data.cost.averageMicros / 1000).toFixed(2) });
+  const text = JSON.stringify({ promptVersion: data.promptVersion, model: data.model, photos: data.photos.length, ...s, costPer1000Usd: +(data.cost.perPhotoMicros / 1000).toFixed(2) });
   try { await navigator.clipboard.writeText(text); document.getElementById('copy').textContent = 'Copied'; } catch { prompt('Copy this:', text); }
 };
 </script>

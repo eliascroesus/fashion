@@ -160,5 +160,18 @@ describe('photo AI jobs', () => {
     // The first try and three retries, each logged.
     const calls = await ctx.db.select().from(aiCalls).where(eq(aiCalls.mediaId, mediaId));
     expect(calls.map((c) => [c.status, c.httpStatus])).toEqual(Array(4).fill(['failed', 500]));
+    // Still worth a whole-photo fingerprint.
+    await expect
+      .poll(
+        async () =>
+          (
+            await ctx.db
+              .select({ m: media.embeddingModel })
+              .from(media)
+              .where(eq(media.id, mediaId))
+          )[0]?.m,
+        { timeout: 15_000 },
+      )
+      .toBe('Marqo/marqo-fashionSigLIP@c56244c');
   });
 });

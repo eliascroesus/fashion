@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EmbedderError } from '../src/ai/embedder.ts';
-import { costMicros, GeminiClient, GeminiError } from '../src/ai/gemini.ts';
+import { costMicros, GeminiClient, GeminiError, thinkingConfig } from '../src/ai/gemini.ts';
 import { boxFromGemini, MAX_GARMENTS, parseSpotAnswer, SPOT_SCHEMA } from '../src/ai/spot.ts';
 import {
   COAT_AND_SNEAKERS,
@@ -170,6 +170,39 @@ describe('the Gemini client', () => {
     expect(config['mediaResolution']).toBe('MEDIA_RESOLUTION_LOW');
   });
 
+  it('gives Gemini 2.5 models a thinking budget instead of a level', async () => {
+    const fake = fakeFetch(() => geminiResponse({}));
+    const client = new GeminiClient({
+      apiKey: 'k',
+      model: 'gemini-2.5-flash-lite',
+      thinkingLevel: 'MINIMAL',
+      fetch: fake.fetch,
+    });
+    await client.generateJson(request);
+    const config = (fake.calls[0]?.body as { generationConfig: Record<string, unknown> })
+      .generationConfig;
+    expect(config['thinkingConfig']).toEqual({ thinkingBudget: 0 });
+    expect(thinkingConfig('gemini-2.5-flash-lite', 'HIGH')).toEqual({ thinkingBudget: 8192 });
+    expect(thinkingConfig('gemini-3.5-flash-lite', 'LOW')).toEqual({ thinkingLevel: 'LOW' });
+    expect(thinkingConfig('gemini-3.1-flash-lite', 'MODEL_DEFAULT')).toBeNull();
+  });
+
+  it('says a timed-out call may have been billed', async () => {
+    const { client } = fakeGemini(() =>
+      Promise.reject(new DOMException('The operation timed out.', 'TimeoutError')),
+    );
+    await expect(client.generateJson(request)).rejects.toMatchObject({
+      retryable: true,
+      maybeBilled: true,
+    });
+    const unreadable = fakeGemini(() => new Response('not json', { status: 200 }));
+    await expect(unreadable.client.generateJson(request)).rejects.toMatchObject({
+      httpStatus: 200,
+      retryable: true,
+      maybeBilled: true,
+    });
+  });
+
   it('skips thought parts', async () => {
     const { client } = fakeGemini(() =>
       json({
@@ -217,7 +250,8 @@ describe('the Gemini client', () => {
     const offline = fakeGemini(() => Promise.reject(new TypeError('fetch failed')));
     const error = await offline.client.generateJson(request).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(GeminiError);
-    expect(error).toMatchObject({ httpStatus: null, retryable: true });
+    // Never reached Google: nothing billed.
+    expect(error).toMatchObject({ httpStatus: null, retryable: true, maybeBilled: false });
   });
 
   it('prices a call from its tokens (thinking billed as output)', () => {

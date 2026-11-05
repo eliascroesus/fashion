@@ -3,11 +3,13 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-**Phase 3 — Products and AI, in progress.** Steps 3.1 and 3.2 are done.
+**Phase 3 — Products and AI, in progress.** Steps 3.1–3.3 are built; 3.3's real-photo check waits for the Gemini key.
 - Step 3.1 (Product tables): PR #16, waiting for Elias to merge.
-- Step 3.2 (The fingerprint service): PR #17, stacked on #16 (merge #16 first). Claude isn't allowed to merge in this setup (see Waiting on Elias).
+- Step 3.2 (The fingerprint service): PR #17, stacked on #16 (merge #16 first).
+- Step 3.3 (Garment spotting): PR #18, stacked on #17. Built and tested with a stand-in Gemini; the 50-photo check and the cost per 1,000 photos wait for the key (see Waiting on Elias).
+- Claude isn't allowed to merge in this setup (see Waiting on Elias). Elias was asleep for Step 3.3 (2026-11-05 night) and said to keep going, so its plan and decisions are in the PR instead of a plan approval.
 
-Next: Step 3.3 — Garment spotting (needs the Gemini API key).
+Next: Step 3.4 — Paste a link, get a product.
 
 - Phase 2 passed its gate on 2026-11-04 (PRs #8–#15). "Speed numbers recorded" PASS; "It feels like Pinterest" signed off by Elias. "Both phones" was done in the iPhone simulator only: the real-phone checks (and Step 2.3's mid-range Android check) wait for the hardware. 125 real outfits accepted instead of 300 for now.
 - Phase 1 gate: everything passed except "app on both phones with login", for the same reason.
@@ -164,10 +166,53 @@ Next: Step 3.3 — Garment spotting (needs the Gemini API key).
       - `.env*` is kept out of the image.
     - Rechecked live after the redeploy: the 400 / 403 / 502 / 401 answers, and 30 photos at p50 718 ms, p95 790 ms (server's own time), p95 886 ms over HTTP.
     - The rest is under Later.
+- Step 3.3 — Garment spotting (PR #18) — **built and tested with a stand-in Gemini (2026-11-05); the real-photo check waits for the Gemini key.**
+  - **What it does:** when one of a look's photos is ready, a job sends our 1080 copy to Gemini (`gemini-3.1-flash-lite`) once and asks for a strict JSON answer:
+    - every clearly visible piece: category (the 28 fixed ones), colour, pattern, material, brand text it can actually read, and a box;
+    - one sentence about the outfit, and 3–10 search words;
+    - safety flags (nudity, violence, spam text).
+  - **What happens with the answer:**
+    - The pieces go in `garments`, with boxes in fractions of the photo.
+    - The sentence and words become the look's `ai_description` and `ai_tags`, so search finds "trench coat" without that caption.
+    - A flagged photo (or one Gemini refuses to read) hides its looks and gets an item in the new `moderation_queue`, which remembers each look's status before.
+    - Then the fingerprint service fingerprints the whole photo and each piece (20 boxes per call, each batch saved as it finishes), and stores which model made each fingerprint. Without Gemini, at least the whole photo is fingerprinted.
+  - **Cost control:**
+    - Every call is logged in `ai_calls`: model and exact version, prompt version (`spot-v1`), tokens, cost, time.
+    - Calls we stopped waiting for are logged with an estimated cost.
+    - Once a day's (UTC) cost reaches `AI_DAILY_CAP_USD` ($5 by default), photos wait until midnight.
+    - A photo is never read twice unless asked.
+    - An answer cut off at the length limit gets one more try, not three.
+  - **Migration 0012** (applied on `outfitly-dev`, live lock test 25/25):
+    - new tables `ai_calls` and `moderation_queue`;
+    - each photo's reading and its whole-photo fingerprint (HNSW) on `media`;
+    - `embedding_model` on garments / products / media;
+    - `looks.ai_tags` in the search words. The generated column was switched in place, so the search index stayed; live search still finds the same 40 "classic" looks out of 125.
+  - **Check page:** `pnpm ai:spot-check` reads the first 50 seed looks' photos (`--all` for all 125) and writes `~/Downloads/outfitly-spot-check/index.html`, which draws the boxes. Elias marks each piece "right", "wrong box" or "not a piece" and types how many pieces were missed; the page adds up the score against the 90% goal. It also prints the honest cost per 1,000 photos (every call, retries included, divided by the photos read).
+  - **Tests:** a stand-in Gemini and fingerprint service; the real job system end to end (upload → read → fingerprints, the spend cap pausing until midnight, retries running out); and two photos of one look read at the same moment. API 285 tests.
+  - **Staging:** the API is redeployed with the new code. Photo AI is off there until its secrets are set (Claude's `fly secrets set` was blocked by the safety check; see Waiting on Elias).
+  - **Review (step-reviewer):** two blocking issues, fixed.
+    - Two photos of one look read at the same moment could lose one photo's search words. The look is now locked first (always in the same order); the new test fails without the lock.
+    - The check page would have dropped flagged photos on the next run and paid to read new ones; its sample now stays the same. Its cost figure also left out retries and failures; it now counts everything.
+    - Also fixed:
+      - estimated cost for timed-out or unreadable answers, so the cap sees them;
+      - Gemini 2.5 models get a thinking budget instead of a level (a level would have failed every call);
+      - a hiccup while queueing the AI can never mark a ready photo as failed;
+      - an unreadable answer is retried and logged;
+      - failed readings still get a whole-photo fingerprint;
+      - the check page's ticks belong to one reading;
+      - an unused helper was removed.
+    - The rest is under Known issues and Later.
 
 
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
+- 2026-11-05 — Garment spotting uses Gemini 3.1 Flash-Lite (`gemini-3.1-flash-lite`, Google's stable version): $0.25 per million input tokens (photos included) and $1.50 per million output tokens (thinking included), about $1 per 1,000 photos by estimate (to be measured). It's called with plain `fetch` (no new library). The model is a setting, but only models with a price in the code are accepted (3.1 / 3.5 / 2.5 Flash-Lite), so every call's cost is known for the daily cap. Thinking is set to "minimal" to save output tokens.
+- 2026-11-05 — The paid Gemini tier, not the free one: Google's terms allow only paid use for apps used by people in the EEA, Switzerland or the UK, and free-tier data may be used to improve Google's products.
+- 2026-11-05 — Not self-hosted for now (Elias asked if a free model could do it). Open models that find things in photos (OWLv2, Grounding DINO) plus our own fashion model could run on the fingerprint machine for no per-photo fee. But on a CPU they take several seconds per photo, find pieces less well, can't read brand text and don't write descriptions or safety flags. Gemini costs about a cent per 10 photos.
+- 2026-11-05 — How Pinterest does it, for reference: its own detectors and fingerprint models, trained on huge numbers of photos labelled by people and run on its own graphics-card servers by hundreds of engineers. That only pays off at their size. Our path to the same: see Later ("train our own detector").
+- 2026-11-05 — The dev screen that draws the boxes is a page on Elias's own Mac (`pnpm ai:spot-check`), not a web page: `apps/web` doesn't exist yet, and a local page puts nothing online. The AI's text goes into the page only as text, never as code.
+- 2026-11-05 — Flagged photos: their looks are hidden at once (any status) and a `moderation_queue` item holds what each look's status was. `moderation_queue` moved from Phase 4 to Phase 3, since this is its first use; reports and blocks stay in Phase 4.
+- 2026-11-05 — The spend cap counts Gemini only (the fingerprint service is our own machine, paid by the hour) and uses the UTC day. A call that timed out counts as a typical photo plus the most output we allow (≈ $0.007).
 - 2026-11-04 — Fingerprint service on Fly performance-1x with 2 GB, suspended when idle: a dedicated core is never throttled (shared CPUs were ~10× slower once their allowance ran out, which bulk work like Step 3.3's backlog would hit), it's billed only while awake, and 2 GB is the most a machine can have and still suspend (wakes in ~1 s with the model in memory, instead of ~20 s). Production may split it (a cheap always-on machine for search words, this one for photos): decide in Phase 5 with real traffic.
 - 2026-11-04 — Photos reach the fingerprint service as links to our own R2 photos only (an allow-list, plus a public-address check): shop images get copied into our photo pipeline first (Step 3.4), which also strips their metadata. `/embed-image` takes several boxes so a photo is downloaded once for all its garments.
 - 2026-11-04 — Garment categories (Step 3.1, OK'd by Elias): 28, in the order a look's item list reads: coat, jacket, blazer, knitwear, sweatshirt, shirt, t_shirt, top, dress, jumpsuit, trousers, jeans, skirt, shorts, swimwear, sneakers, boots, heels, flats, sandals, bag, hat, sunglasses, scarf, jewelry, watch, belt, accessory. Permanent ids (database enum): add new ones, never rename. "Similar pieces" (Step 3.8) compares within one category.
@@ -261,9 +306,18 @@ Next: Step 3.3 — Garment spotting (needs the Gemini API key).
 - 2026-11-02 — Elias asked Claude to work through Phase 1 and Phase 2 overnight without stopping. Each step still gets its own branch + PR, stacked on the previous step's branch; nothing is merged into `main` without Elias.
 
 ## Waiting on Elias
-- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2).** Both have green checks. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub (each PR → "Merge pull request" → "Confirm merge"), or allow Claude to: add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings.
+- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2), then PR #18 (Step 3.3), in that order.** Each is built on the one before. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub, or allow Claude to merge (add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings). On GitHub: open the PR → "Merge pull request" → "Confirm merge" → "Delete branch", then do the next one (GitHub then points it at `main` by itself).
+- **Gemini key for Step 3.3** (garment spotting is built and waits only for this):
+  1. Go to https://aistudio.google.com → "Get API key" (left side) → "Create API key", on a Google Cloud project with billing on (the free tier isn't allowed for an app used in the EU).
+  2. In the project folder's `.env`, fill in the line `GEMINI_API_KEY=` with the key (Claude can do this if you paste the key in the chat).
+  3. Put the key and the fingerprint service's details on the staging API too (Claude's attempt was blocked by the safety check). In Terminal, from the project folder, run this one command. It reads the three values from `.env`, so nothing secret is typed or shown:
+     `set -a; . ./.env; set +a; fly secrets set -a outfitly-api-staging GEMINI_API_KEY="$GEMINI_API_KEY" EMBEDDER_URL="$EMBEDDER_URL" EMBEDDER_SECRET="$EMBEDDER_SECRET"`
+     (`EMBEDDER_URL` and `EMBEDDER_SECRET` are already in `.env`, under "Fingerprint service".) Staging restarts with photo AI on.
+  4. Then `pnpm ai:spot-check` (about 5 minutes, ≈ $0.05): open `~/Downloads/outfitly-spot-check/index.html` and mark the pieces (see Step 3.3 in Done). The goal is 90%. Tell Claude the score with "Copy results for Claude".
+  5. Afterwards `pnpm ai:spot-check --all` reads the other 75 seed looks (≈ $0.08), so every seed look has its pieces (needed for the Phase 3 gate). New seed looks aren't read automatically: the seed loader doesn't ask for it, so run `--all` again after loading new ones.
+  - If a seed look is wrongly flagged in the check (hidden), running the seed loader again (`pnpm seed:looks ~/Downloads/outfitly-seed`) brings it back. A proper approve button comes with the admin page in Phase 4.
 - **For Phase 3 (BUILD_PLAN "You provide"):**
-  - A Gemini API key from Google AI Studio, with billing on: needed for Step 3.3 (garment spotting).
+  - The Gemini API key: see above.
   - 30 real product links from Nordic shops you want to support (Zalando, H&M, Boozt, NA-KD, Nelly, ASOS…): needed for Step 3.4.
   - The seed looks' product links, where you know them: helps Steps 3.4–3.6.
 - **More outfit photos (2026-11-04):** Streetwear and Sporty have no outfits yet (those folders held only products), Edgy has 6 and Colorful 13. Aim for about 20 each: a person wearing the whole look, or the whole outfit laid out (not one item on its own). Same Drive folders; Claude loads them the same way (`~/Downloads/outfitly-seed`, `looks.json`, `pnpm seed:looks`).
@@ -289,6 +343,11 @@ Next: Step 3.3 — Garment spotting (needs the Gemini API key).
 - 18+ only or teens allowed (Step 5.5)
 
 ## Known issues
+- Photo AI (Step 3.3), to decide before anyone can post (Phase 4):
+  - If reading a photo fails for good, or the daily cap is hit, its look stays published without a safety check. Options: hold new looks as "pending" until read, or read before publishing.
+  - Re-running `seed:looks` publishes flagged seed looks again while their review item stays open, and there's no approve / restore tool yet (Phase 4 admin).
+  - Reading a flagged photo again (`--again`) with a clean result leaves its looks hidden and the item open. With two flagged photos in one look, only the first item records the look's earlier status. So Phase 4's approve step must check other open items before restoring a look.
+  - Job errors (also the AI's) go to the logs only, not Sentry (same as every job so far).
 - The test login's For You is empty after a day of test runs (2026-11-04): it has seen all 125 looks within 24 hours, and For You never repeats those (the "seen" rule). Flows that sign in and need For You cards can then fail for that reason alone; `follow-fills-following.yaml` opens its look from search for this. Goes away as the catalogue grows; until then wait a day or clear the test login's `seen` rows.
 - On iPhone the keyboard covers the tab bar while the search field is focused (normal for iOS; Cancel or the keyboard's search key closes it).
 - 11 of the 125 real photos got a near-black "main colour" (`#080808`), e.g. a bright street photo: the pipeline (Step 1.4) takes sharp's most common colour band, which can land on dark shadows. It's the colour a frame shows while its photo loads, so those flash black. Fix: use the photo's average colour (`stats()` channel means) and recompute it for the existing photos.
@@ -340,7 +399,7 @@ Next: Step 3.3 — Garment spotting (needs the Gemini API key).
 - 300 stand-in looks with 300 different pictures, from the Mac: 398.7 s (2026-11-03)
 - Feed p95 (Step 2.2, staging, 10,000 looks, 2026-11-03, after review fixes): For You logged out over HTTP from the Mac — page 1 p95 51 ms (p50 43), next pages p95 44 ms (40 runs, final deploy); server's own time page 1 ~29 ms, next pages ~21 ms (Fly logs). Logged in, feed code on the Mac against the staging database (≈ 16 ms per round trip, so mostly network): `@loadtest.01` (5 follows, taste, 300 seen) page 1 p95 114 ms, next pages 41 ms; Following p95 66 ms; worst case `@loadtest.07` (taste no look matches, so the taste pool reads the whole catalogue) page 1 p95 165 ms. Before fixing the query shape: logged-in page 1 600 ms.
 - Cold start to cached feed: —
-- AI cost per 1,000 photos: —
+- AI cost per 1,000 photos: — (Step 3.3; measured by `pnpm ai:spot-check` once the Gemini key exists. Estimate ≈ $1: about 1,500 input and 400 output tokens per photo on 3.1 Flash-Lite)
 - Link-resolve success rate: —
 - Popularity recompute on 10,000 looks (dev DB, from the Mac): 0.8 s first run (every score written), 39 ms when nothing changed (2026-11-03)
 - Monthly running cost estimate (fingerprint service, from Fly's prices × 1.038 for Stockholm; 2026-11-04):
@@ -356,6 +415,13 @@ Next: Step 3.3 — Garment spotting (needs the Gemini API key).
 - First EAS Android preview build (free plan): ~40 min in queue + ~15 min building; APK 107 MB (2026-11-02)
 
 ## Later (parked ideas, not in current scope)
+- Photo AI (Step 3.3):
+  - Train our own small detector once we have tens of thousands of photos read by Gemini, plus users' corrections ("wrong item?", Phase 4). It could run on the fingerprint machine, bringing the cost per photo close to zero (Pinterest's way, at our size).
+  - Gemini's Batch mode is half price: use it for big backlogs (e.g. a bulk import in Phase 7), which don't need answers within seconds.
+  - Try `GEMINI_MEDIA_RESOLUTION=MEDIUM` or `LOW` on the 50-photo check: fewer photo tokens, if the boxes stay right.
+  - Phase 4 look creation: call `queuePhotoAi` for photos that were already ready when the look was made. Only finishing an upload queues it today, and the seed loader doesn't at all.
+  - Send job errors to Sentry, not just the logs.
+  - Count the reasons answers are cut off or refused (`ai_calls.error` starts with Gemini's finish reason), and raise `SPOT_MAX_OUTPUT_TOKENS` if cut-offs show up.
 - Search typos: swapped letters in a short word ("jaens") aren't found, because pg_trgm doesn't offer "jeans" as a similar word for it (too few shared letter groups). Letter-change counting already handles swaps once offered. Possible later: also offer words of similar length that start with the same letter.
 - Search ranks every match on each page: fine at 10,000 looks (p95 < 100 ms for words matching thousands), but at 100,000+ a broad word ("black") should rank only the top candidates, or keep the ranked list like For You's snapshots.
 - Suggestions offer the Swedish tag words to English phones too ("s" → sommar): send the app's language and leave out the other language's tag words.
@@ -418,13 +484,7 @@ Next: Step 3.3 — Garment spotting (needs the Gemini API key).
   - Memory peaks at 1.82 of 2 GB while the model loads (the weights are briefly held twice). If a start ever runs out of memory: set `MALLOC_ARENA_MAX=2`, or load the weights memory-mapped.
   - Faster or cheaper later: the model repo also has ONNX versions (int8 / fp16) that could run 2–3× faster on CPU; measure against the same red/blue and real-photo checks before switching (a switch changes the fingerprints, so everything stored must be redone).
   - When the domain exists, add `img.<domain>` to `EMBEDDER_IMAGE_HOSTS` (fly.toml) next to the r2.dev address.
-  - Step 3.3: give the API `EMBEDDER_URL` and `EMBEDDER_SECRET` as Fly secrets, allow ~25 s for a call that hits a full start (after a deploy), and send a photo's whole-photo box plus its garments in one call.
   - Consider reaching it only over Fly's private network (Flycast) instead of the public address, once only the API calls it.
-  - From the Step 3.2 review, for Step 3.3:
-    - Send `{0, 0, 1, 1}` as an extra box to get the whole-photo fingerprint in the same call.
-    - Convert Gemini's 0–1000 `[ymin, xmin, ymax, xmax]` boxes and drop empty ones first: one bad box refuses the whole request.
-    - Allow 30–45 s per call (20 boxes ≈ 13 s, plus up to 20 s for a full start after a deploy), and retry on 502 / 503.
-    - Store the returned `model` with each fingerprint (the 3.1 tables have no column for it yet), so a model change can be found and redone.
   - CI's image check downloads torch and the model on every run that touches the service (~5 min): add a Docker build cache (buildx + GitHub Actions cache) if that gets slow. It also doesn't cut the network off, so "works offline" rests on `HF_HUB_OFFLINE=1` (which makes any download fail).
   - Pin `python:3.12-slim` to a digest (with the action-pinning work above).
   - Accept the API's request id in a header and log it, to follow one photo across both services.

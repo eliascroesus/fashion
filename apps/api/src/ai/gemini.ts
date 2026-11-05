@@ -33,17 +33,36 @@ export function costMicros(model: GeminiModel, usage: GeminiUsage): number {
   );
 }
 
-/** No answer: network trouble, a timeout or an error status. `retryable` = worth trying later. */
+/**
+ * No answer: network trouble, a timeout or an error status. `retryable` = worth
+ * trying later. `maybeBilled` = the request may have been answered (and billed)
+ * after we stopped waiting, so the caller logs an estimated cost.
+ */
 export class GeminiError extends Error {
   readonly httpStatus: number | null;
   readonly retryable: boolean;
+  readonly maybeBilled: boolean;
 
-  constructor(message: string, httpStatus: number | null, retryable: boolean) {
+  constructor(message: string, httpStatus: number | null, retryable: boolean, maybeBilled = false) {
     super(message);
     this.name = 'GeminiError';
     this.httpStatus = httpStatus;
     this.retryable = retryable;
+    this.maybeBilled = maybeBilled;
   }
+}
+
+/** Gemini 2.5 models take a thinking budget in tokens; 3.x take a level (and 400 on the other). */
+const THINKING_BUDGETS = { MINIMAL: 0, LOW: 1024, MEDIUM: 4096, HIGH: 8192 } as const;
+
+export function thinkingConfig(
+  model: GeminiModel,
+  level: ThinkingLevel,
+): { thinkingLevel: string } | { thinkingBudget: number } | null {
+  if (level === 'MODEL_DEFAULT') return null;
+  return model.startsWith('gemini-2.5-')
+    ? { thinkingBudget: THINKING_BUDGETS[level] }
+    : { thinkingLevel: level };
 }
 
 export interface GeminiRequest {
@@ -113,6 +132,7 @@ export class GeminiClient {
 
   async generateJson(request: GeminiRequest): Promise<GeminiAnswer> {
     const { thinkingLevel, mediaResolution } = this.#options;
+    const thinking = thinkingConfig(this.model, thinkingLevel);
     const body = {
       contents: [
         {
@@ -133,7 +153,7 @@ export class GeminiClient {
         responseMimeType: 'application/json',
         responseJsonSchema: request.schema,
         maxOutputTokens: request.maxOutputTokens,
-        ...(thinkingLevel === 'MODEL_DEFAULT' ? {} : { thinkingConfig: { thinkingLevel } }),
+        ...(thinking ? { thinkingConfig: thinking } : {}),
         ...(mediaResolution ? { mediaResolution: `MEDIA_RESOLUTION_${mediaResolution}` } : {}),
       },
     };
@@ -151,7 +171,9 @@ export class GeminiClient {
       });
     } catch (error) {
       const reason = error instanceof Error ? error.name : 'unknown';
-      throw new GeminiError(`Gemini unreachable (${reason}).`, null, true);
+      // A timeout means Google had the photo and may have answered (and billed) anyway.
+      const timedOut = reason === 'TimeoutError' || reason === 'AbortError';
+      throw new GeminiError(`Gemini unreachable (${reason}).`, null, true, timedOut);
     }
 
     if (!response.ok) {
@@ -165,7 +187,14 @@ export class GeminiClient {
       );
     }
 
-    const raw = (await response.json()) as RawResponse;
+    let raw: RawResponse;
+    try {
+      raw = (await response.json()) as RawResponse;
+    } catch (error) {
+      // Cut off or not JSON (a timeout while reading, a proxy page): answered, so maybe billed.
+      const reason = error instanceof Error ? error.name : 'unknown';
+      throw new GeminiError(`Gemini's answer could not be read (${reason}).`, 200, true, true);
+    }
     const usage: GeminiUsage = {
       inputTokens: raw.usageMetadata?.promptTokenCount ?? 0,
       outputTokens: raw.usageMetadata?.candidatesTokenCount ?? 0,

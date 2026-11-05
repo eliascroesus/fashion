@@ -196,12 +196,18 @@ export async function startJobs(boss: PgBoss, options: WorkerDeps): Promise<void
       try {
         await processUploadedMedia(db, storage, data.mediaId);
         log.info({ mediaId: data.mediaId }, 'photo processed');
-        await queuePhotoAi(boss, db, options.ai, data.mediaId);
       } catch (error) {
         log.error({ err: error, mediaId: data.mediaId }, 'photo failed');
         // A photo we can't use won't get better with retries; anything else is retried.
         if (!(error instanceof ImageRejectedError)) throw error;
         await markMediaFailed(db, data.mediaId, error.message);
+        continue;
+      }
+      // The photo is ready whatever happens here: a hiccup queueing the AI must never fail it.
+      try {
+        await queuePhotoAi(boss, db, options.ai, data.mediaId);
+      } catch (error) {
+        log.error({ err: error, mediaId: data.mediaId }, 'could not queue photo AI');
       }
     }
   });
@@ -224,6 +230,13 @@ async function startPhotoAiJobs(boss: PgBoss, options: WorkerDeps): Promise<void
   let capReportedFor = '';
 
   await boss.createQueue(QUEUES.photoSpotFailed);
+  /** Fingerprints are worth having even when the reading failed: at least the whole photo. */
+  const queueFingerprint = async (mediaId: string) => {
+    if (deps.embedder) {
+      await boss.send(QUEUES.photoFingerprint, { mediaId }, { singletonKey: mediaId });
+    }
+  };
+
   await boss.work<{ mediaId: string }>(QUEUES.photoSpotFailed, workOptions, async (jobs) => {
     for (const { data } of jobs) {
       await db
@@ -231,6 +244,7 @@ async function startPhotoAiJobs(boss: PgBoss, options: WorkerDeps): Promise<void
         .set({ spotStatus: 'failed', spottedAt: new Date() })
         .where(and(eq(media.id, data.mediaId), isNull(media.spotStatus)));
       log.error({ mediaId: data.mediaId }, 'photo reading failed after retries');
+      await queueFingerprint(data.mediaId);
     }
   });
   await boss.createQueue(QUEUES.photoSpot, {
@@ -247,9 +261,10 @@ async function startPhotoAiJobs(boss: PgBoss, options: WorkerDeps): Promise<void
       try {
         const result = await spotPhoto(deps, data.mediaId);
         log.info({ mediaId: data.mediaId, ...result }, 'photo read');
-        if (deps.embedder && result.outcome !== 'failed') {
-          await boss.send(QUEUES.photoFingerprint, data, { singletonKey: data.mediaId });
-        }
+        const gone =
+          result.outcome === 'skipped' &&
+          (result.reason === 'photo not ready' || result.reason === 'not in a look');
+        if (!gone) await queueFingerprint(data.mediaId);
       } catch (error) {
         if (error instanceof SpendCapReachedError) {
           const today = new Date().toISOString().slice(0, 10);

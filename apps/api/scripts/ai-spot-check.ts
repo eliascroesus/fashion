@@ -1,10 +1,12 @@
 // Reads looks' photos with Gemini (garments, sentence, search words, safety flags), fingerprints
 // them, and writes a page that draws the boxes on each photo, to check by eye. From the repo root:
-//   pnpm ai:spot-check                          50 of @outfitly.picks' looks
-//   pnpm ai:spot-check --count 125 --author outfitly.picks
+//   pnpm ai:spot-check                          the first 50 of @outfitly.picks' looks
+//   pnpm ai:spot-check --all                    all of them (every seed look gets its garments)
+//   pnpm ai:spot-check --count 20 --author someone
 //   pnpm ai:spot-check --again                  read them again (costs again)
 //   pnpm ai:spot-check --out ./somewhere        page folder (default ~/Downloads/outfitly-spot-check)
-// Photos already read are not sent again, so running it twice only redraws the page.
+// Photos already read are not sent again, so running it twice only redraws the page. The sample
+// stays the same: oldest looks first, including looks hidden because their photo was flagged.
 // Needs GEMINI_API_KEY (and EMBEDDER_URL + EMBEDDER_SECRET for fingerprints) in .env.
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -15,14 +17,15 @@ import {
   asc,
   createDb,
   type Db,
-  desc,
   eq,
   garments,
   inArray,
+  isNotNull,
   isNull,
   lookMedia,
   looks,
   media,
+  or,
   profiles,
 } from '@outfitly/db';
 import { photoAiClients } from '../src/ai/clients.ts';
@@ -45,7 +48,8 @@ function option(name: string): string | undefined {
   const i = args.indexOf(`--${name}`);
   return i === -1 ? undefined : args[i + 1];
 }
-const count = Number(option('count') ?? 50);
+const all = args.includes('--all');
+const count = all ? Number.MAX_SAFE_INTEGER : Number(option('count') ?? 50);
 const handle = (option('author') ?? 'outfitly.picks').replace(/^@/, '');
 const again = args.includes('--again');
 const outDir = option('out')
@@ -95,7 +99,11 @@ async function coverPhotos(database: Db): Promise<{ lookId: string; mediaId: str
     .where(
       and(
         eq(profiles.handle, handle),
-        eq(looks.status, 'published'),
+        // Hidden looks whose photo was read stay in (flagged ones), so the sample never shifts.
+        or(
+          eq(looks.status, 'published'),
+          and(eq(looks.status, 'hidden'), isNotNull(media.spotStatus)),
+        ),
         isNull(looks.deletedAt),
         eq(media.status, 'ready'),
       ),
@@ -161,11 +169,14 @@ try {
   await writeFile(file, renderPage(page));
 
   const { cost } = page;
+  const usd = (micros: number, digits: number) => `$${(micros / 1e6).toFixed(digits)}`;
   console.log(
-    `\nCost: ${String(cost.calls)} calls this run, $${(cost.runMicros / 1e6).toFixed(4)}. ` +
-      `Average per photo read: $${(cost.averageMicros / 1e6).toFixed(5)} ` +
-      `(${String(cost.averageInput)} input + ${String(cost.averageOutput)} output tokens) → ` +
-      `$${((cost.averageMicros * 1000) / 1e6).toFixed(2)} per 1,000 photos.`,
+    `\nThis run: ${String(cost.runCalls)} calls, ${usd(cost.runMicros, 4)}.\n` +
+      `All readings of these photos: ${String(cost.readings)} readings from ${String(cost.calls)} calls ` +
+      `(retries and failures included), ${usd(cost.totalMicros, 4)} → ` +
+      `${usd(cost.perPhotoMicros, 5)} per photo = ${usd(cost.perPhotoMicros * 1000, 2)} per 1,000 photos.\n` +
+      `A successful call alone: ${usd(cost.perSuccessMicros, 5)} ` +
+      `(${String(cost.averageInput)} input + ${String(cost.averageOutput)} output tokens).`,
   );
   console.log(`Open the check page: ${file}`);
   if (run.stoppedByCap) process.exitCode = 1;
@@ -184,6 +195,7 @@ async function pageData(database: Db, mediaIds: string[]): Promise<PageData> {
             width: media.width,
             height: media.height,
             status: media.spotStatus,
+            readAt: media.spottedAt,
             description: media.aiDescription,
             tags: media.aiTags,
             flags: media.safetyFlags,
@@ -209,6 +221,7 @@ async function pageData(database: Db, mediaIds: string[]): Promise<PageData> {
       width: row.width ?? 1,
       height: row.height ?? 1,
       status: row.status,
+      readAt: row.readAt?.toISOString() ?? null,
       description: row.description,
       tags: row.tags,
       flags: row.flags,
@@ -225,13 +238,13 @@ async function pageData(database: Db, mediaIds: string[]): Promise<PageData> {
     });
   }
 
-  // The latest answered call per photo is what that photo's reading cost.
+  // Honest cost: everything these photos' calls cost (retries, failures and estimates for
+  // timeouts included), divided by the readings it bought.
   const calls =
     mediaIds.length === 0
       ? []
       : await database
           .select({
-            mediaId: aiCalls.mediaId,
             costMicros: aiCalls.costMicros,
             inputTokens: aiCalls.inputTokens,
             outputTokens: aiCalls.outputTokens,
@@ -240,17 +253,13 @@ async function pageData(database: Db, mediaIds: string[]): Promise<PageData> {
             createdAt: aiCalls.createdAt,
           })
           .from(aiCalls)
-          .where(inArray(aiCalls.mediaId, mediaIds))
-          .orderBy(desc(aiCalls.createdAt));
-  const latest = new Map<string, (typeof calls)[number]>();
-  for (const call of calls) {
-    if (call.mediaId && call.status !== 'failed' && !latest.has(call.mediaId)) {
-      latest.set(call.mediaId, call);
-    }
-  }
-  const answered = [...latest.values()];
-  const average = (pick: (c: (typeof calls)[number]) => number) =>
-    answered.length === 0 ? 0 : answered.reduce((sum, c) => sum + pick(c), 0) / answered.length;
+          .where(inArray(aiCalls.mediaId, mediaIds));
+  const answered = calls.filter((c) => c.status === 'ok' || c.status === 'blocked');
+  const sum = (rows: typeof calls, pick: (c: (typeof calls)[number]) => number) =>
+    rows.reduce((total, c) => total + pick(c), 0);
+  const perAnswer = (pick: (c: (typeof calls)[number]) => number) =>
+    answered.length === 0 ? 0 : sum(answered, pick) / answered.length;
+  const totalMicros = sum(calls, (c) => c.costMicros);
   const thisRun = calls.filter((c) => c.createdAt >= started);
   return {
     model: ai.gemini?.model ?? '',
@@ -258,11 +267,15 @@ async function pageData(database: Db, mediaIds: string[]): Promise<PageData> {
     createdAt: new Date().toISOString(),
     photos,
     cost: {
-      calls: thisRun.length,
-      runMicros: thisRun.reduce((sum, c) => sum + c.costMicros, 0),
-      averageMicros: average((c) => c.costMicros),
-      averageInput: Math.round(average((c) => c.inputTokens)),
-      averageOutput: Math.round(average((c) => c.outputTokens + c.thinkingTokens)),
+      runCalls: thisRun.length,
+      runMicros: sum(thisRun, (c) => c.costMicros),
+      calls: calls.length,
+      readings: answered.length,
+      totalMicros,
+      perPhotoMicros: answered.length === 0 ? 0 : totalMicros / answered.length,
+      perSuccessMicros: perAnswer((c) => c.costMicros),
+      averageInput: Math.round(perAnswer((c) => c.inputTokens)),
+      averageOutput: Math.round(perAnswer((c) => c.outputTokens + c.thinkingTokens)),
     },
   };
 }

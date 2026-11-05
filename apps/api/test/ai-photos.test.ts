@@ -23,7 +23,14 @@ import {
   spotPhoto,
 } from '../src/ai/photos.ts';
 import { QUEUES, queuePhotoAi } from '../src/jobs.ts';
-import { COAT_AND_SNEAKERS, fakeEmbedder, fakeGemini, geminiResponse, json } from './ai-fakes.ts';
+import {
+  COAT_AND_SNEAKERS,
+  fakeEmbedder,
+  fakeGemini,
+  geminiResponse,
+  json,
+  unitVector,
+} from './ai-fakes.ts';
 import { createAuthor, createLook } from './feed-fixtures.ts';
 import { createTestContext, type TestContext } from './helpers.ts';
 
@@ -299,6 +306,105 @@ describe('reading a look photo (garment spotting)', () => {
     expect(call).toMatchObject({ status: 'invalid', costMicros: 855 });
   });
 
+  it('tries an answer cut off at the output limit once more, then gives up', async () => {
+    const { mediaId } = await lookWithPhoto();
+    const gemini = fakeGemini(() =>
+      json({
+        candidates: [
+          { content: { parts: [{ text: '{"garments": [' }] }, finishReason: 'MAX_TOKENS' },
+        ],
+        usageMetadata: { promptTokenCount: 1500, candidatesTokenCount: 4096 },
+      }),
+    );
+    await expect(spotPhoto(deps({ gemini: gemini.client }), mediaId)).rejects.toBeInstanceOf(
+      SpotAnswerError,
+    );
+    expect(await spotPhoto(deps({ gemini: gemini.client }), mediaId)).toEqual({
+      outcome: 'failed',
+      reason: 'answers cut off at the output limit twice',
+    });
+    const calls = await ctx.db.select().from(aiCalls).where(eq(aiCalls.mediaId, mediaId));
+    expect(calls.map((c) => [c.status, c.error, c.costMicros])).toEqual([
+      ['invalid', 'MAX_TOKENS: unusable answer', 375 + 6144],
+      ['invalid', 'MAX_TOKENS: unusable answer', 375 + 6144],
+    ]);
+    const [photo] = await ctx.db.select().from(media).where(eq(media.id, mediaId));
+    expect(photo?.spotStatus).toBe('failed');
+  });
+
+  it('logs an estimated cost when the answer could not be read, and asks for a retry', async () => {
+    const { mediaId } = await lookWithPhoto();
+    const gemini = fakeGemini(() => new Response('<html>proxy error</html>', { status: 200 }));
+    await expect(spotPhoto(deps({ gemini: gemini.client }), mediaId)).rejects.toMatchObject({
+      name: 'GeminiError',
+      retryable: true,
+      maybeBilled: true,
+    });
+    const [call] = await ctx.db.select().from(aiCalls).where(eq(aiCalls.mediaId, mediaId));
+    // 2,000 input tokens (a typical photo) + the 4,096 output tokens we allow.
+    expect(call).toMatchObject({ status: 'failed', httpStatus: 200, costMicros: 500 + 6144 });
+    expect(call?.error).toContain('(cost estimated)');
+    expect(await spentTodayMicros(ctx.db)).toBe(6644);
+  });
+
+  it('keeps every photo’s words when two photos of one look are read at once', async () => {
+    const first = await lookWithPhoto();
+    const lookId = first.lookId;
+    const second = await lookWithPhoto();
+    await ctx.db.insert(lookMedia).values({ lookId, mediaId: second.mediaId, position: 1 });
+    await ctx.storage.putPublic(
+      `m/${second.mediaId}/1080.webp`,
+      Buffer.from('second'),
+      'image/webp',
+    );
+    // Both answers come back together, so both photos are saved at the same moment.
+    let release: () => void = () => undefined;
+    const bothAsked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let asked = 0;
+    const gemini = fakeGemini(async (call) => {
+      asked += 1;
+      if (asked === 2) release();
+      await bothAsked;
+      const body = call.body as { contents: { parts: { inlineData?: { data: string } }[] }[] };
+      const isSecond =
+        body.contents[0]?.parts[0]?.inlineData?.data === Buffer.from('second').toString('base64');
+      return geminiResponse({
+        ...COAT_AND_SNEAKERS,
+        description: isSecond ? 'Second.' : 'First.',
+        tags: isSecond ? ['boots'] : ['coat'],
+      });
+    });
+    await Promise.all([
+      spotPhoto(deps({ gemini: gemini.client }), first.mediaId),
+      spotPhoto(deps({ gemini: gemini.client }), second.mediaId),
+    ]);
+    const [look] = await ctx.db.select().from(looks).where(eq(looks.id, lookId));
+    expect(look).toMatchObject({ aiDescription: 'First.', aiTags: ['coat', 'boots'] });
+  });
+
+  it('leaves an already hidden look hidden, with no status of its own to restore', async () => {
+    const { lookId, mediaId } = await lookWithPhoto();
+    await ctx.db.update(looks).set({ status: 'hidden' }).where(eq(looks.id, lookId));
+    const flagged = {
+      ...COAT_AND_SNEAKERS,
+      safety: { nudity: false, violence: true, spam_text: false },
+    };
+    const gemini = fakeGemini(() => geminiResponse(flagged));
+    await spotPhoto(deps({ gemini: gemini.client }), mediaId);
+    const [look] = await ctx.db
+      .select({ status: looks.status })
+      .from(looks)
+      .where(eq(looks.id, lookId));
+    expect(look?.status).toBe('hidden');
+    const [item] = await ctx.db
+      .select()
+      .from(moderationQueue)
+      .where(eq(moderationQueue.mediaId, mediaId));
+    expect(item).toMatchObject({ status: 'open', reasons: ['violence'], details: { looks: [] } });
+  });
+
   it('skips photos that are not in a look, not ready, or when Gemini is off', async () => {
     const { mediaId } = await lookWithPhoto();
     expect(await spotPhoto(deps(), mediaId)).toEqual({
@@ -400,6 +506,44 @@ describe('fingerprinting a look photo', () => {
       .from(garments)
       .where(and(eq(garments.mediaId, mediaId), isNull(garments.embedding)));
     expect(left).toHaveLength(0);
+  });
+
+  it('keeps the batches that finished when a later one fails', async () => {
+    const { mediaId } = await lookWithPhoto();
+    await ctx.db.insert(garments).values(
+      Array.from({ length: 22 }, (_, i) => ({
+        mediaId,
+        category: 'accessory' as const,
+        boxLeft: 0,
+        boxTop: i / 30,
+        boxRight: 0.5,
+        boxBottom: i / 30 + 0.02,
+      })),
+    );
+    const embedder = fakeEmbedder((call, i) =>
+      i === 0
+        ? json({
+            model: 'm',
+            embeddings: (call.body as { boxes: unknown[] }).boxes.map(() => unitVector(0)),
+          })
+        : json({}, 503),
+    );
+    await expect(
+      fingerprintPhoto(deps({ embedder: embedder.client }), mediaId),
+    ).rejects.toMatchObject({
+      retryable: true,
+    });
+    const left = await ctx.db
+      .select({ id: garments.id })
+      .from(garments)
+      .where(and(eq(garments.mediaId, mediaId), isNull(garments.embedding)));
+    // The whole photo + 19 garments were saved; the retry only sends the last 3.
+    expect(left).toHaveLength(3);
+    const [photo] = await ctx.db
+      .select({ m: media.embeddingModel })
+      .from(media)
+      .where(eq(media.id, mediaId));
+    expect(photo?.m).toBe('m');
   });
 
   it('is skipped without the fingerprint service', async () => {

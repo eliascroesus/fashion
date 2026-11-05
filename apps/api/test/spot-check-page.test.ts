@@ -13,6 +13,7 @@ const data: PageData = {
       width: 1080,
       height: 1440,
       status: 'done',
+      readAt: '2026-11-05T00:00:00.000Z',
       description: 'A coat </script><script>alert(1)</script>',
       tags: ['minimal'],
       flags: [],
@@ -28,7 +29,17 @@ const data: PageData = {
       ],
     },
   ],
-  cost: { calls: 1, runMicros: 855, averageMicros: 855, averageInput: 1500, averageOutput: 320 },
+  cost: {
+    runCalls: 2,
+    runMicros: 1710,
+    calls: 2,
+    readings: 1,
+    totalMicros: 1710,
+    perPhotoMicros: 1710,
+    perSuccessMicros: 855,
+    averageInput: 1500,
+    averageOutput: 320,
+  },
 };
 
 describe('the spot-check page', () => {
@@ -76,7 +87,9 @@ describe('the spot-check page', () => {
     };
     runInNewContext(script, { document, localStorage, navigator: {} });
     expect(nodes.get('score')?.textContent).toContain('0 of 1 photos checked');
-    expect(nodes.get('meta')?.textContent).toContain('$0.85 per 1,000 photos');
+    expect(nodes.get('meta')?.textContent).toContain(
+      '$1.71 per 1,000 photos (2 calls for 1 readings',
+    );
 
     // "All right" on the only photo: 1 of 1 piece right, nothing missed.
     const card = nodes.get('grid')?.children[0];
@@ -85,5 +98,8 @@ describe('the spot-check page', () => {
     missedRow?.children[2]?.onclick?.();
     expect(nodes.get('score')?.textContent).toContain('1 of 1 photos checked');
     expect(nodes.get('score')?.textContent).toContain('= 100% (goal 90%)');
+    // Kept per reading of the photo.
+    const kept = JSON.parse(store.get('spot-check:spot-v1') ?? '{}') as Record<string, unknown>;
+    expect(Object.keys(kept)).toEqual(['m1@2026-11-05T00:00:00.000Z']);
   });
 });

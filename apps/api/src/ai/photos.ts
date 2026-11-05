@@ -5,7 +5,6 @@ import {
   type Db,
   eq,
   garments,
-  inArray,
   isNull,
   lookMedia,
   looks,
@@ -95,7 +94,16 @@ export async function looksOfPhoto(db: Db | Tx, mediaId: string): Promise<string
 export type SpotOutcome =
   | { outcome: 'done' | 'flagged'; garments: number; costMicros: number }
   | { outcome: 'failed'; reason: string }
-  | { outcome: 'skipped'; reason: string };
+  | {
+      outcome: 'skipped';
+      reason: 'photo not ready' | 'already spotted' | 'not in a look' | 'no Gemini key';
+    };
+
+/**
+ * What a call we stopped waiting for may still have cost: a typical photo's
+ * input plus the most output we allow. Logged so the daily cap counts it.
+ */
+const ESTIMATED_INPUT_TOKENS = 2000;
 
 /**
  * Reads one of a look's photos with Gemini (once: results are kept, never
@@ -147,12 +155,20 @@ export async function spotPhoto(
     });
   } catch (error) {
     if (!(error instanceof GeminiError)) throw error;
+    const estimate = error.maybeBilled
+      ? costMicros(gemini.model, {
+          inputTokens: ESTIMATED_INPUT_TOKENS,
+          outputTokens: SPOT_MAX_OUTPUT_TOKENS,
+          thinkingTokens: 0,
+        })
+      : 0;
     await db.insert(aiCalls).values({
       ...log,
       status: 'failed',
+      costMicros: estimate,
       durationMs: Math.round(performance.now() - started),
       httpStatus: error.httpStatus,
-      error: error.message.slice(0, 500),
+      error: `${error.message}${error.maybeBilled ? ' (cost estimated)' : ''}`.slice(0, 500),
     });
     if (error.retryable) throw error;
     await db
@@ -167,6 +183,7 @@ export async function spotPhoto(
     answer.refusal === null
       ? parseSpotAnswer(answer.text ?? '')
       : { garments: [], description: null, tags: [], flags: ['blocked'] };
+  const cutOff = !result && answer.finishReason === 'MAX_TOKENS';
   await db.insert(aiCalls).values({
     ...log,
     modelVersion: answer.modelVersion,
@@ -177,14 +194,23 @@ export async function spotPhoto(
     costMicros: cost,
     durationMs: Math.round(performance.now() - started),
     httpStatus: 200,
+    // The finish reason leads the error text, so cut-off answers can be counted.
     error:
       answer.refusal !== null
         ? `refused: ${answer.refusal}`
         : result
           ? null
-          : `unusable answer (finish: ${answer.finishReason ?? 'none'})`,
+          : `${answer.finishReason ?? 'NO_FINISH_REASON'}: unusable answer`,
   });
   if (!result) {
+    // An answer cut off at the output limit is the priciest kind: one more try, not three.
+    if (cutOff && (await cutOffAnswers(db, mediaId)) >= 2) {
+      await db
+        .update(media)
+        .set({ spotStatus: 'failed', spottedAt: new Date() })
+        .where(eq(media.id, mediaId));
+      return { outcome: 'failed', reason: 'answers cut off at the output limit twice' };
+    }
     throw new SpotAnswerError(`Unusable answer (finish: ${answer.finishReason ?? 'none'}).`);
   }
 
@@ -196,10 +222,29 @@ export async function spotPhoto(
   };
 }
 
+/** Cut-off answers for this photo with the current prompt since its last reading. */
+async function cutOffAnswers(db: Db, mediaId: string): Promise<number> {
+  const { rows } = await db.execute<{ n: number }>(
+    sql`SELECT count(*)::int AS n FROM ai_calls a
+         WHERE a.media_id = ${mediaId} AND a.status = 'invalid'
+           AND a.prompt_version = ${SPOT_PROMPT_VERSION} AND a.error LIKE 'MAX_TOKENS:%'
+           AND a.created_at > coalesce(
+                 (SELECT spotted_at FROM media WHERE id = ${mediaId}), '-infinity')`,
+  );
+  return rows[0]?.n ?? 0;
+}
+
 /** Stores one reading of a photo (replacing an earlier one) and updates its looks. */
 async function saveSpotResult(db: Db, mediaId: string, result: SpotResult): Promise<void> {
   await db.transaction(async (tx) => {
-    // Lock the photo: a retry racing this one waits, then replaces cleanly.
+    // Lock the photo's looks first, always in id order: another photo of the same look being
+    // saved at once waits here, and then sees this one's words when it refreshes the look.
+    await tx.execute(
+      sql`SELECT l.id FROM looks l JOIN look_media lm ON lm.look_id = l.id
+           WHERE lm.media_id = ${mediaId} AND l.deleted_at IS NULL
+           ORDER BY l.id FOR UPDATE OF l`,
+    );
+    // Then the photo: a retry racing this one waits, then replaces cleanly.
     await tx.execute(sql`SELECT 1 FROM media WHERE id = ${mediaId} FOR UPDATE`);
     await tx
       .update(garments)
@@ -242,6 +287,7 @@ async function holdForReview(tx: Tx, mediaId: string, flags: SafetyFlag[]): Prom
           SELECT l.id, l.status FROM looks l
             JOIN look_media lm ON lm.look_id = l.id
            WHERE lm.media_id = ${mediaId} AND l.deleted_at IS NULL AND l.status <> 'hidden'
+           ORDER BY l.id
              FOR UPDATE OF l)
         UPDATE looks SET status = 'hidden', updated_at = now()
           FROM target WHERE looks.id = target.id
@@ -333,44 +379,29 @@ export async function fingerprintPhoto(
   if (jobs.length === 0) return { outcome: 'skipped', reason: 'already fingerprinted' };
 
   const url = deps.storage.publicUrl(photo.key1080);
-  const results: { garmentId: string | null; embedding: number[]; model: string }[] = [];
+  let saved = 0;
+  let model = '';
+  // Each batch is saved before the next is asked for: a later failure keeps the earlier ones.
   for (let from = 0; from < jobs.length; from += MAX_BOXES_PER_CALL) {
     const chunk = jobs.slice(from, from + MAX_BOXES_PER_CALL);
     const answer = await embedder.embedImage(
       url,
       chunk.map((j) => j.box),
     );
-    chunk.forEach((job, i) => {
-      const embedding = answer.embeddings[i];
-      if (embedding) results.push({ garmentId: job.garmentId, embedding, model: answer.model });
+    model = answer.model;
+    await db.transaction(async (tx) => {
+      for (const [i, job] of chunk.entries()) {
+        const embedding = answer.embeddings[i];
+        if (!embedding) continue;
+        const values = { embedding, embeddingModel: answer.model };
+        if (job.garmentId === null) {
+          await tx.update(media).set(values).where(eq(media.id, mediaId));
+        } else {
+          await tx.update(garments).set(values).where(eq(garments.id, job.garmentId));
+        }
+        saved += 1;
+      }
     });
   }
-
-  await db.transaction(async (tx) => {
-    for (const r of results) {
-      if (r.garmentId === null) {
-        await tx
-          .update(media)
-          .set({ embedding: r.embedding, embeddingModel: r.model })
-          .where(eq(media.id, mediaId));
-      } else {
-        await tx
-          .update(garments)
-          .set({ embedding: r.embedding, embeddingModel: r.model })
-          .where(eq(garments.id, r.garmentId));
-      }
-    }
-  });
-  return { outcome: 'done', fingerprints: results.length, model: results[0]?.model ?? '' };
-}
-
-/** Photos of these looks that still need reading or fingerprints (for the backfill script). */
-export async function photosOfLooks(db: Db, lookIds: readonly string[]): Promise<string[]> {
-  if (lookIds.length === 0) return [];
-  const rows = await db
-    .select({ mediaId: lookMedia.mediaId })
-    .from(lookMedia)
-    .where(inArray(lookMedia.lookId, [...lookIds]))
-    .orderBy(asc(lookMedia.lookId), asc(lookMedia.position));
-  return rows.map((r) => r.mediaId);
+  return { outcome: 'done', fingerprints: saved, model };
 }
