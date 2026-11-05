@@ -92,6 +92,13 @@
       "when": 1793836013142,
       "tag": "0012_garment_spotting",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793839046207,
+      "tag": "0013_product_photos",
+      "breakpoints": true
     }
   ]
 }

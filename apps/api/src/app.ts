@@ -9,9 +9,11 @@ import type { Config } from './config.ts';
 import { ApiError, notFoundHandler, registerErrorHandler } from './errors.ts';
 import { registerIdempotency } from './idempotency.ts';
 import type { JobQueue } from './jobs.ts';
+import type { NetworkPolicy } from './links/fetch.ts';
 import { boardsRoutes } from './routes/boards.ts';
 import { eventsRoutes } from './routes/events.ts';
 import { feedRoutes } from './routes/feed.ts';
+import { linksRoutes } from './routes/links.ts';
 import { looksRoutes } from './routes/looks.ts';
 import { profilesRoutes } from './routes/profiles.ts';
 import { tasteRoutes } from './routes/taste.ts';
@@ -31,6 +33,8 @@ export interface AppDeps {
   storage: PhotoStorage;
   queue: JobQueue;
   logger?: FastifyServerOptions['logger'];
+  /** Where pasted links may be fetched from (tests point names at a local shop). */
+  linkNetwork?: NetworkPolicy;
 }
 
 /** Builds the API without starting it, so tests can call it in-process. */
@@ -83,6 +87,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       tasteRoutes(v1, deps);
       searchRoutes(v1, deps);
       profilesRoutes(v1, deps);
+      linksRoutes(v1, { ...deps, network: deps.linkNetwork });
       done();
     },
     { prefix: API_PREFIX },
