@@ -1,34 +1,23 @@
-import { type ClientClick, clientClickSchema } from '@outfitly/shared';
+// Loaded by the root layout, so clicks waiting on the phone are sent as soon as the app
+// starts, not only once a look is opened (routes load lazily in release builds).
+import type { ClientClick } from '@outfitly/shared';
 import { randomUUID } from 'expo-crypto';
 import * as WebBrowser from 'expo-web-browser';
 import { AppState, Platform } from 'react-native';
-import { z } from 'zod';
 import { api } from '../api';
 import { sessionId } from '../events';
 import { EventQueue } from '../events/queue';
 import { Sentry } from '../lib/sentry';
 import { storage } from '../lib/storage';
 import { realTimers } from '../lib/timers';
-import { CLICK_RULES, createShopOpener } from './shop';
+import { CLICK_RULES, createShopOpener, readStoredClicks } from './shop';
 
 export { NO_ORIGIN, originFromParams, originParams, type LookOrigin } from './shop';
 
 const QUEUE_KEY = 'clicks.queue';
 
-function loadQueue(): ClientClick[] {
-  try {
-    // An older app version may have stored another shape: start empty then.
-    const parsed = z
-      .array(clientClickSchema)
-      .safeParse(JSON.parse(storage.getString(QUEUE_KEY) ?? '[]'));
-    return parsed.success ? parsed.data : [];
-  } catch {
-    return [];
-  }
-}
-
 const queue = new EventQueue<ClientClick>({
-  load: loadQueue,
+  load: () => readStoredClicks(storage.getString(QUEUE_KEY)),
   save: (clicks) => {
     storage.set(QUEUE_KEY, JSON.stringify(clicks));
   },
@@ -41,6 +30,13 @@ const queue = new EventQueue<ClientClick>({
   newKey: randomUUID,
   timers: realTimers,
   rules: CLICK_RULES,
+  onDropped: (count) => {
+    Sentry.addBreadcrumb({
+      category: 'clicks',
+      level: 'warning',
+      message: `Dropped the ${String(count)} oldest unsent clicks (phone queue full)`,
+    });
+  },
 });
 
 // Send what waits before the phone may suspend the app, and when it's back.
@@ -51,10 +47,13 @@ AppState.addEventListener('change', (state) => {
 /**
  * Android: the browser that shows Custom Tabs, asked for by name. A link
  * handed to Android without one goes to the shop's own app when it's
- * installed and claims the shop's links; named, it stays in the browser.
- * The browser is also warmed up (a Custom Tabs connection, which per Chrome's
- * docs keeps links in the tab), but never asked to load a link ahead: that
- * would count as a visit on the poster's affiliate link.
+ * installed and claims the shop's links; naming the browser is what keeps it
+ * in the browser. (Warming the browser up only makes the tab open faster:
+ * expo-web-browser builds the tab without the warmed-up session, so Chrome's
+ * own rules on handing links to apps still apply; check on a real phone.)
+ * The browser is never asked to load a link ahead: that would count as a
+ * visit on the poster's affiliate link. With no Custom Tabs browser, the link
+ * goes to Android as is (and may open the shop's app).
  */
 let browserPackage: Promise<string | undefined> | null = null;
 function customTabsBrowser(): Promise<string | undefined> {
@@ -62,10 +61,17 @@ function customTabsBrowser(): Promise<string | undefined> {
     .then(async (found) => {
       const name =
         found.preferredBrowserPackage ?? found.defaultBrowserPackage ?? found.browserPackages[0];
-      if (name) await WebBrowser.warmUpAsync(name).catch(() => undefined);
+      if (!name) {
+        browserPackage = null; // ask again next time (e.g. a browser was installed meanwhile)
+        return undefined;
+      }
+      await WebBrowser.warmUpAsync(name).catch(() => undefined);
       return name;
     })
-    .catch(() => undefined);
+    .catch(() => {
+      browserPackage = null;
+      return undefined;
+    });
   return browserPackage;
 }
 
@@ -87,6 +93,7 @@ export interface ShopStyle {
  */
 export const openShop = createShopOpener<ShopStyle>({
   newId: randomUUID,
+  now: Date.now,
   keep: (click) => {
     queue.add(click);
   },
@@ -99,7 +106,12 @@ export const openShop = createShopOpener<ShopStyle>({
       showTitle: true,
     };
     if (Platform.OS === 'android') options.browserPackage = await customTabsBrowser();
-    await WebBrowser.openBrowserAsync(url, options);
+    try {
+      await WebBrowser.openBrowserAsync(url, options);
+    } catch (error) {
+      browserPackage = null; // the named browser may be gone: look again next time
+      throw error;
+    }
     // Back from the shop (iPhone): send the click now if it's still waiting.
     void queue.flush();
   },

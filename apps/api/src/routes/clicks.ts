@@ -1,14 +1,17 @@
 import type { Db } from '@outfitly/db';
-import { clickBatchResultSchema, clickBatchSchema } from '@outfitly/shared';
+import { clickBatchInputSchema, clickBatchResultSchema } from '@outfitly/shared';
 import type { FastifyInstance } from 'fastify';
-import { recordClicks } from '../clicks.ts';
+import { readableClicks, recordClicks } from '../clicks.ts';
 import { findActiveProfile } from '../profiles.ts';
 import type { ZodTypeProvider } from '../zod.ts';
 
-/** Batches per minute per IP. The app sends each tap at once, so this is taps per minute. */
+/** Batches per minute per IP. The app sends each tap at once, so this is about taps per minute. */
 export const CLICKS_PER_MINUTE = { loggedIn: 30, loggedOut: 20 } as const;
 
-/** Taps on Shop, sent by the app after the shop has opened. */
+/**
+ * Taps on Shop. The app keeps each click on the phone before it opens the
+ * shop and sends it in the background (at once, or later when offline).
+ */
 export function clicksRoutes(app: FastifyInstance, { db }: { db: Db }): void {
   const routes = app.withTypeProvider<ZodTypeProvider>();
 
@@ -29,11 +32,13 @@ export function clicksRoutes(app: FastifyInstance, { db }: { db: Db }): void {
         },
       },
       bodyLimit: 16 * 1024,
-      schema: { body: clickBatchSchema, response: { 200: clickBatchResultSchema } },
+      schema: { body: clickBatchInputSchema, response: { 200: clickBatchResultSchema } },
     },
     async (request) => {
       const profileId = await findActiveProfile(db, request);
-      return { accepted: await recordClicks(db, profileId, request.body) };
+      const clicks = readableClicks(request.body.clicks);
+      if (clicks.length === 0) return { accepted: 0 };
+      return { accepted: await recordClicks(db, profileId, { ...request.body, clicks }) };
     },
   );
 }

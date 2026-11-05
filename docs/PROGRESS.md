@@ -3,16 +3,17 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-**Phase 3 — Products and AI, in progress.** Steps 3.1–3.6 are built; 3.3's real-photo check waits for the Gemini key, 3.4's link check waits for Elias's 30 links (and a decision about shops that block link readers), 3.5's 100-pair check waits for the key, the seed looks' product links and Elias's labels, and 3.6's "seed looks show real items" waits for those same links.
+**Phase 3 — Products and AI, in progress.** Steps 3.1–3.7 are built; 3.3's real-photo check waits for the Gemini key, 3.4's link check waits for Elias's 30 links (and a decision about shops that block link readers), 3.5's 100-pair check waits for the key, the seed looks' product links and Elias's labels, and 3.6's "seed looks show real items" waits for those same links.
 - Step 3.1 (Product tables): PR #16, waiting for Elias to merge.
 - Step 3.2 (The fingerprint service): PR #17, stacked on #16 (merge #16 first).
 - Step 3.3 (Garment spotting): PR #18, stacked on #17. Built and tested with a stand-in Gemini; the 50-photo check and the cost per 1,000 photos wait for the key (see Waiting on Elias).
 - Step 3.4 (Paste a link, get a product): PR #19, stacked on #18. "80% of 30 links": FAIL for now (15 of 30 provisional links, 50%): H&M, Arket and Lindex block automated readers and ASOS doesn't answer (see Open decisions). Elias's own 30 links are still to come.
 - Step 3.5 (Automatic link check): PR #20, stacked on #19. Built and tested with a stand-in Gemini and stand-in fingerprints; provisional thresholds from a first measurement (see Measured numbers). "100 labelled pairs, under 5% wrong items auto-verified": WAITING (see Waiting on Elias).
 - Step 3.6 (The shoppable look page): PR #21, stacked on #20. Dots, the piece list with prices and "Total look", ticks with a running total, and board totals work in the iPhone simulator with test pieces; "totals add up correctly in tests" PASS. "The seed looks show real items with prices": WAITING (the seed looks' product links, after the Gemini key).
-- Claude isn't allowed to merge in this setup (see Waiting on Elias). Elias was asleep for Steps 3.3–3.6 (2026-11-05 night) and said to keep going, so their plans and decisions are in the PRs instead of a plan approval.
+- Step 3.7 (Shop clicks): PR #22, stacked on #21. "Every tap creates exactly one click row (tested)": PASS. "The store opens and returns to the same place": PASS in the iPhone simulator (Safari view, Done, the look page pixel-identical with ticks kept); Android not checked (no Android phone or emulator yet).
+- Claude isn't allowed to merge in this setup (see Waiting on Elias). Elias was asleep for Steps 3.3–3.7 (2026-11-05 night) and said to keep going, so their plans and decisions are in the PRs instead of a plan approval.
 
-Next: Step 3.7 — Shop clicks.
+Next: Step 3.8 — "More like this" and "similar pieces".
 
 - Phase 2 passed its gate on 2026-11-04 (PRs #8–#15). "Speed numbers recorded" PASS; "It feels like Pinterest" signed off by Elias. "Both phones" was done in the iPhone simulator only: the real-phone checks (and Step 2.3's mid-range Android check) wait for the hardware. 125 real outfits accepted instead of 300 for now.
 - Phase 1 gate: everything passed except "app on both phones with login", for the same reason.
@@ -256,8 +257,28 @@ Next: Step 3.7 — Shop clicks.
     - The app keeps answers on the phone for a day and only dropped them on a new app version, so a phone with boards cached from before would have crashed on Saved. The cache now also has a shape number (bumped), and board totals are read carefully.
     - The Maestro flow's notes didn't match the test data, and the test data lived only on Claude's Mac: now `pnpm shop:test-look` makes it, and the flow says what it expects.
     - Also fixed: dots sit beside the photo's button so VoiceOver can reach them, with 44 pt tap areas kept on the photo (Android); a piece that sold out after being ticked can be unticked and the bar says it isn't counted (tested); board value counts each product once at its lowest price, the same 30 pieces the look page shows, and only looks that are out; a price of 0 is "no price" everywhere; the "Save to board" sheet no longer works out values it doesn't show (33 → 7 ms on a big test account) and board covers skip piece counts; the selection bar leaves room under the page; tapping the same dot again restarts the highlight; tick tap areas are 44 pt.
+- Step 3.7 — Shop clicks (PR #22) — **done in the iPhone simulator (2026-11-05); Android waits for a phone.**
+  - **Server:** `POST /v1/clicks` (works logged out, like `/v1/events`). The app sends taps in batches of up to 20; each click is stored once by its click id, which the phone makes at the tap (a resend, or the same click twice, stays one row and keeps the first row). A click counts only if its shop link is a piece of that look that was shown at some point (verified now, or verified by an earlier check) on a look that was published; a click that waited on the phone still counts after the piece or look is gone. The poster comes from the look, never from the app. The click is dated by the tap (the phone's clock), at most 7 days back and never in the future. A click the server can't read is skipped, never the whole batch. Rate limit per IP: 30 a minute logged in, 20 logged out.
+  - **App:** tapping Shop first keeps the click on the phone (the event queue, made generic), then opens the link exactly as posted (affiliate tags kept) in the in-app browser: the Safari view on iPhone, a Chrome Custom Tab on Android with the browser named. Each tap is sent at once; offline, it waits on the phone (up to 500, survives closing the app) and is retried (30 s, doubling, at most 15 min), also when the app comes back, goes to the background or returns from the shop. The click queue starts with the app, so waiting clicks go out at launch. Taps within 1.5 s of a tap are ignored (one tap, one click); a link that isn't a web link doesn't open; if the browser can't open, a message says so.
+  - **Where the look came from:** every grid passes its list and the card's place to the look it opens (For You, Following, search, profile, More like this, Saved, board), so a click records which card of which list led to the shop. A look opened from a link has none.
+  - **Try it:** `pnpm shop:test-look`, then `shop-click.yaml` (see the app README); `pnpm shop:test-look --remove` also deletes the test pieces' clicks.
+  - **Tests:** API 17 (one row per click under 5 resends at once, logged-out and logged-in, the piece and look rules, tap time and its limits, one unreadable click in a batch, rate limit, affiliate link unchanged in the look's answer); app 20 (the click kept before the browser opens, the 1.5 s tap lock and that it expires, only web links, offline queue, a lost answer resent with the same id, restart sends waiting clicks, 404 kept for later, stored clicks read one by one, the place limit); shared 11.
+  - **Simulator (Release build, staging):** `shop-click.yaml` passes: Shop opens the Safari view, Done comes back, the look page is pixel-identical (`same-place.sh look-before look-after`) and the tick is kept. One tap left exactly one row (logged out: session set, no profile; the right poster; platform iOS; the link with `?aff=test`; dated by the tap). A second tap, on a look opened from search results, recorded `search` at place 0. `shop-the-look.yaml` and `look-page.yaml` still pass. Test pieces and clicks removed afterwards.
+  - **Review (step-reviewer):** server side judged solid; three blocking issues on the phone, fixed.
+    - The click queue only started once a look page was opened (screens load lazily in release builds), so a click left on the phone waited until then: it now starts with the app.
+    - One click with an out-of-range place (the phone allowed up to 99,999, the server 10,000) would make the server refuse the batch and the phone drop it, and one bad stored click emptied the whole stored queue: one shared limit now, each click is checked before it's kept and on reading back, and the server skips only a click it can't read.
+    - The "one tap, one click" guard waited for the browser: on iPhone a browser that never reports back would block Shop until a restart, and on Android a quick double tap opened two tabs and made two clicks. It's now a 1.5 s lock.
+    - Also fixed: only pieces that were shown can collect clicks; clicks are dated by the tap; a server without the clicks route (404) keeps clicks for later; an honest comment on Android (naming the browser is what keeps links out of shop apps; the warm-up only makes it faster); the browser choice is asked again after a failure; a note in Sentry when the phone's 500-click limit drops the oldest.
+
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
+- 2026-11-05 — Shop clicks (Step 3.7), decided while Elias slept:
+  - `clicks.source` is the list the look was opened from (For You, Following, search, profile, More like this, Saved, board) and `position` its card's place there: together they say which card of which list led to the shop. Shop itself is on the look page; Phase 4's web pages can add their own value. No migration.
+  - A click counts if its link is a piece of that look that was shown at some point (verified now or by an earlier check) on a look that was published, even if the piece or look is gone by the time it arrives: a click made offline shouldn't be lost because the piece changed meanwhile.
+  - Clicks are dated by the tap (the phone's clock, at most 7 days back, never in the future), so a click sent late isn't counted on the wrong day.
+  - The click is kept on the phone before the shop opens; if keeping it fails the shop still opens (the error goes to Sentry). If the browser fails to open, the click stays (a message tells the person).
+  - Taps within 1.5 s of a Shop tap are ignored: one tap is one click, on both phones.
+  - Android: the Custom Tabs browser is named on every open, so Android doesn't hand the link to a shop's own app; links are never loaded ahead (that would count as a visit on the poster's affiliate link).
 - 2026-11-05 — Shoppable look page (Step 3.6), decided while Elias slept:
   - Only verified pieces show; the poster's own waiting or rejected pieces (with their reason) come with Phase 4's posting screens.
   - Sold-out pieces are greyed, can't be ticked and never count; unknown stock counts; a piece without a price says "See price in shop" and doesn't count. Totals never mix currencies.
@@ -382,7 +403,7 @@ Next: Step 3.7 — Shop clicks.
 - 2026-11-02 — Elias asked Claude to work through Phase 1 and Phase 2 overnight without stopping. Each step still gets its own branch + PR, stacked on the previous step's branch; nothing is merged into `main` without Elias.
 
 ## Waiting on Elias
-- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2), then PR #18 (Step 3.3), then PR #19 (Step 3.4), then PR #20 (Step 3.5), then PR #21 (Step 3.6), in that order.** Each is built on the one before. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub, or allow Claude to merge (add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings). On GitHub: open the PR → "Merge pull request" → "Confirm merge" → "Delete branch", then do the next one (GitHub then points it at `main` by itself).
+- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2), then PR #18 (Step 3.3), then PR #19 (Step 3.4), then PR #20 (Step 3.5), then PR #21 (Step 3.6), then PR #22 (Step 3.7), in that order.** Each is built on the one before. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub, or allow Claude to merge (add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings). On GitHub: open the PR → "Merge pull request" → "Confirm merge" → "Delete branch", then do the next one (GitHub then points it at `main` by itself).
 - **Gemini key for Step 3.3** (garment spotting is built and waits only for this):
   1. Go to https://aistudio.google.com → "Get API key" (left side) → "Create API key", on a Google Cloud project with billing on (the free tier isn't allowed for an app used in the EU).
   2. In the project folder's `.env`, fill in the line `GEMINI_API_KEY=` with the key (Claude can do this if you paste the key in the chat).
@@ -429,6 +450,10 @@ Next: Step 3.7 — Shop clicks.
 - 18+ only or teens allowed (Step 5.5)
 
 ## Known issues
+- Shop clicks (Step 3.7):
+  - **Android not checked:** with an Android phone, test Shop with the Zalando and H&M apps installed before the Phase 3 gate. Naming the browser keeps Android from handing the link to the shop's app, but Chrome has its own rules for handing links (and redirects) to apps, and expo-web-browser opens the tab without the warmed-up session that would switch them off. If the shop's app opens, the fix is a small native change (a Custom Tabs session) or a patch to expo-web-browser. A phone with no Custom Tabs browser hands the link to Android as is (the shop's app may open).
+  - If the browser fails to open, the click is still counted.
+  - Clicks are credited to the profile active when they're sent (like events and saves), and if that profile can't be used (403) the batch is dropped: store the acting profile with each waiting click when profile switching arrives (before Step 4.1).
 - Shoppable look page (Step 3.6):
   - Prices are written by the phone's own formatting: checked on the iPhone simulator and Node, not yet on Android.
   - Feed cards now count each look's pieces (one small indexed count per card); the feed's speed wasn't measured again on 10,000 looks.
@@ -527,6 +552,10 @@ Next: Step 3.7 — Shop clicks.
 - First EAS Android preview build (free plan): ~40 min in queue + ~15 min building; APK 107 MB (2026-11-02)
 
 ## Later (parked ideas, not in current scope)
+- Shop clicks (Step 3.7):
+  - Before clicks pay anyone (commissions, creator stats): the session id is chosen by the app and limits are per IP, so clicks can be made up or inflated. Filter when daily totals are built (e.g. per session/IP caps), and consider server-issued session ids.
+  - Indexes on `clicks` (`look_id`, `offer_id`, `author_profile_id`) when Phase 4's totals read them.
+  - Privacy policy: a logged-in click links the app install's random id to the profile.
 - Shoppable look page (Step 3.6):
   - Phase 4: the poster sees their own waiting and rejected pieces on the look page, with the reason; posting caps pieces at 30 per look (`MAX_LOOK_ITEMS`, which totals assume).
   - Keep a board's value up to date in the database (or cache it) if the boards list gets slow for big accounts.

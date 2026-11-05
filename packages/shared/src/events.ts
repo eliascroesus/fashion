@@ -10,6 +10,9 @@ export type ClientPlatform = (typeof CLIENT_PLATFORMS)[number];
 /** The app sends events in batches of at most this many. */
 export const MAX_EVENT_BATCH = 50;
 
+/** The furthest place in a list an event or click may name (0-based). */
+export const MAX_FEED_POSITION = 10_000;
+
 /**
  * One thing that happened on a phone. `id` is made on the phone, so a batch
  * sent twice is stored once. Only impressions so far: a card at least half
@@ -20,7 +23,7 @@ export const clientEventSchema = z.object({
   name: z.literal('impression'),
   lookId: z.uuid(),
   /** 0-based place in the feed. */
-  position: z.number().int().min(0).max(10_000),
+  position: z.number().int().min(0).max(MAX_FEED_POSITION),
   source: z.enum(EVENT_SOURCES),
   occurredAt: z.iso.datetime(),
 });

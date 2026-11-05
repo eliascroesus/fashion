@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CLIENT_PLATFORMS, EVENT_SOURCES } from './events.ts';
+import { CLIENT_PLATFORMS, EVENT_SOURCES, MAX_FEED_POSITION } from './events.ts';
 
 /**
  * Where the look was opened from before Shop was tapped (`clicks.source`):
@@ -24,7 +24,9 @@ export const clientClickSchema = z.object({
   /** The list the look was opened from; null when it wasn't opened from one (e.g. a link). */
   source: z.enum(CLICK_SOURCES).nullable(),
   /** 0-based place of the look's card in that list. */
-  position: z.number().int().min(0).max(10_000).nullable(),
+  position: z.number().int().min(0).max(MAX_FEED_POSITION).nullable(),
+  /** When Shop was tapped, by the phone's clock (a click can wait on the phone while offline). */
+  tappedAt: z.iso.datetime(),
 });
 export type ClientClick = z.infer<typeof clientClickSchema>;
 
@@ -35,6 +37,15 @@ export const clickBatchSchema = z.object({
   clicks: z.array(clientClickSchema).min(1).max(MAX_CLICK_BATCH),
 });
 export type ClickBatch = z.infer<typeof clickBatchSchema>;
+
+/**
+ * What the server accepts: the same batch, but each click is checked on its
+ * own, so one it can't read is skipped instead of refusing (and the app then
+ * dropping) the whole batch.
+ */
+export const clickBatchInputSchema = clickBatchSchema.extend({
+  clicks: z.array(z.unknown()).min(1).max(MAX_CLICK_BATCH),
+});
 
 /** How many of the batch's clicks were new and stored (repeats and unknown pieces are skipped). */
 export const clickBatchResultSchema = z.object({ accepted: z.number().int().nonnegative() });

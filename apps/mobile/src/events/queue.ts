@@ -17,6 +17,8 @@ export interface QueueRules {
   maxKept: number;
   /** At most this many in one request. */
   maxBatch: number;
+  /** Answers also worth retrying, besides no connection, server problems, 401, 408 and 429. */
+  alsoTemporary?: readonly number[];
 }
 
 /** Impressions: many small ones, so they wait for a batch. */
@@ -45,12 +47,19 @@ export interface EventQueueDeps<T extends WithId = ClientEvent> {
   random?: () => number;
   /** Defaults to the impression rules above. */
   rules?: QueueRules;
+  /** Told when the oldest were dropped to stay within `maxKept`. */
+  onDropped?: (count: number) => void;
 }
 
 /** Worth sending again later: no connection, a server problem, an expired login or a rate limit. */
-function isTemporary(error: unknown): boolean {
+function isTemporary(error: unknown, also: readonly number[] = []): boolean {
   if (!(error instanceof ApiRequestError)) return true;
-  return error.status === 0 || error.status >= 500 || [401, 408, 429].includes(error.status);
+  return (
+    error.status === 0 ||
+    error.status >= 500 ||
+    [401, 408, 429].includes(error.status) ||
+    also.includes(error.status)
+  );
 }
 
 /**
@@ -82,7 +91,8 @@ export class EventQueue<T extends WithId = ClientEvent> {
   add(event: T): void {
     this.events.push(event);
     if (this.events.length > this.rules.maxKept) {
-      this.events.splice(0, this.events.length - this.rules.maxKept);
+      const dropped = this.events.splice(0, this.events.length - this.rules.maxKept);
+      this.deps.onDropped?.(dropped.length);
     }
     this.deps.save(this.events);
     if (this.failures === 0 && this.events.length >= this.rules.batchSize) void this.flush();
@@ -104,7 +114,7 @@ export class EventQueue<T extends WithId = ClientEvent> {
       try {
         await this.deps.send(batch, this.deps.newKey());
       } catch (error) {
-        if (isTemporary(error)) {
+        if (isTemporary(error, this.rules.alsoTemporary)) {
           this.backOff();
           return;
         }

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { CLICK_SOURCES, clickBatchSchema, EVENT_SOURCES, MAX_CLICK_BATCH } from './index.ts';
+import {
+  CLICK_SOURCES,
+  clickBatchInputSchema,
+  clickBatchSchema,
+  EVENT_SOURCES,
+  MAX_CLICK_BATCH,
+  MAX_FEED_POSITION,
+} from './index.ts';
 
 const click = {
   id: '0b7c9f0e-3a51-4c56-9d2e-6f1a2b3c4d5e',
@@ -7,6 +14,7 @@ const click = {
   offerId: '7d1e2f3a-4b5c-4d6e-8f70-819a2b3c4d5e',
   source: 'feed_for_you',
   position: 3,
+  tappedAt: '2026-11-05T10:00:00.000Z',
 };
 const batch = {
   sessionId: '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d',
@@ -35,9 +43,18 @@ describe('click batches', () => {
     for (const source of EVENT_SOURCES) expect(CLICK_SOURCES).toContain(source);
   });
 
+  it('the server reads each click on its own, so one odd click never refuses the batch', () => {
+    const clicks = [click, { ...click, source: 'somewhere' }];
+    expect(clickBatchSchema.safeParse({ ...batch, clicks }).success).toBe(false);
+    expect(clickBatchInputSchema.safeParse({ ...batch, clicks }).success).toBe(true);
+    expect(clickBatchInputSchema.safeParse({ ...batch, clicks: [] }).success).toBe(false);
+  });
+
   it.each([
     ['an unknown source', { source: 'somewhere' }],
     ['a negative position', { position: -1 }],
+    ['a place past the furthest one', { position: MAX_FEED_POSITION + 1 }],
+    ['no tap time', { tappedAt: undefined }],
     ['a click id that is not a UUID', { id: 'abc' }],
     ['no offer', { offerId: undefined }],
   ])('refuses %s', (_label, change) => {

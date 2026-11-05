@@ -1,4 +1,12 @@
-import { clicks, idempotencyKeys, lookItems, offers, products, sql } from '@outfitly/db';
+import {
+  clicks,
+  idempotencyKeys,
+  linkChecks,
+  lookItems,
+  offers,
+  products,
+  sql,
+} from '@outfitly/db';
 import {
   type ClickBatch,
   type ClientClick,
@@ -34,8 +42,19 @@ afterAll(async () => {
   await ctx.close();
 });
 
-/** A verified piece on the look, with its own product and shop link. Returns the offer id. */
-async function piece(onLook: string, url = `https://www.shop.test/p/${crypto.randomUUID()}`) {
+type ItemStatus = 'pending' | 'verified' | 'review' | 'rejected';
+
+/**
+ * A piece on the look (verified unless said otherwise), with its own product
+ * and shop link; `wasVerified` adds an earlier link check that verified it.
+ * Returns the offer id.
+ */
+async function piece(
+  onLook: string,
+  url = `https://www.shop.test/p/${crypto.randomUUID()}`,
+  status: ItemStatus = 'verified',
+  wasVerified = false,
+) {
   const productId = crypto.randomUUID();
   await ctx.db.insert(products).values({ id: productId, name: 'Wool coat', brand: 'Acme' });
   const id = crypto.randomUUID();
@@ -48,7 +67,13 @@ async function piece(onLook: string, url = `https://www.shop.test/p/${crypto.ran
     currency: 'SEK',
     stock: 'in_stock',
   });
-  await ctx.db.insert(lookItems).values({ lookId: onLook, offerId: id, status: 'verified' });
+  const [item] = await ctx.db
+    .insert(lookItems)
+    .values({ lookId: onLook, offerId: id, status })
+    .returning({ id: lookItems.id });
+  if (wasVerified && item) {
+    await ctx.db.insert(linkChecks).values({ lookItemId: item.id, outcome: 'verified' });
+  }
   return id;
 }
 
@@ -59,6 +84,7 @@ function click(change: Partial<ClientClick> = {}): ClientClick {
     offerId,
     source: 'feed_for_you',
     position: 4,
+    tappedAt: new Date().toISOString(),
     ...change,
   };
 }
@@ -157,6 +183,60 @@ describe('POST /v1/clicks', () => {
     for (const tap of [wrongLook, noLook, noOffer]) expect(await rowsOf(tap.id)).toHaveLength(0);
   });
 
+  it('a click sent again with other contents keeps its first row', async () => {
+    const tap = click({ position: 1 });
+    expect((await send(batch([tap]))).json()).toEqual({ accepted: 1 });
+    expect((await send(batch([{ ...tap, position: 9, source: 'search' }]))).json()).toEqual({
+      accepted: 0,
+    });
+    const [row] = await rowsOf(tap.id);
+    expect(row).toMatchObject({ position: 1, source: 'feed_for_you' });
+  });
+
+  it('only counts pieces that were shown at some point', async () => {
+    const pending = await piece(lookId, undefined, 'pending');
+    const review = await piece(lookId, undefined, 'review');
+    const rejected = await piece(lookId, undefined, 'rejected');
+    // Verified once, then a later check (e.g. a re-read link) rejected it.
+    const wasShown = await piece(lookId, undefined, 'rejected', true);
+    const taps = [pending, review, rejected, wasShown].map((offer) => click({ offerId: offer }));
+    expect((await send(batch(taps))).json()).toEqual({ accepted: 1 });
+    expect(await rowsOf(taps[3]?.id ?? '')).toHaveLength(1);
+  });
+
+  it('skips looks that were never published', async () => {
+    const draft = await createLook(ctx.db, { authorId: author, status: 'draft' });
+    const onDraft = await piece(draft);
+    expect((await send(batch([click({ lookId: draft, offerId: onDraft })]))).json()).toEqual({
+      accepted: 0,
+    });
+  });
+
+  it('dates a click by the tap, within the events window and never in the future', async () => {
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+    const recent = click({ tappedAt: hoursAgo(2) });
+    const old = click({ tappedAt: hoursAgo(30 * 24) });
+    const ahead = click({ tappedAt: hoursAgo(-5) });
+    expect((await send(batch([recent, old, ahead]))).json()).toEqual({ accepted: 3 });
+    const age = async (id: string) => {
+      const [row] = await rowsOf(id);
+      return (Date.now() - (row?.createdAt.getTime() ?? 0)) / 3_600_000;
+    };
+    expect(await age(recent.id)).toBeCloseTo(2, 1);
+    expect(await age(old.id)).toBeCloseTo(7 * 24, 0);
+    expect(await age(ahead.id)).toBeCloseTo(0, 1);
+  });
+
+  it('skips a click it cannot read instead of refusing the batch', async () => {
+    const good = click();
+    const odd = { ...click(), position: 10_001, source: 'somewhere' } as unknown as ClientClick;
+    const res = await send(batch([odd, good]));
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ accepted: 1 });
+    expect(await rowsOf(good.id)).toHaveLength(1);
+    expect(await rowsOf(odd.id)).toHaveLength(0);
+  });
+
   it('keeps a tap that waited on the phone while the piece was taken off the look', async () => {
     const gone = await piece(lookId);
     await ctx.db.execute(
@@ -173,11 +253,10 @@ describe('POST /v1/clicks', () => {
     expect(row?.authorProfileId).toBe(author);
   });
 
-  it(`refuses more than ${String(MAX_CLICK_BATCH)} clicks and unknown lists`, async () => {
+  it(`refuses more than ${String(MAX_CLICK_BATCH)} clicks, or none`, async () => {
     const full = Array.from({ length: MAX_CLICK_BATCH + 1 }, () => click());
     expect((await send(batch(full))).statusCode).toBe(400);
-    const odd = { ...click(), source: 'somewhere' } as unknown as ClientClick;
-    expect((await send(batch([odd]))).statusCode).toBe(400);
+    expect((await send(batch([]))).statusCode).toBe(400);
   });
 
   it('skips the Idempotency-Key table (click ids already dedupe) but still needs the header', async () => {
