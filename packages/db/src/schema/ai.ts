@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm';
 import { check, index, integer, pgEnum, pgTable, text, uuid } from 'drizzle-orm/pg-core';
 import { baseColumns } from './columns.ts';
 
-export const aiCallPurpose = pgEnum('ai_call_purpose', ['spot_garments']);
+export const aiCallPurpose = pgEnum('ai_call_purpose', ['spot_garments', 'link_check']);
 /** ok = a usable answer; blocked = refused for safety; invalid = unusable answer; failed = no answer. */
 export const aiCallStatus = pgEnum('ai_call_status', ['ok', 'blocked', 'invalid', 'failed']);
 

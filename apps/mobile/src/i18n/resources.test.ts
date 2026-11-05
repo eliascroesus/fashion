@@ -1,4 +1,4 @@
-import { LOOK_TAGS, STYLES, TAG_SEARCH_WORDS } from '@outfitly/shared';
+import { LINK_CHECK_REASONS, LOOK_TAGS, STYLES, TAG_SEARCH_WORDS } from '@outfitly/shared';
 import { describe, expect, it } from 'vitest';
 import { pickLanguage, resources } from './resources';
 
@@ -34,6 +34,12 @@ describe('translations', () => {
   it('names every occasion and season (search chips)', () => {
     const tags = LOOK_TAGS.filter((tag) => !(STYLES as readonly string[]).includes(tag));
     expect(Object.keys(resources.en.translation.tags).sort()).toEqual([...tags].sort());
+  });
+
+  it('has a message for every link check reason (shown to the poster)', () => {
+    expect(Object.keys(resources.en.translation.linkCheck).sort()).toEqual(
+      [...LINK_CHECK_REASONS].sort(),
+    );
   });
 
   it.each(Object.keys(resources))('%s: searching a tag label finds that tag', (language) => {

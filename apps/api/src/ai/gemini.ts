@@ -65,9 +65,17 @@ export function thinkingConfig(
     : { thinkingLevel: level };
 }
 
+export interface GeminiImage {
+  mimeType: string;
+  data: Buffer;
+  /** Said just before the photo (e.g. "Photo A: …"), when there are several. */
+  label?: string;
+}
+
 export interface GeminiRequest {
   prompt: string;
-  image: { mimeType: string; data: Buffer };
+  /** One or more photos, sent in this order before the prompt. */
+  images: GeminiImage[];
   /** JSON Schema of the answer (`responseJsonSchema`). */
   schema: object;
   maxOutputTokens: number;
@@ -137,14 +145,12 @@ export class GeminiClient {
       contents: [
         {
           role: 'user',
+          // Photos first, then the instructions (Google's advice for images).
           parts: [
-            // Photo first, then the instructions (Google's advice for one image).
-            {
-              inlineData: {
-                mimeType: request.image.mimeType,
-                data: request.image.data.toString('base64'),
-              },
-            },
+            ...request.images.flatMap((image) => [
+              ...(image.label ? [{ text: image.label }] : []),
+              { inlineData: { mimeType: image.mimeType, data: image.data.toString('base64') } },
+            ]),
             { text: request.prompt },
           ],
         },

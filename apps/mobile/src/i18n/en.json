@@ -216,5 +216,14 @@
     "ownNoLooks": "Looks you post will show here.",
     "notFound": "This profile isn't available.",
     "openLabel": "Open {{name}}'s profile"
+  },
+  "linkCheck": {
+    "sold_out": "This item is sold out, so it isn’t shown on your look.",
+    "not_similar": "This product doesn’t look like any piece in your photo. Check that the link is for the right item.",
+    "ai_different": "This looks like a different piece from the one in your photo. Check that the link is for the right item.",
+    "link_removed": "The shop link no longer works, so it isn’t shown on your look.",
+    "ai_unsure": "We’re checking that this is the same piece. It shows on your look once it’s confirmed.",
+    "no_product_photo": "The shop gave no photo of this item, so we’re checking it by hand.",
+    "no_garment": "We couldn’t find this piece in your photo, so we’re checking it by hand."
   }
 }

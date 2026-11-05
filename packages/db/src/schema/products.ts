@@ -22,7 +22,13 @@ import { profiles } from './profiles.ts';
 
 export const garmentCategory = pgEnum('garment_category', GARMENT_CATEGORIES);
 export const offerStock = pgEnum('offer_stock', ['in_stock', 'out_of_stock', 'unknown']);
-export const lookItemStatus = pgEnum('look_item_status', ['pending', 'verified', 'rejected']);
+/** pending = not checked yet (or waiting for a fingerprint or the AI); review = waiting for a person. */
+export const lookItemStatus = pgEnum('look_item_status', [
+  'pending',
+  'verified',
+  'rejected',
+  'review',
+]);
 export const linkCheckAnswer = pgEnum('link_check_answer', ['yes', 'no', 'unsure']);
 export const linkCheckOutcome = pgEnum('link_check_outcome', ['verified', 'review', 'rejected']);
 

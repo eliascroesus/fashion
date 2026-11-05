@@ -126,11 +126,15 @@ describe('garment spotting tables (Step 3.3)', () => {
         .values({ kind: 'photo_flagged', mediaId, reasons: ['blocked'] });
 
       await expect(
-        db
-          .insert(moderationQueue)
-          .values({ kind: 'photo_flagged', mediaId: null, status: 'removed' }),
+        db.insert(moderationQueue).values({ kind: 'photo_flagged', mediaId, status: 'removed' }),
       ).rejects.toMatchObject({
         cause: { code: '23514', constraint: 'moderation_queue_resolved_has_time' },
+      });
+      // Every item is about something: a photo or (Step 3.5) a look item.
+      await expect(
+        db.insert(moderationQueue).values({ kind: 'link_check', mediaId: null }),
+      ).rejects.toMatchObject({
+        cause: { code: '23514', constraint: 'moderation_queue_has_subject' },
       });
     });
   });

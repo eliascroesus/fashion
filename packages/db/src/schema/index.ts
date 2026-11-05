@@ -10,4 +10,5 @@ export * from './products.ts';
 export * from './profile-members.ts';
 export * from './profiles.ts';
 export * from './search.ts';
+export * from './settings.ts';
 export * from './social.ts';
