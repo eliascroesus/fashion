@@ -1,6 +1,14 @@
 import type { LookItem } from '@outfitly/shared';
 import { describe, expect, it } from 'vitest';
-import { daysSince, dotPlacement, dotsOnPhoto, moneyLocale } from './shop';
+import {
+  canTick,
+  daysSince,
+  dotPlacement,
+  dotsOnPhoto,
+  dotTarget,
+  moneyLocale,
+  selection,
+} from './shop';
 
 describe('dotPlacement', () => {
   it('maps the dot straight onto a frame of the same shape', () => {
@@ -27,6 +35,40 @@ describe('dotPlacement', () => {
     expect(dotPlacement(photo, frame, { x: 0.5, y: 0.2 })).toEqual({ left: 200, top: 60 });
     expect(dotPlacement(photo, frame, { x: 0.5, y: 0.05 })).toBeNull();
     expect(dotPlacement(photo, frame, { x: 0.5, y: 0.95 })).toBeNull();
+  });
+
+  it('moves a dot cropped off by a little to the edge', () => {
+    // 800×2000 in 400×720: y 0.13 is at 130 − 140 = −10, within a 24 pt tolerance.
+    const photo = { width: 800, height: 2000 };
+    const frame = { width: 400, height: 720 };
+    expect(dotPlacement(photo, frame, { x: 0.5, y: 0.13 }, 24)).toEqual({ left: 200, top: 0 });
+    expect(dotPlacement(photo, frame, { x: 0.5, y: 0.87 }, 24)).toEqual({ left: 200, top: 720 });
+    // 50 pt off is too far.
+    expect(dotPlacement(photo, frame, { x: 0.5, y: 0.09 }, 24)).toBeNull();
+  });
+});
+
+describe('dotTarget', () => {
+  const frame = { width: 400, height: 600 };
+
+  it('centres the tap area on the dot', () => {
+    expect(dotTarget({ left: 200, top: 300 }, frame, 24, 44)).toEqual({
+      hit: { left: 178, top: 278 },
+      dot: { left: 10, top: 10 },
+    });
+  });
+
+  it('keeps the dot and its tap area on the photo at the edges', () => {
+    // Top-left corner: the dot sits fully inside, the tap area starts at the edge.
+    expect(dotTarget({ left: 0, top: 0 }, frame, 24, 44)).toEqual({
+      hit: { left: 0, top: 0 },
+      dot: { left: 0, top: 0 },
+    });
+    // Near the bottom-right corner.
+    expect(dotTarget({ left: 395, top: 598 }, frame, 24, 44)).toEqual({
+      hit: { left: 356, top: 556 },
+      dot: { left: 20, top: 20 },
+    });
   });
 });
 
@@ -76,5 +118,44 @@ describe('moneyLocale', () => {
     expect(moneyLocale('sv', null)).toBe('sv-SE');
     expect(moneyLocale('en', undefined)).toBe('en-GB');
     expect(moneyLocale('en', '419')).toBe('en-GB');
+  });
+});
+
+describe('ticking pieces', () => {
+  const piece = (id: string, price: number | null, stock: LookItem['stock'] = 'in_stock') =>
+    ({
+      id,
+      stock,
+      price: price === null ? null : { amountMinor: price, currency: 'SEK' },
+    }) as LookItem;
+
+  it('can’t tick a sold-out piece, but can untick one that sold out after it was ticked', () => {
+    const soldOut = piece('a', 100, 'out_of_stock');
+    expect(canTick(soldOut, new Set())).toBe(false);
+    expect(canTick(soldOut, new Set(['a']))).toBe(true);
+    expect(canTick(piece('b', 100), new Set())).toBe(true);
+  });
+
+  it('counts the ticked pieces still on the look, adding up only those that count', () => {
+    const items = [piece('a', 129900), piece('b', 49900), piece('c', 39900)];
+    expect(selection(items, new Set(['a', 'c', 'gone']))).toEqual({
+      count: 2,
+      totals: [{ amountMinor: 169800, currency: 'SEK' }],
+      counted: 2,
+      soldOut: 0,
+      unpriced: 0,
+    });
+  });
+
+  it('keeps a piece that sold out or lost its price since it was ticked out of the sum', () => {
+    const refetched = [piece('a', 129900), piece('b', 49900, 'out_of_stock'), piece('c', null)];
+    expect(selection(refetched, new Set(['a', 'b', 'c']))).toEqual({
+      count: 3,
+      totals: [{ amountMinor: 129900, currency: 'SEK' }],
+      counted: 1,
+      soldOut: 1,
+      unpriced: 1,
+    });
+    expect(selection(refetched, new Set()).count).toBe(0);
   });
 });

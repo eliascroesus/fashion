@@ -1,10 +1,11 @@
 # Shop the look: a look with pieces shows a dot on each, a list with prices and "Total look",
 # and ticking pieces adds up just those. Sold-out pieces are greyed and can't be ticked.
+#   pnpm shop:test-look        (prints the look id; test pieces on the server in .env)
 #   maestro test -e APP_ID=com.outfitly.app.dev -e SCHEME=outfitly-dev -e LOOK_ID=<id> \
 #     apps/mobile/.maestro/shop-the-look.yaml
-# Needs a look on the server the build talks to with at least three verified pieces with a
-# dot: two priced and in stock first, then one sold out (Step 3.6 used test pieces on a seed
-# look, see PROGRESS.md). It saves screenshots shop/look-dots and shop/look-ticked.
+#   pnpm shop:test-look --remove
+# The test look's pieces, as listed: 1–3 priced and in stock, 4 sold out, 5 without a price.
+# It saves screenshots shop/look-dots and shop/look-ticked.
 appId: ${APP_ID || 'com.outfitly.app'}
 ---
 - launchApp:
@@ -55,7 +56,7 @@ appId: ${APP_ID || 'com.outfitly.app'}
 - assertVisible:
     id: shop-selected-total
     text: '2 pieces selected: .+'
-# The sold-out piece can't be ticked.
+# The sold-out piece (the 4th) can't be ticked.
 - tapOn:
     id: shop-item-tick
     index: 3

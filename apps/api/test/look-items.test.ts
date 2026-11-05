@@ -22,6 +22,11 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { lookDetail } from '../src/looks.ts';
 import { listBoards } from '../src/saves.ts';
+import {
+  addShopTestLook,
+  pickTestLook,
+  removeShopTestPieces,
+} from '../scripts/seed/shop-test-look.ts';
 import { createAuthor, createLogin, createLook } from './feed-fixtures.ts';
 import { buildTestApp, createTestContext, type TestContext } from './helpers.ts';
 
@@ -114,6 +119,21 @@ async function shopLink(spec: ProductSpec = {}): Promise<string> {
   return id;
 }
 
+/** One more shop link to the same product as `offerId` (e.g. another poster's affiliate link). */
+async function sameProduct(
+  offerId: string,
+  price: { amountMinor: number; currency: string },
+  stock: OfferStock = 'in_stock',
+): Promise<string> {
+  const id = crypto.randomUUID();
+  await ctx.db.execute(sql`
+    INSERT INTO offers (id, product_id, url, page_url, price_minor, currency, stock)
+    SELECT ${id}, product_id, url || '&other=' || ${id}, page_url, ${price.amountMinor},
+           ${price.currency}, ${stock}
+      FROM offers WHERE id = ${offerId}`);
+  return id;
+}
+
 async function garment(
   mediaId: string,
   category: GarmentCategory,
@@ -201,6 +221,12 @@ describe('the look page lists its pieces', () => {
     // Our copy of the shop's photo, never the shop's own link.
     expect(coat?.image?.urls[300]).toMatch(/^https:\/\/img\.test\/m\/.+\/300\.webp$/);
     expect(bare).toMatchObject({ name: 'No photo', image: null, price: null });
+  });
+
+  it('shows a price of 0 as no price', async () => {
+    const look = await createLook(ctx.db, { authorId: author });
+    await item(look, await shopLink({ price: { amountMinor: 0, currency: 'SEK' } }));
+    expect((await detailOf(look)).items[0]?.price).toBeNull();
   });
 
   it("puts the dot where the poster put it, else on the matched piece, else the poster's pick", async () => {
@@ -338,13 +364,15 @@ describe('board totals', () => {
     return me.activeProfileId;
   }
 
-  it('adds up the pieces of its looks per currency, each shop link once', async () => {
+  it('adds up the pieces of its looks per currency, each product once', async () => {
     const owner = await profile();
     const first = await createLook(ctx.db, { authorId: author });
     const second = await createLook(ctx.db, { authorId: author });
-    const coat = await shopLink({ price: { amountMinor: 129900, currency: 'SEK' } });
+    const coat = await shopLink({ price: { amountMinor: 139900, currency: 'SEK' } });
     await item(first, coat);
-    await item(second, coat); // the same coat in both looks counts once
+    await item(second, coat); // the same coat in both looks counts once…
+    // …and so does the same coat through another poster's link: at its lowest price.
+    await item(second, await sameProduct(coat, { amountMinor: 129900, currency: 'SEK' }));
     await item(first, await shopLink({ price: { amountMinor: 59950, currency: 'SEK' } }));
     await item(second, await shopLink({ price: { amountMinor: 4500, currency: 'EUR' } }));
     // Left out: sold out, no price, not verified.
@@ -370,5 +398,66 @@ describe('board totals', () => {
       { amountMinor: 4500, currency: 'EUR' },
     ]);
     expect(byId.get(empty)?.totals).toEqual([]);
+  });
+
+  it("counts each look's shown pieces only, and only looks already out", async () => {
+    const owner = await profile();
+    const full = await createLook(ctx.db, { authorId: author });
+    for (let i = 0; i < MAX_LOOK_ITEMS + 2; i += 1) {
+      await item(full, await shopLink({ price: { amountMinor: 100, currency: 'SEK' } }));
+    }
+    // Not out yet (published in the future): its look page is a 404, so it isn't counted.
+    const later = await createLook(ctx.db, { authorId: author, hoursAgo: -2 });
+    await item(later, await shopLink({ price: { amountMinor: 5000, currency: 'SEK' } }));
+    // A price of 0 is no price.
+    await item(full, await shopLink({ price: { amountMinor: 0, currency: 'SEK' } }));
+
+    const board = await boardWith(owner, [full, later]);
+    const all = await listBoards({ db: ctx.db, storage: ctx.storage }, owner);
+    expect(all.find((b) => b.id === board)?.totals).toEqual([
+      { amountMinor: 100 * MAX_LOOK_ITEMS, currency: 'SEK' },
+    ]);
+  });
+
+  it('leaves totals out for the "Save to board" sheet', async () => {
+    const owner = await profile();
+    const look = await createLook(ctx.db, { authorId: author });
+    await item(look, await shopLink());
+    const board = await boardWith(owner, [look]);
+    const deps = { db: ctx.db, storage: ctx.storage };
+    const [forSheet] = await listBoards(deps, owner, look);
+    expect(forSheet).toMatchObject({ id: board, hasLook: true });
+    expect(forSheet).not.toHaveProperty('totals');
+    const [forSaved] = await listBoards(deps, owner);
+    expect(forSaved?.totals).toEqual([{ amountMinor: 129900, currency: 'SEK' }]);
+  });
+});
+
+describe('the shop test look (pnpm shop:test-look)', () => {
+  it('adds five test pieces as the Maestro flow expects, and removes only those', async () => {
+    const look = await createLook(ctx.db, { authorId: author });
+    const real = await item(look, await shopLink({ name: 'Real piece', category: 'hat' }));
+    expect(await pickTestLook(ctx.db, look)).toBe(look);
+
+    expect(await addShopTestLook(ctx.db, look)).toBe(5);
+    // Twice changes nothing: the earlier test pieces go first.
+    expect(await addShopTestLook(ctx.db, look)).toBe(5);
+    const detail = await detailOf(look);
+    expect(detail.items.map((i) => [i.name, i.stock, i.price?.amountMinor ?? null])).toEqual([
+      ['Test coat', 'in_stock', 129900],
+      ['Test knit', 'unknown', 49950],
+      ['Test jeans', 'in_stock', 59900],
+      ['Test sneakers (sold out)', 'out_of_stock', 89900],
+      ['Test bag (no price)', 'in_stock', null],
+      ['Real piece', 'in_stock', 129900], // a hat: after bags
+    ]);
+    expect(detail.items.filter((i) => i.dot !== null)).toHaveLength(5);
+
+    expect(await removeShopTestPieces(ctx.db)).toBe(5);
+    expect((await detailOf(look)).items.map((i) => i.id)).toEqual([real]);
+    const { rows } = await ctx.db.execute<{ n: number }>(
+      sql`SELECT count(*)::int AS n FROM products WHERE brand = 'Outfitly test'`,
+    );
+    expect(rows[0]?.n).toBe(0);
   });
 });

@@ -112,8 +112,9 @@ export function toLookItems(
       name: r.name,
       category,
       image: toPhoto(storage, photoColumns(r)),
+      // 0 is never a real price (links read before Step 3.6 may hold one).
       price:
-        r.price_minor === null || r.currency === null
+        r.price_minor === null || r.price_minor <= 0 || r.currency === null
           ? null
           : { amountMinor: r.price_minor, currency: r.currency },
       stock: r.stock,

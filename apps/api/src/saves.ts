@@ -5,6 +5,7 @@ import {
   FEED_PAGE_SIZE,
   type FeedPage,
   MAX_BOARDS_PER_PROFILE,
+  MAX_LOOK_ITEMS,
 } from '@outfitly/shared';
 import { z } from 'zod';
 import { ApiError } from './errors.ts';
@@ -125,26 +126,33 @@ interface BoardRow extends Record<string, unknown> {
   look_count: number;
   cover_ids: string[];
   has_look: boolean | null;
-  /** Sums as text (bigint), one per currency. */
-  totals: { currency: string; amount: string }[];
+  /** Sums as text (bigint), one per currency; null when not asked for. */
+  totals: { currency: string; amount: string }[] | null;
 }
 
 /**
  * What board `b`'s pieces cost together, one sum per currency (most pieces
- * first): the pieces its shown looks show, each shop link once even if it's
- * in several of them, sold-out and unpriced ones left out (the look page's
- * rule).
+ * first): the pieces its shown looks show (each look's first MAX_LOOK_ITEMS,
+ * like the look page), each product once even if several looks (or shop
+ * links) have it, at its lowest price on the board in that currency;
+ * sold-out and unpriced pieces left out (the look page's rule).
  */
 const BOARD_TOTALS = sql`
   SELECT coalesce(json_agg(json_build_object('currency', t.currency, 'amount', t.amount::text)
                            ORDER BY t.pieces DESC, t.currency), '[]'::json)
     FROM (SELECT d.currency, sum(d.price_minor) AS amount, count(*) AS pieces
-            FROM (SELECT DISTINCT o.id, o.currency, o.price_minor
+            FROM (SELECT DISTINCT ON (s.product_id, s.currency) s.currency, s.price_minor
                     FROM board_items bi JOIN looks l ON l.id = bi.look_id
-                    JOIN look_items li ON li.look_id = l.id ${SHOWN_ITEM_JOINS}
-                   WHERE bi.board_id = b.id AND bi.deleted_at IS NULL AND ${showableLook(sql`l`)}
-                     AND ${SHOWN_ITEM} AND o.price_minor IS NOT NULL
-                     AND o.stock <> 'out_of_stock') d
+                    CROSS JOIN LATERAL (
+                      SELECT o.product_id, o.currency, o.price_minor, o.stock
+                        FROM look_items li ${SHOWN_ITEM_JOINS}
+                       WHERE li.look_id = l.id AND ${SHOWN_ITEM}
+                       ORDER BY li.created_at, li.id
+                       LIMIT ${MAX_LOOK_ITEMS}) s
+                   WHERE bi.board_id = b.id AND bi.deleted_at IS NULL
+                     AND ${showableLook(sql`l`)} AND l.published_at <= now()
+                     AND s.price_minor > 0 AND s.stock <> 'out_of_stock'
+                   ORDER BY s.product_id, s.currency, s.price_minor) d
            GROUP BY d.currency) t`;
 
 /** Looks on board `b` that can be shown (`b` is the boards alias in the surrounding query). */
@@ -155,8 +163,9 @@ function shownItems(select: SQL): SQL {
 
 /**
  * The profile's boards, most recently changed first, with how many looks
- * each holds, its newest looks' photos and what its pieces cost. With `lookId`, also whether each
- * holds that look; with `boardId`, only that board.
+ * each holds, its newest looks' photos and what its pieces cost. With
+ * `lookId` (the "Save to board" sheet), whether each holds that look instead
+ * of the cost; with `boardId`, only that board.
  */
 async function loadBoards(
   deps: FeedDeps,
@@ -168,7 +177,7 @@ async function loadBoards(
            (${shownItems(sql`count(*)::int`)}) AS look_count,
            ARRAY(${shownItems(sql`bi.look_id`)}
                  ORDER BY bi.updated_at DESC, bi.id DESC LIMIT ${BOARD_COVERS}) AS cover_ids,
-           (${BOARD_TOTALS}) AS totals,
+           ${lookId ? sql`NULL::json` : sql`(${BOARD_TOTALS})`} AS totals,
            ${
              lookId
                ? sql`EXISTS (SELECT 1 FROM board_items i WHERE i.board_id = b.id
@@ -180,17 +189,21 @@ async function loadBoards(
        ${boardId ? sql`AND b.id = ${boardId}` : sql``}
      ORDER BY b.updated_at DESC, b.id DESC
      LIMIT ${MAX_BOARDS_PER_PROFILE}`);
+  // Only their photos are used: no piece counts.
   const cards = await loadCards(
     deps,
     rows.flatMap((r) => r.cover_ids),
     profileId,
+    { countItems: false },
   );
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
     lookCount: r.look_count,
     covers: r.cover_ids.flatMap((id) => cards.get(id)?.photo ?? []),
-    totals: r.totals.map((t) => ({ currency: t.currency, amountMinor: Number(t.amount) })),
+    ...(r.totals === null
+      ? {}
+      : { totals: r.totals.map((t) => ({ currency: t.currency, amountMinor: Number(t.amount) })) }),
     ...(r.has_look === null ? {} : { hasLook: r.has_look }),
   }));
 }

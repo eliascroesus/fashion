@@ -20,6 +20,7 @@ import { SaveButton } from '../../components/save-button';
 import { SelectionBar, ShopTheLook } from '../../components/shop-the-look';
 import type { CardList } from '../../feed/card-list';
 import { markLookShown } from '../../looks/open-timing';
+import { NO_ITEMS, selection } from '../../looks/shop';
 import { useLookDetail, useSimilarLooks } from '../../looks/queries';
 import { findCard } from '../../saves';
 import { grid, radii, Screen, spacing, ThemedText, useColors } from '../../theme';
@@ -60,6 +61,8 @@ const OPENED_FALLBACK_MS = 600;
 const HIGHLIGHT_MS = 1500;
 /** Room left above a piece scrolled to: the round buttons floating over the top. */
 const ABOVE_PIECE = 40 + 2 * spacing.sm;
+/** Room kept free under the page while the selection bar floats there (its height and gap). */
+const SELECTION_BAR_SPACE = 64 + spacing.md;
 
 /** True once this screen's opening animation (e.g. the zoom from the grid) has finished. */
 function useOpened(): boolean {
@@ -90,28 +93,29 @@ function usePieceScroll() {
   const bodyY = useRef(0);
   const shopY = useRef(0);
   const pieceY = useRef(new Map<string, number>());
-  const [highlighted, setHighlighted] = useState<string | null>(null);
+  // A new object per tap, so tapping the same dot again starts the highlight over.
+  const [highlight, setHighlight] = useState<{ id: string } | null>(null);
   useEffect(() => {
-    if (highlighted === null) return;
+    if (highlight === null) return;
     const timer = setTimeout(() => {
-      setHighlighted(null);
+      setHighlight(null);
     }, HIGHLIGHT_MS);
     return () => {
       clearTimeout(timer);
     };
-  }, [highlighted]);
+  }, [highlight]);
 
   const showPiece = (item: LookItem) => {
     const y = pieceY.current.get(item.id);
     if (y === undefined) return;
     const offset = Math.max(0, bodyY.current + shopY.current + y - ABOVE_PIECE);
     listRef.current?.scrollToOffset({ offset, animated: true });
-    setHighlighted(item.id);
+    setHighlight({ id: item.id });
   };
 
   return {
     listRef,
-    highlighted,
+    highlighted: highlight?.id ?? null,
     showPiece,
     onBodyY: (y: number) => {
       bodyY.current = y;
@@ -148,7 +152,7 @@ export default function LookScreen() {
   const gone = detail.error instanceof ApiRequestError && detail.error.status === 404;
   const retry = { label: t('errors.retry'), onPress: () => void detail.refetch() };
   const pieces = usePieceScroll();
-  const items = detail.data?.items ?? [];
+  const items = detail.data?.items ?? NO_ITEMS;
   const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
   const tick = (itemId: string) => {
     setTicked((current) => {
@@ -219,6 +223,7 @@ export default function LookScreen() {
       {card ? (
         <LookGrid
           scrollRef={pieces.listRef}
+          bottomInset={selection(items, ticked).count > 0 ? insets.bottom + SELECTION_BAR_SPACE : 0}
           list={opened ? similar : NOT_BUILT_YET}
           testID="look-page"
           cardTestID="similar-card"

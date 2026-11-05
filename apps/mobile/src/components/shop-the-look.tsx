@@ -1,30 +1,43 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { formatMoney, formatTotals, type LookItem, piecesTotal } from '@outfitly/shared';
-import { Image } from 'expo-image';
-import { getLocales } from 'expo-localization';
-import { useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
+import {
+  formatMoney,
+  formatTotals,
+  type LookItem,
+  type PiecesTotal,
+  piecesTotal,
+} from '@outfitly/shared';
 import { fontWeights } from '@outfitly/ui-tokens';
-import { type LayoutChangeEvent, Pressable, StyleSheet, View } from 'react-native';
-import { daysSince, moneyLocale } from '../looks/shop';
+import { Image } from 'expo-image';
+import type { TFunction } from 'i18next';
+import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import {
+  AccessibilityInfo,
+  type LayoutChangeEvent,
+  Platform,
+  Pressable,
+  StyleSheet,
+  View,
+} from 'react-native';
+import { useMoneyLocale } from '../lib/money';
+import { canTick, daysSince, selection } from '../looks/shop';
 import { radii, spacing, ThemedText, useColors } from '../theme';
 
 /** Product photos in the list: a fixed 4:5 frame, so nothing moves when they load. */
 const THUMB = { width: 64, height: 80 } as const;
 const SOLD_OUT_OPACITY = 0.45;
+const TICK_SIZE = 26;
+/** Taps this close around the tick still count (a 44 pt target). */
+const TICK_SLOP = (44 - TICK_SIZE) / 2;
 /** Between short facts on one line ("Price checked today · zalando.se"); the same in every language. */
 const SEPARATOR = ' · ';
-
-/** The locale prices are written in (the app's language, the phone's region). */
-export function useMoneyLocale(): string {
-  const { i18n } = useTranslation();
-  return useMemo(() => moneyLocale(i18n.language, getLocales().at(0)?.regionCode), [i18n.language]);
-}
 
 interface ItemRowProps {
   item: LookItem;
   locale: string;
   ticked: boolean;
+  /** False for a sold-out piece (unless it was ticked before it sold out). */
+  tickable: boolean;
   highlighted: boolean;
   onTick: (id: string) => void;
   /** Opens the shop (Step 3.7); until then the button shows but can't be pressed. */
@@ -32,7 +45,16 @@ interface ItemRowProps {
   onLayout: (id: string, event: LayoutChangeEvent) => void;
 }
 
-function ItemRow({ item, locale, ticked, highlighted, onTick, onShop, onLayout }: ItemRowProps) {
+function ItemRow({
+  item,
+  locale,
+  ticked,
+  tickable,
+  highlighted,
+  onTick,
+  onShop,
+  onLayout,
+}: ItemRowProps) {
   const { t } = useTranslation();
   const colors = useColors();
   const soldOut = item.stock === 'out_of_stock';
@@ -110,9 +132,9 @@ function ItemRow({ item, locale, ticked, highlighted, onTick, onShop, onLayout }
           testID="shop-item-tick"
           accessibilityRole="checkbox"
           accessibilityLabel={t('look.tickLabel', { name: title })}
-          accessibilityState={{ checked: ticked, disabled: soldOut }}
-          disabled={soldOut}
-          hitSlop={spacing.sm}
+          accessibilityState={{ checked: ticked, disabled: !tickable }}
+          disabled={!tickable}
+          hitSlop={TICK_SLOP}
           onPress={() => {
             onTick(item.id);
           }}
@@ -121,7 +143,7 @@ function ItemRow({ item, locale, ticked, highlighted, onTick, onShop, onLayout }
             ticked
               ? { backgroundColor: colors.accent, borderColor: colors.accent }
               : { borderColor: colors.border },
-            soldOut ? styles.soldOut : null,
+            tickable ? null : styles.soldOut,
           ]}
         >
           {ticked ? <Ionicons name="checkmark" size={16} color={colors.onAccent} /> : null}
@@ -147,6 +169,15 @@ function ItemRow({ item, locale, ticked, highlighted, onTick, onShop, onLayout }
       </View>
     </View>
   );
+}
+
+/** "Not counting 1 sold-out piece · …", or null when everything counted. */
+function notCounted(t: TFunction, total: PiecesTotal): string | null {
+  const notes = [
+    total.soldOut > 0 ? t('look.notCountedSoldOut', { count: total.soldOut }) : null,
+    total.unpriced > 0 ? t('look.notCountedUnpriced', { count: total.unpriced }) : null,
+  ].filter((note) => note !== null);
+  return notes.length > 0 ? notes.join(SEPARATOR) : null;
 }
 
 interface ShopTheLookProps {
@@ -177,10 +208,7 @@ export function ShopTheLook({
   const { t } = useTranslation();
   const locale = useMoneyLocale();
   const all = piecesTotal(items);
-  const notes = [
-    all.soldOut > 0 ? t('look.notCountedSoldOut', { count: all.soldOut }) : null,
-    all.unpriced > 0 ? t('look.notCountedUnpriced', { count: all.unpriced }) : null,
-  ].filter((note) => note !== null);
+  const notes = notCounted(t, all);
 
   return (
     <View style={styles.box} testID="shop-the-look">
@@ -193,9 +221,9 @@ export function ShopTheLook({
             {t('look.totalLook', { total: formatTotals(all.totals, locale) })}
           </ThemedText>
         ) : null}
-        {notes.length > 0 ? (
+        {notes ? (
           <ThemedText variant="caption" tone="muted">
-            {notes.join(SEPARATOR)}
+            {notes}
           </ThemedText>
         ) : null}
       </View>
@@ -205,6 +233,7 @@ export function ShopTheLook({
           item={item}
           locale={locale}
           ticked={ticked.has(item.id)}
+          tickable={canTick(item, ticked)}
           highlighted={highlighted === item.id}
           onTick={onTick}
           onShop={onShop}
@@ -236,9 +265,21 @@ export function SelectionBar({
   const { t } = useTranslation();
   const colors = useColors();
   const locale = useMoneyLocale();
-  const chosen = piecesTotal(items, ticked);
-  const count = items.filter((item) => ticked.has(item.id)).length;
-  if (count === 0) return null;
+  const chosen = selection(items, ticked);
+  const label =
+    chosen.count === 0
+      ? null
+      : t('look.selectedTotal', {
+          count: chosen.count,
+          // Only pieces without a price ticked: nothing to add up.
+          total: chosen.totals.length > 0 ? formatTotals(chosen.totals, locale) : t('look.noPrice'),
+        });
+  const notes = notCounted(t, chosen);
+  // Android reads the text out as it changes (accessibilityLiveRegion); iPhone needs telling.
+  useEffect(() => {
+    if (label !== null && Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(label);
+  }, [label]);
+  if (label === null) return null;
   return (
     <View
       style={[
@@ -247,23 +288,25 @@ export function SelectionBar({
       ]}
       testID="shop-selected"
     >
-      <ThemedText
-        variant="bodyStrong"
-        style={styles.selectedText}
-        testID="shop-selected-total"
-        accessibilityLiveRegion="polite"
-      >
-        {t('look.selectedTotal', {
-          count,
-          // Only pieces without a price ticked: nothing to add up.
-          total: chosen.totals.length > 0 ? formatTotals(chosen.totals, locale) : t('look.noPrice'),
-        })}
-      </ThemedText>
+      <View style={styles.selectedText}>
+        <ThemedText
+          variant="bodyStrong"
+          testID="shop-selected-total"
+          accessibilityLiveRegion="polite"
+        >
+          {label}
+        </ThemedText>
+        {notes ? (
+          <ThemedText variant="caption" tone="muted" testID="shop-selected-notes">
+            {notes}
+          </ThemedText>
+        ) : null}
+      </View>
       <Pressable
         testID="shop-clear"
         accessibilityRole="button"
         accessibilityLabel={t('look.clearSelection')}
-        hitSlop={spacing.sm}
+        hitSlop={spacing.md}
         onPress={onClear}
       >
         <ThemedText variant="bodyStrong" style={{ color: colors.accent }}>
@@ -296,8 +339,8 @@ const styles = StyleSheet.create({
   priceLine: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm, flexWrap: 'wrap' },
   side: { alignItems: 'flex-end', justifyContent: 'space-between' },
   tick: {
-    width: 26,
-    height: 26,
+    width: TICK_SIZE,
+    height: TICK_SIZE,
     borderRadius: radii.pill,
     borderWidth: 1.5,
     alignItems: 'center',
@@ -323,5 +366,5 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  selectedText: { flex: 1 },
+  selectedText: { flex: 1, gap: spacing.xxs },
 });

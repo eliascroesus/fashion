@@ -49,10 +49,12 @@ export const boardSchema = z.object({
   covers: z.array(feedCardSchema.shape.photo).max(BOARD_COVERS),
   /**
    * What the board's pieces cost together, one total per currency (no
-   * exchange rates): each shop link once, even if it's in several of the
-   * board's looks; sold-out and unpriced pieces left out. Empty when none.
+   * exchange rates): each product once, even if it's in several of the
+   * board's looks (at its lowest price there in that currency); sold-out and
+   * unpriced pieces left out. Empty when none; left out with `?lookId=`
+   * (the "Save to board" sheet doesn't show it).
    */
-  totals: z.array(moneySchema),
+  totals: z.array(moneySchema).optional(),
   /** Only with `?lookId=`: whether that look is on this board. */
   hasLook: z.boolean().optional(),
 });

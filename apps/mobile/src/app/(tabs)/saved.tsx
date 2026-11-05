@@ -12,7 +12,7 @@ import { Button } from '../../components/button';
 import { FeedMessage } from '../../components/feed-message';
 import { LookGrid } from '../../components/look-grid';
 import { SegmentedSwitch } from '../../components/segmented-switch';
-import { useMoneyLocale } from '../../components/shop-the-look';
+import { useMoneyLocale } from '../../lib/money';
 import { useBoards, useSaves } from '../../saves/queries';
 import { grid, radii, Screen, spacing, ThemedText, useColors } from '../../theme';
 
@@ -139,7 +139,7 @@ function BoardsPart({ guest }: { guest: boolean }) {
               {item.board.name}
             </ThemedText>
             <ThemedText variant="caption" tone="muted" numberOfLines={1}>
-              {item.board.totals.length > 0
+              {item.board.totals?.length
                 ? t('screens.saved.boardMeta', {
                     count: item.board.lookCount,
                     total: formatTotals(item.board.totals, locale),

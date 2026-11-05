@@ -38,7 +38,6 @@ describe('prices', () => {
     ['0.005', 'EUR', 1],
     [1299.9, 'SEK', 129990],
     [19.99, 'EUR', 1999],
-    [0, 'EUR', 0],
     ['4990', 'ISK', 4990],
     [4990, 'JPY', 4990],
   ])('%s %s → %d', (value, currency, minor) => {
@@ -60,6 +59,11 @@ describe('prices', () => {
     ['1,2.3', 'SEK'],
     ['1.2,30', 'SEK'],
     ['499', 'ABC'],
+    // A price of 0 is a placeholder: no price.
+    [0, 'EUR'],
+    ['0', 'SEK'],
+    ['0,00 kr', 'SEK'],
+    ['0.004', 'EUR'],
   ])('%s %s → no price', (value, currency) => {
     expect(parsePrice(value, currency)).toBeNull();
   });

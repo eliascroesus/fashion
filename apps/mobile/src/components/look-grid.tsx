@@ -82,6 +82,8 @@ interface LookGridProps {
   refreshable?: boolean;
   /** To scroll the grid from outside (e.g. to a piece in the header). */
   scrollRef?: RefObject<FlashListRef<FeedCard> | null>;
+  /** Extra room under the last cards, for something floating over the bottom. */
+  bottomInset?: number;
 }
 
 /**
@@ -103,6 +105,7 @@ export function LookGrid({
   endMessage,
   refreshable = true,
   scrollRef,
+  bottomInset = 0,
 }: LookGridProps) {
   const { t } = useTranslation();
   const colors = useColors();
@@ -249,7 +252,11 @@ export function LookGrid({
       }
       // iOS: keeps the last cards clear of the floating tab bar.
       contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={styles.content}
+      contentContainerStyle={
+        bottomInset > 0
+          ? { ...styles.content, paddingBottom: styles.content.paddingBottom + bottomInset }
+          : styles.content
+      }
       ListHeaderComponent={header ?? null}
       ListEmptyComponent={
         <View style={[styles.empty, { minHeight: screenHeight / 2 }]}>{emptyState}</View>

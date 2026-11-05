@@ -114,12 +114,14 @@ async function savedAmong(
 
 /**
  * Cards for these looks, by id, as `viewerProfileId` sees them (null when
- * logged out). Looks that can't be shown any more are missing.
+ * logged out). Looks that can't be shown any more are missing. Without
+ * `countItems` their piece counts are 0 (for callers that only use photos).
  */
 export async function loadCards(
   { db, storage }: FeedDeps,
   ids: readonly string[],
   viewerProfileId: string | null,
+  { countItems = true }: { countItems?: boolean } = {},
 ): Promise<Map<string, FeedCard>> {
   const cards = new Map<string, FeedCard>();
   if (ids.length === 0) return cards;
@@ -127,7 +129,7 @@ export async function loadCards(
     .select({
       id: looks.id,
       authorId: looks.authorProfileId,
-      itemCount: itemCountOf(sql`${looks.id}`),
+      itemCount: countItems ? itemCountOf(sql`${looks.id}`) : sql<number>`0`,
       width: media.width,
       height: media.height,
       thumbhash: media.thumbhash,

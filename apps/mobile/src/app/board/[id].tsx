@@ -6,7 +6,7 @@ import { Alert, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeedMessage } from '../../components/feed-message';
 import { LookGrid } from '../../components/look-grid';
-import { useMoneyLocale } from '../../components/shop-the-look';
+import { useMoneyLocale } from '../../lib/money';
 import { showToast } from '../../components/toast';
 import { useBoardLooks, useBoardMutations, useBoards } from '../../saves/queries';
 import { radii, Screen, spacing, ThemedText, useColors } from '../../theme';
@@ -101,7 +101,7 @@ export default function BoardScreen() {
           <Ionicons name="ellipsis-horizontal" size={20} color={colors.text} />
         </Pressable>
       </View>
-      {board && board.totals.length > 0 ? (
+      {board?.totals?.length ? (
         <ThemedText tone="muted" style={styles.summary} testID="board-summary">
           {t('board.summary', {
             count: board.lookCount,

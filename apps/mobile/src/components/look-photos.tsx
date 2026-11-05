@@ -16,7 +16,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { photoHeight } from '../feed/layout';
 import { DOWNSCALE_PHOTOS } from '../lib/photos';
-import { dotPlacement, dotsOnPhoto } from '../looks/shop';
+import { dotPlacement, dotsOnPhoto, dotTarget, NO_ITEMS } from '../looks/shop';
 import { saveIfNot } from '../saves';
 import { radii, spacing, useColors } from '../theme';
 import { gridPhotoUrl } from './look-grid';
@@ -55,7 +55,7 @@ export function LookPhotos({
   photos,
   width,
   onCoverShown,
-  items = [],
+  items = NO_ITEMS,
   onDotPress,
 }: LookPhotosProps) {
   const { t } = useTranslation();
@@ -100,11 +100,11 @@ export function LookPhotos({
 
   const dots = (photo: Photo, index: number) =>
     dotsOnPhoto(items, index).flatMap(({ item, x, y }) => {
-      const place = dotPlacement(photo, { width, height }, { x, y });
+      const frame = { width, height };
+      // A piece just past the crop still gets its dot, at the edge.
+      const place = dotPlacement(photo, frame, { x, y }, DOT_SIZE);
       if (!place) return [];
-      // Kept fully on the photo, even for a piece at its very edge.
-      const left = Math.min(Math.max(place.left, DOT_SIZE / 2), width - DOT_SIZE / 2);
-      const top = Math.min(Math.max(place.top, DOT_SIZE / 2), height - DOT_SIZE / 2);
+      const { hit, dot } = dotTarget(place, frame, DOT_SIZE, DOT_HIT);
       return [
         <Pressable
           key={item.id}
@@ -116,11 +116,12 @@ export function LookPhotos({
           onPress={() => {
             onDotPress?.(item);
           }}
-          style={[styles.dotHit, { left: left - DOT_HIT / 2, top: top - DOT_HIT / 2 }]}
+          style={[styles.dotHit, hit]}
         >
           <View
             style={[
               styles.pieceDot,
+              dot,
               { backgroundColor: colors.surface, borderColor: colors.border },
             ]}
           >
@@ -156,23 +157,24 @@ export function LookPhotos({
               <View collapsable={false} style={{ width, height }} />
             </Link.AppleZoomTarget>
           </View>
-          {dots(item, index)}
         </View>
       ) : (
-        <View style={frame}>
-          {sharp(item, true)}
-          {dots(item, index)}
-        </View>
+        <View style={frame}>{sharp(item, true)}</View>
       );
+    // The dots sit beside the photo's own button, not inside it: VoiceOver and tests can't reach
+    // what's inside an accessible element.
     return (
-      <Pressable
-        testID={`look-photo-${String(index)}`}
-        accessibilityLabel={t('look.photoOf', { index: index + 1, count: photos.length })}
-        accessibilityRole="image"
-        onPress={onPress}
-      >
-        {image}
-      </Pressable>
+      <View style={{ width, height }}>
+        <Pressable
+          testID={`look-photo-${String(index)}`}
+          accessibilityLabel={t('look.photoOf', { index: index + 1, count: photos.length })}
+          accessibilityRole="image"
+          onPress={onPress}
+        >
+          {image}
+        </Pressable>
+        {dots(item, index)}
+      </View>
     );
   };
 
@@ -242,14 +244,9 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   dot: { width: 6, height: 6, borderRadius: radii.pill },
-  dotHit: {
-    position: 'absolute',
-    width: DOT_HIT,
-    height: DOT_HIT,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  dotHit: { position: 'absolute', width: DOT_HIT, height: DOT_HIT },
   pieceDot: {
+    position: 'absolute',
     width: DOT_SIZE,
     height: DOT_SIZE,
     borderRadius: radii.pill,
