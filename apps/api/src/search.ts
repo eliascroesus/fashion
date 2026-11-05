@@ -1,6 +1,5 @@
 import { type Db, type SQL, sql } from '@outfitly/db';
 import {
-  FEED_PAGE_SIZE,
   type FeedPage,
   LOOK_TAGS,
   type LookTag,
@@ -10,17 +9,17 @@ import {
   type Suggestions,
   TAG_SEARCH_WORDS,
 } from '@outfitly/shared';
-import { z } from 'zod';
+import type { WordFingerprint, WordFingerprints } from './ai/word-fingerprints.ts';
+import { type FeedDeps, showableLook } from './feed/cards.ts';
 import {
-  decodeCursor,
-  encodeCursor,
-  type FeedDeps,
-  loadCards,
-  microsText,
-  microsTime,
-  showableLook,
-} from './feed/cards.ts';
+  firstListPage,
+  LIST_RULES,
+  nextListPage,
+  recentList,
+  saveList,
+} from './feed/look-lists.ts';
 import { avatarJoin, briefColumns, type BriefRow, profileLook, toBrief } from './profile-page.ts';
+import { strictly, widenVectorSearch } from './similar-looks.ts';
 
 /**
  * Possible typos of a typed word: up to this many vocabulary words pg_trgm
@@ -207,77 +206,135 @@ export function wordsQuery(
     .join(' & ');
 }
 
-/**
- * The last look of the previous page: its rank, popularity, publish time and
- * id. The rank is a decimal with RANK_DIGITS places, as text: Supabase prints
- * floats with 15 digits, so a float rank read back wouldn't equal itself.
- * Popularity can stay a float because it is stored rounded to 4 decimals
- * (`recomputePopularity`).
- */
-const RANK_DIGITS = 6;
-const cursorSchema = z.object({
-  r: z.string().regex(/^\d{1,3}(\.\d{1,6})?$/),
-  p: z.number(),
-  t: microsTime,
-  id: z.uuid(),
-});
+export const HYBRID_RULES = {
+  /** Looks found by matching words, best first, before the two lists are merged. */
+  byWords: LIST_RULES.size,
+  /** Looks found by fingerprint, nearest first. */
+  byFingerprint: 200,
+  /** Nearest photos read from the fingerprint index before the rules filter them. */
+  candidates: 600,
+  /**
+   * A look counts as found by fingerprint when its cover is at least this
+   * similar (cosine) to the words' fingerprint. Measured on the 125 seed looks:
+   * the true matches of "beige trench", "black leather jacket", "red dress"
+   * score 0.05–0.11; nonsense ("asdfgh") stays under 0.03.
+   */
+  minSimilarity: 0.05,
+  /** Reciprocal rank fusion: a look gets 1 / (k + its place) from each list it's in. */
+  fusionK: 60,
+} as const;
 
-interface ResultRow extends Record<string, unknown> {
-  id: string;
-  /** numeric, as text. */
-  rank: string;
-  popularity_score: number;
-  t: string;
+/** What a search needs: the feed's database and photos, and words' fingerprints (null = off). */
+export interface SearchDeps extends FeedDeps {
+  words?: WordFingerprints | null;
 }
 
 /**
- * Looks matching a search, best match first (words in the tags and caption
- * count more than in the AI description), then popular, then newest. 20 per
- * page. Popularity can change between pages, so a look may rarely repeat (the
- * app drops repeats) or be skipped, as in "more like this".
+ * Looks matching the words, best match first (words in the tags and caption
+ * count more than in the AI description), then popular, then newest.
+ */
+async function byWords(db: Db, words: readonly string[]): Promise<string[]> {
+  const query = wordsQuery(words, await alternatives(db, words));
+  const { rows } = await db.execute<{ id: string }>(sql`
+    SELECT l.id FROM looks l
+     WHERE l.search_vector @@ ${query}::tsquery
+       AND ${showableLook(sql`l`)} AND l.published_at <= now()
+     ORDER BY ts_rank(l.search_vector, ${query}::tsquery) DESC, l.popularity_score DESC,
+              l.published_at DESC, l.id DESC
+     LIMIT ${HYBRID_RULES.byWords}`);
+  return rows.map((r) => r.id);
+}
+
+/** Looks whose cover photo looks most like the words (same fingerprint model only). */
+async function byFingerprint(db: Db, fingerprint: WordFingerprint): Promise<string[]> {
+  const vector = `[${fingerprint.embedding.join(',')}]`;
+  return db.transaction(async (tx) => {
+    await widenVectorSearch(tx);
+    const { rows } = await tx.execute<{ id: string }>(sql`
+      WITH near AS MATERIALIZED (
+        SELECT m.id, m.embedding <=> ${vector}::extensions.halfvec AS distance
+          FROM media m
+         WHERE m.embedding_model = ${fingerprint.model} AND m.deleted_at IS NULL
+         ORDER BY m.embedding <=> ${vector}::extensions.halfvec
+         LIMIT ${HYBRID_RULES.candidates}
+      )
+      SELECT l.id FROM near
+        JOIN look_media lm ON lm.media_id = near.id AND lm.position = 0
+        JOIN looks l ON l.id = lm.look_id
+       WHERE near.distance <= ${1 - HYBRID_RULES.minSimilarity}
+         AND ${showableLook(sql`l`)} AND l.published_at <= now()
+       ORDER BY ${strictly(sql`near.distance`)}, l.id
+       LIMIT ${HYBRID_RULES.byFingerprint}`);
+    return rows.map((r) => r.id);
+  });
+}
+
+/**
+ * Merges ranked lists (reciprocal rank fusion): a look gets 1 / (k + place)
+ * from each list it's in, so looks high in both come first and a look high
+ * in one still beats one low in both. Ties: the better best place, then the
+ * earlier list, then the id.
+ */
+export function fuseRankings(
+  lists: readonly (readonly string[])[],
+  k: number = HYBRID_RULES.fusionK,
+): string[] {
+  const found = new Map<string, { score: number; best: number; list: number }>();
+  lists.forEach((list, which) => {
+    list.forEach((id, i) => {
+      const place = i + 1;
+      const entry = found.get(id);
+      if (entry) {
+        entry.score += 1 / (k + place);
+        if (place < entry.best) [entry.best, entry.list] = [place, which];
+      } else {
+        found.set(id, { score: 1 / (k + place), best: place, list: which });
+      }
+    });
+  });
+  return [...found.entries()]
+    .sort(
+      ([a, x], [b, y]) =>
+        y.score - x.score || x.best - y.best || x.list - y.list || (a < b ? -1 : a > b ? 1 : 0),
+    )
+    .map(([id]) => id);
+}
+
+/**
+ * A search: looks whose words match (see `byWords`) merged with looks whose
+ * cover looks like the words (`byFingerprint`, when the fingerprint service
+ * answers in time; else words alone). Up to LIST_RULES.size looks, 20 per
+ * page. Page 1 makes the list (or reuses one made for the same words in the
+ * last few minutes: search isn't personal), later pages read on from it, so
+ * nothing repeats or is skipped.
  */
 export async function searchLooks(
-  deps: FeedDeps,
+  deps: SearchDeps,
   viewerProfileId: string | null,
   text: string,
   cursor: string | undefined,
 ): Promise<FeedPage> {
-  const after = cursor === undefined ? undefined : decodeCursor(cursorSchema, cursor);
   const words = searchWords(text);
   if (words.length === 0) return { items: [], nextCursor: null };
-  const query = wordsQuery(words, await alternatives(deps.db, words));
+  const key = words.join(' ');
+  if (cursor !== undefined) {
+    const page = await nextListPage(deps, viewerProfileId, 'search', key, cursor);
+    if (page) return page;
+  }
+  const recent = await recentList(deps.db, 'search', key, null);
+  if (recent) return firstListPage(deps, viewerProfileId, recent);
 
-  const { rows } = await deps.db.execute<ResultRow>(sql`
-    SELECT c.id, c.rank, c.popularity_score, ${microsText(sql`c.published_at`)} AS t
-      FROM (SELECT l.id, round(ts_rank(l.search_vector, ${query}::tsquery)::numeric, ${RANK_DIGITS}) AS rank,
-                   l.popularity_score, l.published_at
-              FROM looks l
-             WHERE l.search_vector @@ ${query}::tsquery
-               AND ${showableLook(sql`l`)} AND l.published_at <= now()) c
-     ${
-       after
-         ? sql`WHERE (c.rank, c.popularity_score, c.published_at, c.id)
-                   < (${after.r}::numeric, ${after.p}::float8, ${after.t}::timestamptz, ${after.id}::uuid)`
-         : sql``
-     }
-     ORDER BY c.rank DESC, c.popularity_score DESC, c.published_at DESC, c.id DESC
-     LIMIT ${FEED_PAGE_SIZE + 1}`);
-
-  const page = rows.slice(0, FEED_PAGE_SIZE);
-  const cards = await loadCards(
-    deps,
-    page.map((r) => r.id),
-    viewerProfileId,
-  );
-  const last = page.at(-1);
-  return {
-    // A look hidden between the two queries is left out of this page.
-    items: page.flatMap((r) => cards.get(r.id) ?? []),
-    nextCursor:
-      rows.length > FEED_PAGE_SIZE && last
-        ? encodeCursor({ r: last.rank, p: last.popularity_score, t: last.t, id: last.id })
-        : null,
-  };
+  const [matching, fingerprint] = await Promise.all([
+    byWords(deps.db, words),
+    deps.words ? deps.words.get(key) : Promise.resolve(null),
+  ]);
+  const looking = fingerprint ? await byFingerprint(deps.db, fingerprint) : [];
+  const lookIds = fuseRankings([matching, looking]).slice(0, LIST_RULES.size);
+  if (lookIds.length === 0) return { items: [], nextCursor: null };
+  // Without the fingerprint it couldn't get, the list isn't reused: the next search tries again.
+  const complete = !deps.words || fingerprint !== null;
+  const id = await saveList(deps.db, 'search', key, null, lookIds, complete);
+  return firstListPage(deps, viewerProfileId, { id, total: lookIds.length, lookIds });
 }
 
 /**

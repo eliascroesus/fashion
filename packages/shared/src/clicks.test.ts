@@ -39,8 +39,11 @@ describe('click batches', () => {
     expect(clickBatchSchema.safeParse({ ...batch, clicks: [...full, click] }).success).toBe(false);
   });
 
-  it('knows every list impressions come from', () => {
+  it('knows every list impressions come from, and "similar pieces", each once', () => {
     for (const source of EVENT_SOURCES) expect(CLICK_SOURCES).toContain(source);
+    expect(CLICK_SOURCES).toContain('more_like_this');
+    expect(CLICK_SOURCES).toContain('similar_pieces');
+    expect(new Set(CLICK_SOURCES).size).toBe(CLICK_SOURCES.length);
   });
 
   it('the server reads each click on its own, so one odd click never refuses the batch', () => {

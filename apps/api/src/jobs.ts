@@ -22,6 +22,7 @@ import {
   spotPhoto,
 } from './ai/photos.ts';
 import { deleteOldSeen } from './events.ts';
+import { deleteOldLookLists } from './feed/look-lists.ts';
 import { deleteOldFeedSnapshots, recomputePopularity } from './feed/popularity.ts';
 import {
   CompareAnswerError,
@@ -56,7 +57,7 @@ export const QUEUES = {
   mediaProcessFailed: 'media-process-failed',
   /** Recomputes every look's popularity score (saves per view). */
   feedPopularity: 'feed-popularity',
-  /** Deletes For You lists older than a day (hourly). */
+  /** Deletes For You, "More like this" and search lists older than a day (hourly). */
   feedSnapshotCleanup: 'feed-snapshot-cleanup',
   /** Deletes "seen" rows older than a week (daily); the feed only looks back 7 days. */
   seenCleanup: 'seen-cleanup',
@@ -187,8 +188,9 @@ export async function startJobs(boss: PgBoss, options: WorkerDeps): Promise<void
   await boss.createQueue(QUEUES.feedSnapshotCleanup);
   await boss.work(QUEUES.feedSnapshotCleanup, workOptions, async () => {
     const deleted = await deleteOldFeedSnapshots(db);
-    log.info({ deleted }, 'old feed lists removed');
-    return { deleted };
+    const lookLists = await deleteOldLookLists(db);
+    log.info({ deleted, lookLists }, 'old feed lists removed');
+    return { deleted, lookLists };
   });
   await boss.schedule(QUEUES.feedSnapshotCleanup, '37 * * * *');
 

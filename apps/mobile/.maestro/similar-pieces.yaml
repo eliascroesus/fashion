@@ -1,0 +1,79 @@
+# Similar pieces: "Similar pieces" under the test coat opens a sheet of coats that look like it,
+# nearest first; "Cheaper" sorts them by price. Then the look page's "More like this" is scrolled
+# and one of its looks opened.
+#   pnpm ai:fingerprint        (once: the looks' fingerprints)
+#   pnpm shop:test-look        (prints the look id; test pieces and look-alike coats)
+#   maestro test -e APP_ID=com.outfitly.app.dev -e SCHEME=outfitly-dev -e LOOK_ID=<id> \
+#     apps/mobile/.maestro/similar-pieces.yaml
+#   pnpm shop:test-look --remove
+# It saves screenshots similar/nearest, similar/cheaper and similar/more-like-this.
+appId: ${APP_ID || 'com.outfitly.app'}
+---
+- launchApp:
+    clearState: true
+- runFlow: subflows/skip-taste.yaml
+- openLink: ${SCHEME || 'outfitly'}://look/${LOOK_ID}
+- extendedWaitUntil:
+    visible:
+      id: look-author
+    timeout: 20000
+# The test coat is the first piece; its "Similar pieces" link.
+- scrollUntilVisible:
+    element:
+      id: shop-item-similar
+    direction: DOWN
+- tapOn:
+    id: shop-item-similar
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: similar-piece
+    timeout: 15000
+# Each card says its name and price (one button, so its label carries them).
+- assertVisible:
+    id: similar-piece
+    text: '.*Test look-alike coat.*'
+- waitForAnimationToEnd
+- takeScreenshot: similar/nearest
+- tapOn:
+    id: similar-sort-cheaper
+- extendedWaitUntil:
+    visible:
+      id: similar-piece
+    timeout: 15000
+# The cheapest look-alike coat (599 kr) comes first.
+- copyTextFrom:
+    id: similar-piece
+    index: 0
+- assertTrue: ${maestro.copiedText.includes('599')}
+- waitForAnimationToEnd
+- takeScreenshot: similar/cheaper
+# Close the sheet: back on the look page as it was.
+- swipe:
+    start: 50%, 20%
+    end: 50%, 95%
+    duration: 300
+- waitForAnimationToEnd
+- assertVisible:
+    id: shop-item
+
+# "More like this": scroll down to its cards and open one.
+- scrollUntilVisible:
+    element:
+      id: similar-card
+    direction: DOWN
+    timeout: 20000
+- waitForAnimationToEnd
+- takeScreenshot: similar/more-like-this
+- tapOn:
+    id: similar-card
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: look-author
+    timeout: 10000
+- tapOn:
+    id: look-back
+- waitForAnimationToEnd
+- assertVisible:
+    id: screen-look

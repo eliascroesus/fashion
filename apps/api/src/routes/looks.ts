@@ -3,19 +3,27 @@ import {
   feedQuerySchema,
   followStateSchema,
   lookDetailSchema,
+  similarPiecesPageSchema,
+  similarPiecesQuerySchema,
 } from '@outfitly/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { FeedDeps } from '../feed/cards.ts';
 import { follow, unfollow } from '../follows.ts';
-import { lookDetail, similarPage } from '../looks.ts';
+import { lookDetail } from '../looks.ts';
 import { findActiveProfile, requireActiveProfile } from '../profiles.ts';
+import { similarPage } from '../similar-looks.ts';
+import { similarPiecesPage } from '../similar-pieces.ts';
 import type { ZodTypeProvider } from '../zod.ts';
 
 const lookParams = z.object({ lookId: z.uuid() });
+const itemParams = z.object({ itemId: z.uuid() });
 const profileParams = z.object({ profileId: z.uuid() });
 
-/** The look page (public, like For You) and following the people who post. */
+/**
+ * The look page (public, like For You), "More like this", "similar pieces"
+ * and following the people who post.
+ */
 export function looksRoutes(app: FastifyInstance, deps: FeedDeps): void {
   const routes = app.withTypeProvider<ZodTypeProvider>();
   const { db } = deps;
@@ -46,6 +54,20 @@ export function looksRoutes(app: FastifyInstance, deps: FeedDeps): void {
       const viewer = await findActiveProfile(db, request);
       return similarPage(deps, viewer, request.params.lookId, request.query.cursor);
     },
+  );
+
+  routes.get(
+    '/look-items/:itemId/similar',
+    {
+      config: { public: true },
+      schema: {
+        params: itemParams,
+        querystring: similarPiecesQuerySchema,
+        response: { 200: similarPiecesPageSchema },
+      },
+    },
+    async (request) =>
+      similarPiecesPage(deps, request.params.itemId, request.query.sort, request.query.cursor),
   );
 
   routes.put(

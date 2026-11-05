@@ -19,6 +19,7 @@ const EXPECTED_TABLES = [
   'idempotency_keys',
   'link_checks',
   'look_items',
+  'look_lists',
   'look_media',
   'looks',
   'media',

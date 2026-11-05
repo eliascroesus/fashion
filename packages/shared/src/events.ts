@@ -1,7 +1,13 @@
 import { z } from 'zod';
 
 /** Where in the app an event happened (`events.source`). */
-export const EVENT_SOURCES = ['feed_for_you', 'feed_following', 'search', 'profile'] as const;
+export const EVENT_SOURCES = [
+  'feed_for_you',
+  'feed_following',
+  'search',
+  'profile',
+  'more_like_this',
+] as const;
 export type EventSource = (typeof EVENT_SOURCES)[number];
 
 export const CLIENT_PLATFORMS = ['ios', 'android', 'web'] as const;

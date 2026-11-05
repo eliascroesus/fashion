@@ -5,8 +5,10 @@ import { CLIENT_PLATFORMS, EVENT_SOURCES, MAX_FEED_POSITION } from './events.ts'
  * Where the look was opened from before Shop was tapped (`clicks.source`):
  * the lists impressions come from, plus the app's other grids. With
  * `position` it says which card of which list led to the shop.
+ * `similar_pieces`: Shop on a piece in "similar pieces" (the click's look is
+ * the look that piece's shop link is on; `position` its place in that list).
  */
-export const CLICK_SOURCES = [...EVENT_SOURCES, 'more_like_this', 'saved', 'board'] as const;
+export const CLICK_SOURCES = [...EVENT_SOURCES, 'saved', 'board', 'similar_pieces'] as const;
 export type ClickSource = (typeof CLICK_SOURCES)[number];
 
 /** The app sends clicks in batches of at most this many. */

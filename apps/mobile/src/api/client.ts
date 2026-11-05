@@ -22,6 +22,8 @@ import {
   popularTagsSchema,
   profilePageSchema,
   saveStateSchema,
+  type SimilarPieceSort,
+  similarPiecesPageSchema,
   type Style,
   stylesParam,
   suggestionsSchema,
@@ -219,6 +221,19 @@ export function createApiClient(options: ApiClientOptions) {
       /** "More like this", 20 per page. */
       similar: (lookId: string, cursor?: string, signal?: AbortSignal) =>
         page(`/looks/${id(lookId)}/similar`, cursor, signal),
+      /** Products that look like one of a look's pieces, nearest or cheaper first, 20 per page. */
+      similarPieces: (
+        itemId: string,
+        sort: SimilarPieceSort,
+        cursor?: string,
+        signal?: AbortSignal,
+      ) => {
+        const query = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+        return request('GET', `/look-items/${id(itemId)}/similar?sort=${sort}${query}`, {
+          schema: similarPiecesPageSchema,
+          ...(signal ? { signal } : {}),
+        });
+      },
     },
     search: {
       /** Looks matching the words (typos too), 20 per page. Works logged out. */
