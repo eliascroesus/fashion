@@ -238,8 +238,9 @@ async function pageData(database: Db, mediaIds: string[]): Promise<PageData> {
     });
   }
 
-  // Honest cost: everything these photos' calls cost (retries, failures and estimates for
-  // timeouts included), divided by the readings it bought.
+  // Honest cost: everything these photos' spotting calls cost (retries, failures and estimates
+  // for timeouts included), divided by the readings it bought. Link checks log the look photo
+  // too, so they're left out by purpose.
   const calls =
     mediaIds.length === 0
       ? []
@@ -253,7 +254,7 @@ async function pageData(database: Db, mediaIds: string[]): Promise<PageData> {
             createdAt: aiCalls.createdAt,
           })
           .from(aiCalls)
-          .where(inArray(aiCalls.mediaId, mediaIds));
+          .where(and(inArray(aiCalls.mediaId, mediaIds), eq(aiCalls.purpose, 'spot_garments')));
   const answered = calls.filter((c) => c.status === 'ok' || c.status === 'blocked');
   const sum = (rows: typeof calls, pick: (c: (typeof calls)[number]) => number) =>
     rows.reduce((total, c) => total + pick(c), 0);

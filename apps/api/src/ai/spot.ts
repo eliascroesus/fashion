@@ -11,7 +11,7 @@ import { z } from 'zod';
  * answer becomes rows. Change the prompt or schema → bump the version, so the
  * log shows which answers came from which.
  */
-export const SPOT_PROMPT_VERSION = 'spot-v2';
+export const SPOT_PROMPT_VERSION = 'spot-v3';
 
 /** More than this is noise (or a shop shelf); the rest is dropped. */
 export const MAX_GARMENTS = 20;
@@ -34,7 +34,7 @@ For each piece:
 Then for the whole photo:
 - description: one sentence of at most 25 words describing the outfit for search, without brand guesses.
 - tags: 3 to 10 short lowercase English search words (style, pieces, colours, occasion, season), e.g. "minimal", "trench coat", "beige".
-- safety: nudity = nudity or sexual content; violence = graphic violence, gore or weapons; spam_text = advertising text added on top of the photo (prices, discount codes, phone numbers, web addresses). Logos on clothes and signs in the background are not spam.
+- safety: nudity = nudity or sexual content; violence = graphic violence, gore or weapons; spam_text = advertising text added on top of the photo (prices, discount codes, phone numbers, web addresses). Logos on clothes, signs in the background, and a name, @handle or short caption credited on the photo (a watermark, "top @brand") are not spam.
 
 If no outfit is visible, return an empty garments list.`;
 
@@ -42,7 +42,8 @@ If no outfit is visible, return an empty garments list.`;
  * The answer's shape (Gemini `responseJsonSchema`). Gemini answers 400 "invalid argument" when a
  * format has too many limits (measured 2026-11-05 on gemini-3.1-flash-lite: these enums plus
  * number bounds plus list caps was one too many), so counts and box values are only checked on
- * our side (`parseSpotAnswer`, `boxFromGemini`).
+ * our side (`parseSpotAnswer`, `boxFromGemini`). The tests can't see that limit: after changing
+ * the format, read one real photo (`pnpm ai:spot-check --count 1 --again --out <scratch folder>`).
  */
 export const SPOT_SCHEMA = {
   type: 'object',
