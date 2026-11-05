@@ -9,7 +9,7 @@ import { fuseRankings, refreshSearchTerms } from '../src/search.ts';
 import { json } from './ai-fakes.ts';
 import { createAuthor, createLook } from './feed-fixtures.ts';
 import { createTestContext, type TestContext, testConfig, testJwks } from './helpers.ts';
-import { angled, vectorText } from './vectors.ts';
+import { angled, vectorText, dropFingerprintIndexes } from './vectors.ts';
 
 const MODEL = 'Marqo/marqo-fashionSigLIP@c56244c';
 
@@ -47,6 +47,7 @@ async function fingerprintCover(lookId: string, vector: number[]): Promise<void>
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  await dropFingerprintIndexes(ctx.db);
   const embedder = new EmbedderClient({
     url: 'https://embedder.test',
     secret: 'x'.repeat(32),
@@ -128,13 +129,24 @@ describe('search by words and by how the words look', () => {
 
 describe('fuseRankings', () => {
   it('puts looks high in both lists first, then by best place, then the earlier list', () => {
-    expect(
-      fuseRankings([
-        ['a', 'b', 'c'],
-        ['c', 'd'],
-      ]),
-    ).toEqual(['c', 'a', 'b', 'd']);
-    expect(fuseRankings([[], ['x']])).toEqual(['x']);
+    const lists = (a: string[], b: string[]) => [
+      { ids: a, weight: 1 },
+      { ids: b, weight: 1 },
+    ];
+    expect(fuseRankings(lists(['a', 'b', 'c'], ['c', 'd']))).toEqual(['c', 'a', 'b', 'd']);
+    expect(fuseRankings(lists([], ['x']))).toEqual(['x']);
+  });
+
+  it('lets matching words outweigh fingerprint guesses (words count double)', () => {
+    const words = Array.from({ length: 70 }, (_, i) => `w${String(i)}`);
+    const fused = fuseRankings([
+      { ids: words, weight: 1 },
+      { ids: ['f0', 'w69'], weight: 0.5 },
+    ]);
+    // A look found by its looks alone comes after ~60 word matches (0.5/61 ≈ 1/122).
+    expect(fused.indexOf('f0')).toBeGreaterThan(55);
+    // Found by both still climbs.
+    expect(fused.indexOf('w69')).toBeLessThan(fused.indexOf('w68'));
   });
 });
 

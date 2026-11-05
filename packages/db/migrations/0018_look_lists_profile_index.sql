@@ -1,0 +1,2 @@
+-- Step 3.8 review: an index for trimming a profile's look lists to its newest few on each save.
+CREATE INDEX "look_lists_profile_kind_idx" ON "look_lists" USING btree ("profile_id","kind","created_at");

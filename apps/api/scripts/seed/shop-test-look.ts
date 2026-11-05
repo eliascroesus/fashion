@@ -152,7 +152,7 @@ export async function addLookalikeCoats(db: Db, lookId: string): Promise<number>
         JOIN looks l ON l.id = lm.look_id
        WHERE m.embedding IS NOT NULL AND m.status = 'ready' AND l.id <> ${lookId}
          AND l.status = 'published' AND l.deleted_at IS NULL
-       ORDER BY m.embedding <=> ${cover}, l.id
+       ORDER BY m.embedding OPERATOR(extensions.<=>) ${cover}, l.id
        LIMIT ${LOOKALIKE_PRICES.length}`);
     for (const [n, other] of near.entries()) {
       const link = `${TEST_LINK}lookalike-${String(n + 1)}`;

@@ -19,7 +19,7 @@ import {
 } from './feed-fixtures.ts';
 import { deleteOldLookLists, LIST_RULES } from '../src/feed/look-lists.ts';
 import { buildTestApp, createTestContext, type TestContext } from './helpers.ts';
-import { angled } from './vectors.ts';
+import { angled, dropFingerprintIndexes } from './vectors.ts';
 
 const MODEL = 'Marqo/marqo-fashionSigLIP@c56244c';
 
@@ -28,6 +28,7 @@ let app: FastifyInstance;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  await dropFingerprintIndexes(ctx.db);
   app = await buildTestApp(ctx);
   await app.ready();
 });
@@ -236,7 +237,7 @@ describe('GET /v1/looks/:lookId/similar', () => {
     expect(foreign.items[0]?.id).not.toBe(restarted.items[0]?.id);
   });
 
-  it('gives a look without a fingerprint the looks sharing its tags, and never shares that list', async () => {
+  it('gives a look without a fingerprint the looks sharing its tags, shared only for a few minutes', async () => {
     const author = await createAuthor(ctx.db, 'near.tags');
     const other = await createAuthor(ctx.db, 'near.tags.two');
     const base = await createLook(ctx.db, {
@@ -250,15 +251,22 @@ describe('GET /v1/looks/:lookId/similar', () => {
     ]);
     const ids = (await similar(base)).items.map((c) => c.id);
     expect(ids.slice(0, 2)).toEqual([both, one]);
+    const lists = () =>
+      ctx.db
+        .select({ complete: lookLists.complete })
+        .from(lookLists)
+        .where(eq(lookLists.key, base));
+    // The next visitor gets the same tags-only list for a few minutes…
     await similar(base);
-    const lists = await ctx.db
-      .select({ complete: lookLists.complete })
-      .from(lookLists)
-      .where(eq(lookLists.key, base));
-    expect(lists).toEqual([{ complete: false }, { complete: false }]);
+    expect(await lists()).toEqual([{ complete: false }]);
+    // …then a new one (by then the look may have its fingerprint).
+    await ctx.db.execute(sql`UPDATE look_lists SET created_at = now() - make_interval(
+                               mins => ${LIST_RULES.tagsOnlyReuseMinutes + 1}) WHERE key = ${base}`);
+    await similar(base);
+    expect(await lists()).toEqual([{ complete: false }, { complete: false }]);
   });
 
-  it('keeps a profile’s newest 20 lists, and the hourly cleanup removes lists older than a day', async () => {
+  it(`keeps a profile’s newest ${String(LIST_RULES.perProfile)} lists, and the hourly cleanup removes lists older than a day`, async () => {
     const { token, profileId } = await viewer();
     const author = await createAuthor(ctx.db, 'near.lists');
     const looksOpened = await createLooks(
@@ -279,13 +287,73 @@ describe('GET /v1/looks/:lookId/similar', () => {
     expect(await own()).toBe(0);
   });
 
-  it('refuses a broken cursor and is 404 for a look that cannot be shown', async () => {
+  it('starts over for a cursor it can’t read, and is 404 for a look that cannot be shown', async () => {
     const author = await createAuthor(ctx.db, 'near.bad');
     const base = await createLook(ctx.db, { authorId: author });
     const hidden = await createLook(ctx.db, { authorId: author, status: 'hidden' });
-    const bad = await app.inject({ method: 'GET', url: `/v1/looks/${base}/similar?cursor=nope` });
-    expect(bad.statusCode).toBe(400);
+    // E.g. a cursor an older app kept: page 1 again rather than an error.
+    const restart = await similar(base, 'nope');
+    expect(restart.items.map((c) => c.id)).toEqual((await similar(base)).items.map((c) => c.id));
     const gone = await app.inject({ method: 'GET', url: `/v1/looks/${hidden}/similar` });
     expect(gone.statusCode).toBe(404);
+  });
+
+  it('never pages another viewer’s list (or a logged-out one) for a logged-in viewer', async () => {
+    const a = await viewer();
+    const b = await viewer();
+    const author = await createAuthor(ctx.db, 'near.owner');
+    const at = axes();
+    const base = await createLook(ctx.db, { authorId: author });
+    await fingerprintCover(base, at(0));
+    const theirs = await createLooks(
+      ctx.db,
+      Array.from({ length: 25 }, () => ({ authorId: author })),
+    );
+    for (const [i, id] of theirs.entries()) await fingerprintCover(id, at(2 + i));
+    // B's own look, nearest of all: in A's and the logged-out lists, never in B's.
+    const own = await createLook(ctx.db, { authorId: b.profileId });
+    await fingerprintCover(own, at(1));
+
+    const ofA = await similar(base, null, a.token);
+    const loggedOut = await similar(base);
+    expect(ofA.items[0]?.id).toBe(own);
+    expect(loggedOut.items[0]?.id).toBe(own);
+    for (const cursor of [ofA.nextCursor, loggedOut.nextCursor]) {
+      const page = await similar(base, cursor, b.token);
+      // B gets their own list from the top instead.
+      expect(page.items.map((c) => c.id)).not.toContain(own);
+      expect(page.items[0]?.id).toBe(theirs[0]);
+    }
+  });
+
+  it('skips looks hidden since the list was made, and still fills the page', async () => {
+    const author = await createAuthor(ctx.db, 'near.hidden');
+    const other = await createAuthor(ctx.db, 'near.hidden.two');
+    const at = axes();
+    const base = await createLook(ctx.db, { authorId: author });
+    await fingerprintCover(base, at(0));
+    const ids = await createLooks(
+      ctx.db,
+      Array.from({ length: 45 }, (_, i) => ({ authorId: i % 2 === 0 ? other : author })),
+    );
+    for (const [i, id] of ids.entries()) await fingerprintCover(id, at(1 + i));
+    const first = await similar(base);
+    const mine = only(
+      first.items.map((c) => c.id),
+      ids,
+    );
+    expect(mine).toEqual(ids.slice(0, FEED_PAGE_SIZE));
+    // Three looks of page 2 are hidden after the list was made.
+    const gone = ids.slice(FEED_PAGE_SIZE, FEED_PAGE_SIZE + 3);
+    await ctx.db.execute(sql`UPDATE looks SET status = 'hidden'
+                              WHERE id = ANY(${`{${gone.join(',')}}`}::uuid[])`);
+    const second = await similar(base, first.nextCursor);
+    expect(second.items).toHaveLength(FEED_PAGE_SIZE);
+    expect(
+      only(
+        second.items.map((c) => c.id),
+        ids,
+      ),
+    ).toEqual(ids.slice(FEED_PAGE_SIZE + 3, 2 * FEED_PAGE_SIZE + 3));
   });
 });

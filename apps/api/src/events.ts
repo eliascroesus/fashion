@@ -1,5 +1,5 @@
 import { type Db, seen, sql } from '@outfitly/db';
-import type { EventBatch } from '@outfitly/shared';
+import { type ClientEvent, clientEventSchema, type EventBatch } from '@outfitly/shared';
 import { FEED_RULES } from './feed/arrange.ts';
 
 /**
@@ -14,6 +14,14 @@ export const EVENT_TIME_WINDOW = { pastDays: 7, futureMinutes: 10 } as const;
  * A logged-in profile's impressions also go into `seen`, so For You leaves
  * those looks out for a week. Returns how many events were new.
  */
+/** The events of a batch the server can read; the others are skipped one by one. */
+export function readableEvents(events: readonly unknown[]): ClientEvent[] {
+  return events.flatMap((e) => {
+    const parsed = clientEventSchema.safeParse(e);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
 export async function recordEvents(
   db: Db,
   profileId: string | null,

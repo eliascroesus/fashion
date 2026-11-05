@@ -1,5 +1,5 @@
 import { formatMoney, type SimilarPiece, type SimilarPieceSort } from '@outfitly/shared';
-import { fontWeights } from '@outfitly/ui-tokens';
+import { fontWeights, typography } from '@outfitly/ui-tokens';
 import { FlashList, type FlashListRef, type ListRenderItemInfo } from '@shopify/flash-list';
 import { Image } from 'expo-image';
 import { useLocalSearchParams } from 'expo-router';
@@ -205,11 +205,14 @@ export default function SimilarPiecesSheet() {
           );
         })}
       </View>
-      {sort === 'cheaper' && currency && pieces.length > 0 ? (
-        <ThemedText variant="caption" tone="muted">
-          {t('similar.cheaperNote', { currency })}
-        </ThemedText>
-      ) : null}
+      {/* Its line is kept in both sorts, so the grid doesn't move when the sort changes. */}
+      <View style={styles.noteLine}>
+        {sort === 'cheaper' && currency && pieces.length > 0 ? (
+          <ThemedText variant="caption" tone="muted" numberOfLines={1}>
+            {t('similar.cheaperNote', { currency })}
+          </ThemedText>
+        ) : null}
+      </View>
     </View>
   );
 
@@ -265,4 +268,5 @@ const styles = StyleSheet.create({
   },
   shopText: { fontWeight: fontWeights.semibold },
   note: { padding: spacing.xl, textAlign: 'center' },
+  noteLine: { minHeight: typography.caption.lineHeight },
 });

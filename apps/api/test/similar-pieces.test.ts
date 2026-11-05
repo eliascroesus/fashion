@@ -9,8 +9,9 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createAuthor, createLook } from './feed-fixtures.ts';
+import { SIMILAR_PIECE_RULES } from '../src/similar-pieces.ts';
 import { buildTestApp, createTestContext, type TestContext } from './helpers.ts';
-import { angled } from './vectors.ts';
+import { angled, dropFingerprintIndexes } from './vectors.ts';
 
 const MODEL = 'Marqo/marqo-fashionSigLIP@c56244c';
 
@@ -20,6 +21,7 @@ let author: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  await dropFingerprintIndexes(ctx.db);
   app = await buildTestApp(ctx);
   await app.ready();
   author = await createAuthor(ctx.db, 'pieces.author');
@@ -45,6 +47,8 @@ interface PieceSpec {
   lookStatus?: 'published' | 'hidden';
   /** A garment the link check matched, with this kind and fingerprint. */
   garment?: { category: GarmentCategory; vector?: number[] };
+  /** A garment the poster picked for the link, with this kind and fingerprint. */
+  picked?: { category: GarmentCategory; vector?: number[] };
   /** Another shop link to this product instead of a new product. */
   productId?: string;
 }
@@ -100,26 +104,29 @@ async function piece(spec: PieceSpec): Promise<Piece> {
     currency: price?.currency ?? null,
     stock: spec.stock ?? 'in_stock',
   });
-  let garmentId: string | null = null;
-  if (spec.garment) {
-    garmentId = crypto.randomUUID();
+  /** A garment on the look's cover (with its fingerprint when given). */
+  const addGarment = async (garment: { category: GarmentCategory; vector?: number[] }) => {
+    const id = crypto.randomUUID();
     const { rows } = await ctx.db.execute<{ media_id: string }>(
       sql`SELECT media_id FROM look_media WHERE look_id = ${lookId} AND position = 0`,
     );
     await ctx.db.insert(garments).values({
-      id: garmentId,
+      id,
       mediaId: rows[0]?.media_id ?? '',
-      category: spec.garment.category,
+      category: garment.category,
       boxLeft: 0.2,
       boxTop: 0.2,
       boxRight: 0.8,
       boxBottom: 0.8,
     });
-    if (spec.garment.vector) {
-      await ctx.db.execute(sql`UPDATE garments SET embedding = ${halfvec(spec.garment.vector)},
-                                  embedding_model = ${MODEL} WHERE id = ${garmentId}`);
+    if (garment.vector) {
+      await ctx.db.execute(sql`UPDATE garments SET embedding = ${halfvec(garment.vector)},
+                                  embedding_model = ${MODEL} WHERE id = ${id}`);
     }
-  }
+    return id;
+  };
+  const garmentId = spec.garment ? await addGarment(spec.garment) : null;
+  const pickedId = spec.picked ? await addGarment(spec.picked) : null;
   const itemId = crypto.randomUUID();
   if (spec.item !== false) {
     await ctx.db.insert(lookItems).values({
@@ -127,6 +134,7 @@ async function piece(spec: PieceSpec): Promise<Piece> {
       lookId,
       offerId,
       matchedGarmentId: garmentId,
+      garmentId: pickedId,
       status: spec.item ?? 'verified',
     });
   }
@@ -210,6 +218,16 @@ describe('GET /v1/look-items/:itemId/similar', () => {
     const likeShopPhoto = await piece({ vector: angled(5, 4, 5), category: 'bag' });
     const { items } = await similar(base.itemId);
     expect(items.map((i) => i.productId)).toEqual([likeWorn.productId, likeShopPhoto.productId]);
+
+    // The matched garment has no fingerprint yet: the poster's picked garment's is used.
+    const picked = await piece({
+      vector: shopPhoto,
+      category: 'bag',
+      garment: { category: 'bag' },
+      picked: { category: 'bag', vector: worn },
+    });
+    const viaPick = await similar(picked.itemId);
+    expect(viaPick.items[0]?.productId).toBe(likeWorn.productId);
   });
 
   it('sorts cheaper: the piece’s currency first, cheapest first; other currencies after; no price last', async () => {
@@ -296,6 +314,29 @@ describe('GET /v1/look-items/:itemId/similar', () => {
     expect(prices).toEqual([...prices].sort((a, b) => a - b));
     const first = await similar(base.itemId, { sort: 'cheaper' });
     expect(first.items).toHaveLength(FEED_PAGE_SIZE);
+  });
+
+  it(`sorts only the nearest ${String(SIMILAR_PIECE_RULES.cheaperAmong)} by price (a cheaper piece further off is a worse match)`, async () => {
+    const at = (degrees: number) => angled(degrees, 12, 13);
+    const base = await piece({ vector: at(0), category: 'scarf' });
+    const made: Piece[] = [];
+    const count = SIMILAR_PIECE_RULES.cheaperAmong + 5;
+    for (let i = 0; i < count; i++) {
+      // The further off, the cheaper: the cut leaves out the 5 cheapest.
+      made.push(
+        await piece({
+          vector: at(0.5 + i * 0.5),
+          category: 'scarf',
+          price: { amountMinor: 200000 - i * 1000, currency: 'SEK' },
+        }),
+      );
+    }
+    const cheaper = await allPages(base.itemId, 'cheaper');
+    expect(cheaper).toHaveLength(SIMILAR_PIECE_RULES.cheaperAmong);
+    const nearest = made.slice(0, SIMILAR_PIECE_RULES.cheaperAmong).map((p) => p.productId);
+    expect(cheaper.map((i) => i.productId)).toEqual([...nearest].reverse());
+    // "Most alike" still goes on past them.
+    expect(await allPages(base.itemId, 'nearest')).toHaveLength(count);
   });
 
   it('is 404 for a piece that isn’t shown, and refuses a broken cursor or one of the other sort', async () => {

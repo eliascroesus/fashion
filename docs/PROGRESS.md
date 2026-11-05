@@ -3,7 +3,7 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-**Phase 3 — Products and AI, in progress.** Steps 3.1–3.7 are built; 3.3's real-photo check waits for the Gemini key, 3.4's link check waits for Elias's 30 links (and a decision about shops that block link readers), 3.5's 100-pair check waits for the key, the seed looks' product links and Elias's labels, and 3.6's "seed looks show real items" waits for those same links.
+**Phase 3 — Products and AI, in progress.** Steps 3.1–3.8 are built; 3.3's real-photo check waits for the Gemini key, 3.4's link check waits for Elias's 30 links (and a decision about shops that block link readers), 3.5's 100-pair check waits for the key, the seed looks' product links and Elias's labels, and 3.6's "seed looks show real items" waits for those same links.
 - Step 3.1 (Product tables): PR #16, waiting for Elias to merge.
 - Step 3.2 (The fingerprint service): PR #17, stacked on #16 (merge #16 first).
 - Step 3.3 (Garment spotting): PR #18, stacked on #17. Built and tested with a stand-in Gemini; the 50-photo check and the cost per 1,000 photos wait for the key (see Waiting on Elias).
@@ -11,9 +11,10 @@ Claude Code updates this file at the end of every session.
 - Step 3.5 (Automatic link check): PR #20, stacked on #19. Built and tested with a stand-in Gemini and stand-in fingerprints; provisional thresholds from a first measurement (see Measured numbers). "100 labelled pairs, under 5% wrong items auto-verified": WAITING (see Waiting on Elias).
 - Step 3.6 (The shoppable look page): PR #21, stacked on #20. Dots, the piece list with prices and "Total look", ticks with a running total, and board totals work in the iPhone simulator with test pieces; "totals add up correctly in tests" PASS. "The seed looks show real items with prices": WAITING (the seed looks' product links, after the Gemini key).
 - Step 3.7 (Shop clicks): PR #22, stacked on #21. "Every tap creates exactly one click row (tested)": PASS. "The store opens and returns to the same place": PASS in the iPhone simulator (Safari view, Done, the look page pixel-identical with ticks kept); Android not checked (no Android phone or emulator yet).
-- Claude isn't allowed to merge in this setup (see Waiting on Elias). Elias was asleep for Steps 3.3–3.7 (2026-11-05 night) and said to keep going, so their plans and decisions are in the PRs instead of a plan approval.
+- Step 3.8 ("More like this" and "similar pieces"): PR #23, stacked on #22. "Both answer in under 300 ms (p95)": PASS (10,000 looks, server's own time p95: More like this 8–9 ms, similar pieces 24 ms; staging over HTTP p95 125 / 89 ms). "You rate the results on 20 looks as good": WAITING (rating page ready, see Waiting on Elias).
+- Claude isn't allowed to merge in this setup (see Waiting on Elias). Elias was asleep for Steps 3.3–3.8 (2026-11-05 night) and said to keep going, so their plans and decisions are in the PRs instead of a plan approval.
 
-Next: Step 3.8 — "More like this" and "similar pieces".
+Next: Step 3.9 — Price and stock refresh.
 
 - Phase 2 passed its gate on 2026-11-04 (PRs #8–#15). "Speed numbers recorded" PASS; "It feels like Pinterest" signed off by Elias. "Both phones" was done in the iPhone simulator only: the real-phone checks (and Step 2.3's mid-range Android check) wait for the hardware. 125 real outfits accepted instead of 300 for now.
 - Phase 1 gate: everything passed except "app on both phones with login", for the same reason.
@@ -270,8 +271,34 @@ Next: Step 3.8 — "More like this" and "similar pieces".
     - The "one tap, one click" guard waited for the browser: on iPhone a browser that never reports back would block Shop until a restart, and on Android a quick double tap opened two tabs and made two clicks. It's now a 1.5 s lock.
     - Also fixed: only pieces that were shown can collect clicks; clicks are dated by the tap; a server without the clicks route (404) keeps clicks for later; an honest comment on Android (naming the browser is what keeps links out of shop apps; the warm-up only makes it faster); the browser choice is asked again after a failure; a note in Sentry when the phone's 500-click limit drops the oldest.
 
+- Step 3.8 — "More like this" and "similar pieces" (PR #23) — **built and fast enough (2026-11-05); Elias's rating of 20 looks waits.**
+  - **Fingerprints:** `pnpm ai:fingerprint` fingerprints look photos that have none (the whole photo and any garments; no Gemini needed, safe to run again). Done for the 125 seed looks on outfitly-dev (116 s, none failed).
+  - **"More like this"** (`GET /v1/looks/:id/similar`): the looks whose cover fingerprints are nearest (pgvector's HNSW index, same fingerprint model only). Never the look itself, the viewer's own looks, "see less" ones or looks they saw in the last day; looks seen this week come after all unseen ones; For You's diversity rules apply. The rules are checked inside the index scan, so it carries on past looks they leave out. A look without a fingerprint yet gets looks sharing its tags (and tags top up a list while too few looks have fingerprints). Page 1 saves the list (new table `look_lists`, up to 200 looks); later pages read on from it, so nothing repeats or is skipped even though the index search is approximate. Logged-out visitors share one list per look for 15 minutes (a tags-only one for 3). A cursor that can't be read, or isn't the viewer's, starts the list over instead of failing.
+  - **"Similar pieces"** (`GET /v1/look-items/:id/similar?sort=nearest|cheaper`): products whose shop photos look most like the piece as worn (the garment the link check matched, else the poster's pick, else the product's own photo), of the same kind, with our photo and a shop link that is a shown piece of a shown look and not sold out. Each product shows its best link (in stock, in the piece's currency, cheapest, on the most popular look); a Shop tap there is credited to that look (click source `similar_pieces`), so the poster whose link it is gets it. "Cheaper" sorts the nearest 60 by price: the piece's currency first, other currencies after (never compared), no price last.
+  - **Search** now also looks at how the words look: the words' fingerprint (the fingerprint service's `/embed-text`, at most 1.5 s, the last 500 searches kept in memory) finds the looks whose covers look like them, merged with the word matches (reciprocal rank fusion, word matches counting double), so "beige trench" also finds beige cropped jackets and coats. Without an answer in time: words alone, and that list isn't reused. A search keeps at most 400 looks (20 pages) and the list is reused for the same words for 15 minutes.
+  - **App:** "More like this" cards now count as seen (impressions, source `more_like_this`). Each piece has a "Similar pieces" link opening a sheet (Most alike / Cheaper, a 2-column grid with fixed photo frames and blurred previews, endless, Shop opens the store in-app like on the look). The phone's cache starts afresh once (old cursors).
+  - **Events:** `/v1/events` now skips an event it can't read on its own (like clicks), so a new kind of event from a newer app never makes an older server refuse, and the phone drop, the whole batch.
+  - **Check by eye:** `pnpm similar:rate` writes `~/Downloads/outfitly-similar-rating/index.html`: 20 seed looks with their first 8 "More like this", and 6 searches' first 8 results, each with good / okay / bad and "Copy results for Claude".
+  - **Tests:** API 531 in all (new: More like this 11, similar pieces 6, search by words + looks 6, the index on realistic fingerprints 1, rating page 2, look-alike test coats 1, events one by one); shared 72, app 154, db 70. The ranking tests use exact distances (the index can't navigate their axis-aligned test fingerprints); `fingerprint-index.test.ts` checks the index path on realistic fingerprints (recall) and that the wider search settings never outlive their transaction.
+  - **Simulator (Release build, staging):** new `similar-pieces.yaml` passes (the test coat's "Similar pieces" lists the 4 look-alike test coats, "Cheaper" puts 599 kr first, the sheet closes back to the look as it was, then "More like this" scrolls and opens a look). `shop-the-look.yaml` (now swipes before the 4th tick: each piece is taller with its link), `shop-click.yaml` and `look-page.yaml` (+ `same-place.sh` pixel-identical, `photo-shown.sh`) pass. "More like this" impressions arrived as `more_like_this`. Test pieces removed afterwards.
+  - **Review (step-reviewer):** no functional or privacy bug; fixed:
+    - an index for trimming a profile's saved lists (migration 0018), and smaller saved lists (200 looks, a profile keeps 10);
+    - a logged-in viewer can never page another viewer's or a logged-out "More like this" list (those skip their own and seen looks);
+    - tags-only lists for logged-out visitors are reused for 3 minutes instead of rebuilt on every open;
+    - the cheap rules (cover photo, shown look, kind, shop link, photo, stock) moved inside the index scan, as per-row checks so Postgres keeps using the index (a first try as EXISTS made it read every photo: logged-in 45 ms → 8 ms);
+    - the piece's fingerprint falls back to the poster's pick when the matched garment has none;
+    - `/v1/events` reads events one by one;
+    - word matches outweigh fingerprint guesses in search; a few searches are on the rating page; pgvector's operator is named in full; the sheet's "Cheaper" note has its own line (nothing moves when the sort changes); an unreadable cursor starts over;
+    - tests: another viewer's cursor, a look hidden mid-scroll (page still full), the "Cheaper" cut at 60, the index path on realistic fingerprints, the settings reset.
+
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
+- 2026-11-05 — "More like this" and "similar pieces" (Step 3.8), decided while Elias slept:
+  - Saved lists (like For You) rather than paging by distance: the index search is approximate and the diversity rules reorder, so page 1 saves the order and later pages read on from it. Storage: a "More like this" list is 200 looks (~3.2 KB) and a profile keeps its newest 10 (~32 KB per active profile, all deleted after a day: ~32 MB at 1,000 daily users); a deep chain of look pages past 10 lists starts the oldest ones over at page 1 (the app drops repeats). Search lists (up to 400) are shared by everyone searching the same words.
+  - "More like this" leaves out the viewer's own looks, "see less" looks and looks seen in the last day; looks seen this week come last (For You's rules, so an active tester of a small catalogue still gets a list).
+  - Similar pieces are products with a shop link on a shown look; a Shop tap is credited to that look, whose poster's affiliate tags the link carries. "Cheaper" only re-sorts the nearest 60 (a cheaper piece further off is a worse match) and never compares currencies.
+  - Search merges word matches with fingerprint matches, word matches counting double; a fingerprint match needs a similarity of at least 0.05 (seed looks: real matches 0.05–0.11, nonsense under 0.03). Results are capped at 400 per search (20 pages).
+  - The index search keeps 100 neighbours in view (`hnsw.ef_search`) with iterative scan; 200 found no more of the true nearest at 10,000 looks.
 - 2026-11-05 — Shop clicks (Step 3.7), decided while Elias slept:
   - `clicks.source` is the list the look was opened from (For You, Following, search, profile, More like this, Saved, board) and `position` its card's place there: together they say which card of which list led to the shop. Shop itself is on the look page; Phase 4's web pages can add their own value. No migration.
   - A click counts if its link is a piece of that look that was shown at some point (verified now or by an earlier check) on a look that was published, even if the piece or look is gone by the time it arrives: a click made offline shouldn't be lost because the piece changed meanwhile.
@@ -403,7 +430,9 @@ Next: Step 3.8 — "More like this" and "similar pieces".
 - 2026-11-02 — Elias asked Claude to work through Phase 1 and Phase 2 overnight without stopping. Each step still gets its own branch + PR, stacked on the previous step's branch; nothing is merged into `main` without Elias.
 
 ## Waiting on Elias
-- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2), then PR #18 (Step 3.3), then PR #19 (Step 3.4), then PR #20 (Step 3.5), then PR #21 (Step 3.6), then PR #22 (Step 3.7), in that order.** Each is built on the one before. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub, or allow Claude to merge (add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings). On GitHub: open the PR → "Merge pull request" → "Confirm merge" → "Delete branch", then do the next one (GitHub then points it at `main` by itself).
+- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2), then PR #18 (Step 3.3), then PR #19 (Step 3.4), then PR #20 (Step 3.5), then PR #21 (Step 3.6), then PR #22 (Step 3.7), then PR #23 (Step 3.8), in that order.** Each is built on the one before. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub, or allow Claude to merge (add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings). On GitHub: open the PR → "Merge pull request" → "Confirm merge" → "Delete branch", then do the next one (GitHub then points it at `main` by itself).
+- **Rate "More like this" (Step 3.8), about 10 minutes:** open `~/Downloads/outfitly-similar-rating/index.html` (Finder → Downloads → outfitly-similar-rating → double-click index.html). For each of the 20 looks, look at the 8 looks next to it and click **good** (you'd happily scroll these under it), **okay** or **bad**; then the same for the 6 searches at the bottom. A short note helps. Click **"Copy results for Claude"** at the top and paste it in the chat. To make a fresh page: `pnpm similar:rate`.
+- **Search by how words look on staging (Step 3.8)** needs the fingerprint service's details on the staging API: the same one command as in step 3 of the Gemini item below (it sets `EMBEDDER_URL` and `EMBEDDER_SECRET` too; without the Gemini key yet, leave `GEMINI_API_KEY="$GEMINI_API_KEY"` in: it's simply empty). Until then staging searches by words alone; "More like this" and "similar pieces" already work there.
 - **Gemini key for Step 3.3** (garment spotting is built and waits only for this):
   1. Go to https://aistudio.google.com → "Get API key" (left side) → "Create API key", on a Google Cloud project with billing on (the free tier isn't allowed for an app used in the EU).
   2. In the project folder's `.env`, fill in the line `GEMINI_API_KEY=` with the key (Claude can do this if you paste the key in the chat).
@@ -450,6 +479,11 @@ Next: Step 3.8 — "More like this" and "similar pieces".
 - 18+ only or teens allowed (Step 5.5)
 
 ## Known issues
+- "More like this" and "similar pieces" (Step 3.8):
+  - A new search waits for the words' fingerprint: ~230–270 ms of CPU on the fingerprint service (p95 ~340 ms), plus ~1 s more when the service is asleep (then the first search after a quiet spell is words-only). Repeat searches use the in-memory copy. Production needs the service awake for search, or accepts words-only first searches (see Later).
+  - A search list is reused for the same words for 15 minutes, so a look posted meanwhile shows up for that search only after that.
+  - Similar pieces only knows a product's kind from its category or the garment its link was matched with; products whose links weren't checked by fingerprint alone often have no category (Step 3.5), so their kind comes from the garment.
+  - The 0.05 similarity floor for search and the rating page rest on the 125 seed looks only; check again once real posts arrive.
 - Shop clicks (Step 3.7):
   - **Android not checked:** with an Android phone, test Shop with the Zalando and H&M apps installed before the Phase 3 gate. Naming the browser keeps Android from handing the link to the shop's app, but Chrome has its own rules for handing links (and redirects) to apps, and expo-web-browser opens the tab without the warmed-up session that would switch them off. If the shop's app opens, the fix is a small native change (a Custom Tabs session) or a patch to expo-web-browser. A phone with no Custom Tabs browser hands the link to Android as is (the shop's app may open).
   - If the browser fails to open, the click is still counted.
@@ -499,6 +533,12 @@ Next: Step 3.8 — "More like this" and "similar pieces".
 - `pnpm audit`: one moderate advisory in minimatch, pulled in only by ESLint (dev tool reading our own config) — not exploitable here; wait for upstream fix.
 
 ## Measured numbers
+- "More like this", similar pieces and search (Step 3.8, 2026-11-05):
+  - Local catalogue of 10,000 looks and 3,000 products (`pnpm similar:speed-data`: the 125 seed looks' real fingerprints, each new one a mix of two plus noise), server's own time (`pnpm similar:speed --direct --database …`), p50 / p95: "More like this" new list 6 / 8 ms logged out, 7 / 9 ms logged in (a viewer with 2,000 looks seen this week, 50 "see less" and 10 saved lists); next page 1 / 2 ms; similar pieces 21 / 24 ms (nearest, next page and cheaper alike); search 10 / 15 ms once the words' fingerprint is in memory. **Target "under 300 ms p95": PASS.**
+  - The index finds 95% of each look's true 20 nearest on page 1 on average (lowest 85%; the diversity rules move a few), the same with twice the search width.
+  - Staging over HTTP from the Mac (125 real looks, logged out; the network alone p50 27 / p95 39 ms): "More like this" page 1 93 / 125 ms (54 / 73 ms when the list is reused), next page 49 / 69 ms; similar pieces 61 / 89 ms (cheaper 60 / 68 ms); search (words only on staging) 57 / 71 ms. Logged in over HTTP couldn't be timed (the test login needs the CAPTCHA); logged in is timed locally above.
+  - Words' fingerprint on the fingerprint service (performance-1x): p50 ~270 ms, p95 ~340 ms awake; ~1.05 s when waking from sleep.
+  - Seed fingerprints: 125 photos in 116 s (~0.93 s each, sequential, from the Mac).
 - Shoppable look page (Step 3.6, 2026-11-05):
   - Look with 5 pieces on staging: the server's own time 9–16 ms (one cold request 100 ms); over HTTP from the Mac 85–240 ms.
   - Boards list on a local test database (60 boards × 40 looks × 5 pieces, 2,000 products): p50 35 ms / p95 38 ms with values; the "Save to board" sheet (no values) 7 ms (33 ms before the review fix).
@@ -552,6 +592,11 @@ Next: Step 3.8 — "More like this" and "similar pieces".
 - First EAS Android preview build (free plan): ~40 min in queue + ~15 min building; APK 107 MB (2026-11-02)
 
 ## Later (parked ideas, not in current scope)
+- "More like this" and "similar pieces" (Step 3.8):
+  - Faster word fingerprints (ONNX / int8 text model, or a small cache of popular searches' fingerprints in the database) before search depends on them in production; or keep the fingerprint service awake (≈ $34/month, Step 3.2).
+  - Garment category labels (English + Swedish) when kinds first show in the app (the "Similar pieces" sheet shows the piece's name for now).
+  - If saved lists grow (many daily users), save "More like this" lists only when page 2 is asked for, or shorten them.
+  - Re-check the 0.05 search floor and the rating with real posts.
 - Shop clicks (Step 3.7):
   - Before clicks pay anyone (commissions, creator stats): the session id is chosen by the app and limits are per IP, so clicks can be made up or inflated. Filter when daily totals are built (e.g. per session/IP caps), and consider server-issued session ids.
   - Indexes on `clicks` (`look_id`, `offer_id`, `author_profile_id`) when Phase 4's totals read them.
@@ -586,10 +631,7 @@ Next: Step 3.8 — "More like this" and "similar pieces".
 - Search events (what people search, searches with no results) for ranking and finding missing content; with consent (Step 5.5).
 - Search's results are hidden with `display: none` while the suggestions show (like Home's feed switch): check on a real phone that Cancel lands on the same scroll position.
 - Change your taste after onboarding (Profile → "Your styles"): needs an overwrite mode for `PUT /v1/taste` (today it only fills an empty taste).
-- Styles in "More like this" (today it matches occasion and season tags; AI similarity replaces both in Phase 3).
 - Brands in For You once looks have products (Phase 3): `taste_profiles.brands` is stored already.
-- The whole-photo fingerprint (Step 3.3 makes it, Step 3.8's "More like this" uses it) has no column yet: add `media.embedding vector(768)` with an HNSW index in Step 3.3 and keep the data-model table in sync.
-- Garment category labels (English + Swedish) go in the app's i18n files when categories first show (the look page doesn't show them in 3.6; likely Step 3.8's "similar pieces").
 - "Similar pieces in the same category" (Step 3.8) filters an HNSW search, and that returns too few: the reviewer measured 5 rows for `LIMIT 20` (2,000 products in 10 categories, default settings). Turn on pgvector's iterative index scans (`hnsw.iterative_scan`, 0.8+) and measure; per-category partial indexes only if that's slow. Not optional.
 - From the Step 3.1 review, for the steps that write these tables:
   - Boxes and scores are checked to lie in 0–1 (scores −1…1), and `1.0000001` is refused: Step 3.3 clamps boxes to the photo and drops zero-size ones before a multi-row insert (one bad box fails them all); Step 3.5 computes similarity in SQL (`1 - (a <=> b)`, which pgvector keeps in range) or clamps it.
@@ -609,8 +651,8 @@ Next: Step 3.8 — "More like this" and "similar pieces".
 - Idempotency: answers below 500 are stored and replayed for 24 h, including a 403 that might pass later; consider freeing the key for 403/409/429 like 5xx (the outbox drops an action after 10 refusals).
 - Guest merge: a save sent as the guest that reaches the database after the merge started could stay on the closed guest profile (the app now waits for its in-flight save first, so the window is tiny). A server-side fix: the merge locks the guest's memberships and save/board writes take a share lock on the acting membership.
 - "See less like this" has no undo yet (Pinterest shows one in the message).
-- "More like this" reads the whole catalogue for each page. Before the catalogue grows (or with Step 3.8's AI similarity, which replaces it), rank only the top few hundred candidates, e.g. from `looks_feed_popular_idx`, or add a GIN index on the tags.
-- "More like this" cards log no impressions yet (positions there could feed ads and stats later). Chained look pages (look → more like this → look …) all stay open underneath; consider a depth limit if memory becomes a problem on Android.
+- "More like this" for a look without a fingerprint ranks by tags over the whole catalogue (Step 3.8 kept it as the fallback): fine while every look gets a fingerprint within a minute; add a GIN index on the tags if that changes.
+- Chained look pages (look → more like this → look …) all stay open underneath; consider a depth limit if memory becomes a problem on Android.
 - What the app remembers the server confirmed (saved, following) is cleared when the active profile changes. After a guest merges into an account, a look the guest saved can show as unsaved in feeds loaded before the merge until they reload (Saves and Boards reload at once).
 - The install id sent with logged-out events is a lasting identifier sent before any consent: review with the legal step (5.5).
 - Phones whose clock is more than 10 minutes ahead lose their events (dropped by the server) and the app doesn't notice; report to Sentry when far fewer are accepted than sent.

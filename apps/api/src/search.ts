@@ -19,7 +19,7 @@ import {
   saveList,
 } from './feed/look-lists.ts';
 import { avatarJoin, briefColumns, type BriefRow, profileLook, toBrief } from './profile-page.ts';
-import { strictly, widenVectorSearch } from './similar-looks.ts';
+import { cosineDistance, strictly, widenVectorSearch } from './similar-looks.ts';
 
 /**
  * Possible typos of a typed word: up to this many vocabulary words pg_trgm
@@ -220,8 +220,15 @@ export const HYBRID_RULES = {
    * score 0.05–0.11; nonsense ("asdfgh") stays under 0.03.
    */
   minSimilarity: 0.05,
-  /** Reciprocal rank fusion: a look gets 1 / (k + its place) from each list it's in. */
+  /** Reciprocal rank fusion: a look gets weight / (k + its place) from each list it's in. */
   fusionK: 60,
+  /**
+   * Matching words count double a fingerprint's guess: a precise search (a
+   * brand, "linen", a Swedish word) keeps its real matches on top, and looks
+   * found by their looks alone come after the first ~60 word matches.
+   */
+  wordsWeight: 1,
+  fingerprintWeight: 0.5,
 } as const;
 
 /** What a search needs: the feed's database and photos, and words' fingerprints (null = off). */
@@ -252,10 +259,10 @@ async function byFingerprint(db: Db, fingerprint: WordFingerprint): Promise<stri
     await widenVectorSearch(tx);
     const { rows } = await tx.execute<{ id: string }>(sql`
       WITH near AS MATERIALIZED (
-        SELECT m.id, m.embedding <=> ${vector}::extensions.halfvec AS distance
+        SELECT m.id, ${cosineDistance(sql`m.embedding`, sql`${vector}::extensions.halfvec`)} AS distance
           FROM media m
          WHERE m.embedding_model = ${fingerprint.model} AND m.deleted_at IS NULL
-         ORDER BY m.embedding <=> ${vector}::extensions.halfvec
+         ORDER BY ${cosineDistance(sql`m.embedding`, sql`${vector}::extensions.halfvec`)}
          LIMIT ${HYBRID_RULES.candidates}
       )
       SELECT l.id FROM near
@@ -270,25 +277,25 @@ async function byFingerprint(db: Db, fingerprint: WordFingerprint): Promise<stri
 }
 
 /**
- * Merges ranked lists (reciprocal rank fusion): a look gets 1 / (k + place)
- * from each list it's in, so looks high in both come first and a look high
- * in one still beats one low in both. Ties: the better best place, then the
- * earlier list, then the id.
+ * Merges ranked lists (reciprocal rank fusion): a look gets weight / (k +
+ * place) from each list it's in, so looks high in both come first and a look
+ * high in one still beats one low in both. Ties: the better best place, then
+ * the earlier list, then the id.
  */
 export function fuseRankings(
-  lists: readonly (readonly string[])[],
+  lists: readonly { ids: readonly string[]; weight: number }[],
   k: number = HYBRID_RULES.fusionK,
 ): string[] {
   const found = new Map<string, { score: number; best: number; list: number }>();
-  lists.forEach((list, which) => {
-    list.forEach((id, i) => {
+  lists.forEach(({ ids, weight }, which) => {
+    ids.forEach((id, i) => {
       const place = i + 1;
       const entry = found.get(id);
       if (entry) {
-        entry.score += 1 / (k + place);
+        entry.score += weight / (k + place);
         if (place < entry.best) [entry.best, entry.list] = [place, which];
       } else {
-        found.set(id, { score: 1 / (k + place), best: place, list: which });
+        found.set(id, { score: weight / (k + place), best: place, list: which });
       }
     });
   });
@@ -298,6 +305,27 @@ export function fuseRankings(
         y.score - x.score || x.best - y.best || x.list - y.list || (a < b ? -1 : a > b ? 1 : 0),
     )
     .map(([id]) => id);
+}
+
+/**
+ * Ranks a search's looks (nothing saved): matching words merged with looks
+ * that look like the words. `complete` is false when the fingerprint service
+ * is set up but didn't answer (words alone).
+ */
+export async function rankSearch(
+  deps: SearchDeps,
+  words: readonly string[],
+): Promise<{ lookIds: string[]; complete: boolean }> {
+  const [matching, fingerprint] = await Promise.all([
+    byWords(deps.db, words),
+    deps.words ? deps.words.get(words.join(' ')) : Promise.resolve(null),
+  ]);
+  const looking = fingerprint ? await byFingerprint(deps.db, fingerprint) : [];
+  const lookIds = fuseRankings([
+    { ids: matching, weight: HYBRID_RULES.wordsWeight },
+    { ids: looking, weight: HYBRID_RULES.fingerprintWeight },
+  ]).slice(0, LIST_RULES.size);
+  return { lookIds, complete: !deps.words || fingerprint !== null };
 }
 
 /**
@@ -324,15 +352,8 @@ export async function searchLooks(
   const recent = await recentList(deps.db, 'search', key, null);
   if (recent) return firstListPage(deps, viewerProfileId, recent);
 
-  const [matching, fingerprint] = await Promise.all([
-    byWords(deps.db, words),
-    deps.words ? deps.words.get(key) : Promise.resolve(null),
-  ]);
-  const looking = fingerprint ? await byFingerprint(deps.db, fingerprint) : [];
-  const lookIds = fuseRankings([matching, looking]).slice(0, LIST_RULES.size);
+  const { lookIds, complete } = await rankSearch(deps, words);
   if (lookIds.length === 0) return { items: [], nextCursor: null };
-  // Without the fingerprint it couldn't get, the list isn't reused: the next search tries again.
-  const complete = !deps.words || fingerprint !== null;
   const id = await saveList(deps.db, 'search', key, null, lookIds, complete);
   return firstListPage(deps, viewerProfileId, { id, total: lookIds.length, lookIds });
 }

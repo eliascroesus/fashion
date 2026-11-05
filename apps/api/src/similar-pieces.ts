@@ -20,7 +20,7 @@ import {
 } from './feed/cards.ts';
 import { siteOf } from './links/urls.ts';
 import { SHOWN_ITEM, SHOWN_ITEM_JOINS } from './shown-items.ts';
-import { widenVectorSearch } from './similar-looks.ts';
+import { cosineDistance, widenVectorSearch } from './similar-looks.ts';
 
 export const SIMILAR_PIECE_RULES = {
   /** Nearest products read from the fingerprint index before the rules filter them. */
@@ -76,6 +76,21 @@ function siteOfLink(link: string): string {
   }
 }
 
+/** Cosine distance from the piece's fingerprint (the `piece` CTE). */
+const distanceTo = (embedding: SQL) =>
+  cosineDistance(embedding, sql`(SELECT embedding FROM piece)`);
+
+/**
+ * A shop link (`o`, its look item `li` on look `l`, garments `mg`/`pg`) of
+ * product `p` that a similar piece may show: not sold out, a shown piece of a
+ * shown look, of the piece's kind when that's known (the product's, else the
+ * garment its link was matched with or picked).
+ */
+const shopLink = sql`o.product_id = p.id AND o.deleted_at IS NULL AND o.stock <> 'out_of_stock'
+  AND ${SHOWN_ITEM} AND ${showableLook(sql`l`)} AND l.published_at <= now()
+  AND ((SELECT category FROM piece) IS NULL
+       OR coalesce(p.category, mg.category, pg.category) = (SELECT category FROM piece))`;
+
 /**
  * "Similar pieces" for one piece of a look (a shown look item): other
  * products whose shop photos look most like it, of the same kind when that's
@@ -117,21 +132,36 @@ export async function similarPiecesPage(
     await widenVectorSearch(tx);
     const { rows: result } = await tx.execute<PieceRow>(sql`
       WITH piece AS (
+        -- The piece as worn (the matched garment, else the poster's pick) when it has a
+        -- fingerprint, else its product's shop photo.
         SELECT p.id AS product_id, o.currency,
                coalesce(p.category, mg.category, pg.category) AS category,
-               CASE WHEN g.embedding IS NOT NULL THEN g.embedding ELSE p.embedding END AS embedding,
-               CASE WHEN g.embedding IS NOT NULL THEN g.embedding_model ELSE p.embedding_model END AS model
+               coalesce(mg.embedding, pg.embedding, p.embedding) AS embedding,
+               CASE WHEN mg.embedding IS NOT NULL THEN mg.embedding_model
+                    WHEN pg.embedding IS NOT NULL THEN pg.embedding_model
+                    ELSE p.embedding_model END AS model
           FROM look_items li ${SHOWN_ITEM_JOINS}
           LEFT JOIN garments mg ON mg.id = li.matched_garment_id AND mg.deleted_at IS NULL
           LEFT JOIN garments pg ON pg.id = li.garment_id AND pg.deleted_at IS NULL
-          LEFT JOIN garments g ON g.id = coalesce(mg.id, pg.id) AND g.embedding IS NOT NULL
          WHERE li.id = ${itemId}
       ),
+      -- The rules are checked inside the index scan, so it carries on past products they leave
+      -- out (another kind, no photo, sold out, not on a shown look) until it has enough.
       near AS MATERIALIZED (
-        SELECT p.id, round((p.embedding <=> (SELECT embedding FROM piece))::numeric, ${DISTANCE_DIGITS}) AS distance
+        SELECT p.id, round((${distanceTo(sql`p.embedding`)})::numeric, ${DISTANCE_DIGITS}) AS distance
           FROM products p
          WHERE p.embedding_model = (SELECT model FROM piece) AND p.deleted_at IS NULL
-         ORDER BY p.embedding <=> (SELECT embedding FROM piece)
+           AND p.id <> (SELECT product_id FROM piece)
+           -- Scalar subqueries, not EXISTS: checked product by product while the index scan
+           -- walks, where EXISTS becomes a join over every product (see showableLook).
+           AND (SELECT pm.status = 'ready' AND pm.deleted_at IS NULL
+                  FROM media pm WHERE pm.id = p.image_media_id)
+           AND (SELECT true FROM offers o JOIN look_items li ON li.offer_id = o.id
+                  JOIN looks l ON l.id = li.look_id
+                  LEFT JOIN garments mg ON mg.id = li.matched_garment_id AND mg.deleted_at IS NULL
+                  LEFT JOIN garments pg ON pg.id = li.garment_id AND pg.deleted_at IS NULL
+                 WHERE ${shopLink} LIMIT 1)
+         ORDER BY ${distanceTo(sql`p.embedding`)}
          LIMIT ${SIMILAR_PIECE_RULES.candidates}
       ),
       -- Each product once, with its best shop link on a shown look: in stock, in the piece's
@@ -144,22 +174,20 @@ export async function similarPiecesPage(
                o.url, o.page_url,
                pm.width, pm.height, pm.thumbhash, pm.dominant_color, pm.key_1080, pm.key_600, pm.key_300
           FROM near
-          JOIN offers o ON o.product_id = near.id AND o.deleted_at IS NULL AND o.stock <> 'out_of_stock'
-          JOIN look_items li ON li.offer_id = o.id
           JOIN products p ON p.id = near.id
+          JOIN offers o ON o.product_id = p.id
+          JOIN look_items li ON li.offer_id = o.id
           JOIN looks l ON l.id = li.look_id
           JOIN media pm ON pm.id = p.image_media_id AND pm.status = 'ready' AND pm.deleted_at IS NULL
           LEFT JOIN garments mg ON mg.id = li.matched_garment_id AND mg.deleted_at IS NULL
           LEFT JOIN garments pg ON pg.id = li.garment_id AND pg.deleted_at IS NULL
-         WHERE near.id <> (SELECT product_id FROM piece) AND ${SHOWN_ITEM}
-           AND ${showableLook(sql`l`)} AND l.published_at <= now()
+         WHERE ${shopLink}
          ORDER BY near.id, o.stock = 'in_stock' DESC,
                   o.currency IS NOT DISTINCT FROM (SELECT currency FROM piece) DESC,
                   ${priced(sql`o.price_minor`)} NULLS LAST, l.popularity_score DESC, li.id
       ),
       kind AS (
         SELECT carried.* FROM carried
-         WHERE (SELECT category FROM piece) IS NULL OR carried.category = (SELECT category FROM piece)
          ORDER BY carried.distance, carried.product_id
          ${sort === 'cheaper' ? sql`LIMIT ${SIMILAR_PIECE_RULES.cheaperAmong}` : sql``}
       ),

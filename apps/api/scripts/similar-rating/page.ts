@@ -13,11 +13,19 @@ export interface RatingLook extends RatingPhoto {
   similar: RatingPhoto[];
 }
 
+export interface RatingSearch {
+  query: string;
+  /** Its first results, as anyone gets them. */
+  results: RatingPhoto[];
+}
+
 export interface RatingData {
   createdAt: string;
   /** The fingerprint model the looks were compared with. */
   model: string;
   looks: RatingLook[];
+  /** A few searches, to judge search by words + how the words look the same way. */
+  searches: RatingSearch[];
 }
 
 /**
@@ -48,6 +56,8 @@ export function renderRatingPage(data: RatingData): string {
   .strip { flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
   .strip img { width: 100%; height: auto; border-radius: 6px; display: block; }
   .cap { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .query { font-size: 18px; font-weight: 600; }
+  h2 { font-size: 18px; margin: 28px 0 0; }
   .buttons { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
   button { font: inherit; font-size: 13px; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
   button.on.good { background: var(--ok); color: #fff; border-color: var(--ok); }
@@ -66,6 +76,9 @@ export function renderRatingPage(data: RatingData): string {
   <button id="copy">Copy results for Claude</button>
 </header>
 <div id="looks"></div>
+<h2>Searches</h2>
+<div class="muted">The same for a few searches: are these the looks you'd expect for the words?</div>
+<div id="searches"></div>
 <script>
 const data = ${json};
 const KEY = 'similar-rating:' + data.createdAt;
@@ -78,25 +91,28 @@ const image = (photo) => { const img = el('img'); img.src = photo.url; img.width
 document.getElementById('meta').textContent =
   data.looks.length + ' looks · compared with ' + data.model + ' · made ' + data.createdAt.slice(0, 16).replace('T', ' ');
 
-function score() {
+function count(keys) {
   const counts = { good: 0, okay: 0, bad: 0 };
-  for (const look of data.looks) { const m = marks[look.id]; if (m && m.rating) counts[m.rating] += 1; }
-  const rated = counts.good + counts.okay + counts.bad;
+  for (const key of keys) { const m = marks[key]; if (m && m.rating) counts[m.rating] += 1; }
+  return { rated: counts.good + counts.okay + counts.bad, ...counts };
+}
+function score() {
+  const looks = count(data.looks.map((look) => look.id));
+  const searches = count(data.searches.map((s) => 'search:' + s.query));
+  const line = (c, total, what) => c.rated + ' of ' + total + ' ' + what + ' rated · good ' + c.good + ' · okay ' + c.okay + ' · bad ' + c.bad;
   document.getElementById('score').textContent =
-    rated + ' of ' + data.looks.length + ' rated · good ' + counts.good + ' · okay ' + counts.okay + ' · bad ' + counts.bad;
-  return { rated, ...counts };
+    line(looks, data.looks.length, 'looks') + ' — ' + line(searches, data.searches.length, 'searches');
+  return { looks, searches };
 }
 
 const painters = [];
-for (const look of data.looks) {
-  const m = (marks[look.id] ||= {});
+function addCard(parentId, key, head, photos) {
+  const m = (marks[key] ||= {});
   const card = el('div', 'look');
   const row = el('div', 'row');
-  const base = el('div', 'base');
-  base.append(image(look), el('div', 'cap', look.caption || ''));
   const strip = el('div', 'strip');
-  for (const near of look.similar) { const cell = el('div'); cell.append(image(near), el('div', 'cap', near.caption || '')); strip.append(cell); }
-  row.append(base, strip);
+  for (const near of photos) { const cell = el('div'); cell.append(image(near), el('div', 'cap', near.caption || '')); strip.append(cell); }
+  row.append(head, strip);
   const buttons = el('div', 'buttons');
   const options = [['good', 'good'], ['okay', 'okay'], ['bad', 'bad']].map(([value, label]) => {
     const btn = el('button', value, label);
@@ -107,16 +123,27 @@ for (const look of data.looks) {
   note.oninput = () => { m.note = note.value; save(); };
   buttons.append(...options, note);
   card.append(row, buttons);
-  document.getElementById('looks').append(card);
+  document.getElementById(parentId).append(card);
   painters.push(() => options.forEach((btn, i) => btn.classList.toggle('on', m.rating === ['good', 'okay', 'bad'][i])));
+}
+for (const look of data.looks) {
+  const base = el('div', 'base');
+  base.append(image(look), el('div', 'cap', look.caption || ''));
+  addCard('looks', look.id, base, look.similar);
+}
+for (const search of data.searches) {
+  const head = el('div', 'base');
+  head.append(el('div', 'query', '"' + search.query + '"'), el('div', 'cap', search.results.length ? '' : 'Nothing found'));
+  addCard('searches', 'search:' + search.query, head, search.results);
 }
 function paint() { painters.forEach((f) => f()); score(); }
 paint();
 
 document.getElementById('copy').onclick = async () => {
   const s = score();
-  const notes = data.looks.flatMap((look) => { const m = marks[look.id] || {}; return m.rating || m.note ? [{ look: look.id, rating: m.rating || null, note: m.note || '' }] : []; });
-  const text = JSON.stringify({ model: data.model, createdAt: data.createdAt, looks: data.looks.length, ...s, notes });
+  const keyed = [...data.looks.map((look) => look.id), ...data.searches.map((q) => 'search:' + q.query)];
+  const notes = keyed.flatMap((key) => { const m = marks[key] || {}; return m.rating || m.note ? [{ key, rating: m.rating || null, note: m.note || '' }] : []; });
+  const text = JSON.stringify({ model: data.model, createdAt: data.createdAt, looks: data.looks.length, searches: data.searches.length, ...s, notes });
   try { await navigator.clipboard.writeText(text); document.getElementById('copy').textContent = 'Copied'; } catch { prompt('Copy this:', text); }
 };
 </script>

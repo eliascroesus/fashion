@@ -9,11 +9,10 @@ type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 export const SIMILAR_RULES = {
   /**
-   * Nearest photos read from the fingerprint index before the rules filter
-   * them (not covers, hidden looks, seen ones…). More than the list holds, so
-   * the list stays full when many are left out.
+   * Nearest covers read from the fingerprint index. The rules are checked
+   * during the scan (iterative scan), so these are all allowed ones.
    */
-  candidates: 1000,
+  candidates: MAX_SIMILAR_LOOKS,
   /**
    * How many neighbours the index search keeps in view (pgvector's
    * `hnsw.ef_search`): more finds the true nearest more often, but is slower.
@@ -28,6 +27,13 @@ export const SIMILAR_RULES = {
  * sort; `+ 0` makes it a new value, so it sorts (pgvector's documented fix).
  */
 export const strictly = (distance: SQL): SQL => sql`(${distance} + 0)`;
+
+/**
+ * Cosine distance between two fingerprints (0 = same direction). pgvector's
+ * operator lives in the `extensions` schema; named in full so the
+ * search_path never matters (the index is still used).
+ */
+export const cosineDistance = (a: SQL, b: SQL): SQL => sql`${a} OPERATOR(extensions.<=>) ${b}`;
 
 /**
  * Nearest-fingerprint searches in this transaction: wider than the default
@@ -85,11 +91,18 @@ async function visuallyNearest(
       SELECT m.embedding, m.embedding_model FROM look_media lm JOIN media m ON m.id = lm.media_id
        WHERE lm.look_id = ${lookId} AND lm.position = 0 AND m.embedding IS NOT NULL
     ),
+    -- The rules are checked inside the index scan, so it carries on past photos they leave out
+    -- (not a cover, a hidden look, one the viewer saw today…) until it has enough.
     near AS MATERIALIZED (
-      SELECT m.id, m.embedding <=> (SELECT embedding FROM base) AS distance
+      SELECT m.id, ${cosineDistance(sql`m.embedding`, sql`(SELECT embedding FROM base)`)} AS distance
         FROM media m
        WHERE m.embedding_model = (SELECT embedding_model FROM base) AND m.deleted_at IS NULL
-       ORDER BY m.embedding <=> (SELECT embedding FROM base)
+         -- A scalar subquery, not EXISTS: checked photo by photo while the index scan walks,
+         -- where EXISTS becomes a join over every photo (see showableLook).
+         AND (SELECT true FROM look_media lm JOIN looks l ON l.id = lm.look_id
+               WHERE lm.media_id = m.id AND lm.position = 0 AND ${allowedFor(viewer, lookId)}
+               LIMIT 1)
+       ORDER BY ${cosineDistance(sql`m.embedding`, sql`(SELECT embedding FROM base)`)}
        LIMIT ${SIMILAR_RULES.candidates}
     )
     SELECT l.id, l.author_profile_id, l.occasion_tags::text[] AS occasion_tags,

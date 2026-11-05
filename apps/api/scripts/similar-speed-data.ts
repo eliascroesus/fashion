@@ -6,10 +6,21 @@
 // with `pnpm ai:fingerprint`) and spreads them over the new looks and products, each a mix of two
 // seed fingerprints plus a little noise, so nearest-neighbour search works on realistic data. Writes
 // only to a new database on the local test server and prints its address for `pnpm similar:speed`.
+// It also has a logged-in viewer (@speed.viewer) with a week of seen looks and saved lists.
 import { createDb, type SQL, sql } from '@outfitly/db';
 import { createMigratedTestDatabase } from '@outfitly/db/testing';
-import { GARMENT_CATEGORIES, OCCASIONS, SEASONS, STYLES } from '@outfitly/shared';
+import {
+  GARMENT_CATEGORIES,
+  MAX_SIMILAR_LOOKS,
+  OCCASIONS,
+  SEASONS,
+  STYLES,
+} from '@outfitly/shared';
 import { loadConfig } from '../src/config.ts';
+import { LIST_RULES } from '../src/feed/look-lists.ts';
+
+/** The logged-in viewer `pnpm similar:speed --direct` times as well (it looks for this handle). */
+const SPEED_VIEWER = 'speed.viewer';
 
 const args = process.argv.slice(2);
 const option = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
@@ -142,6 +153,31 @@ try {
       ON CONFLICT DO NOTHING`);
     console.log(`  products ${String(to + 1)}/${String(productCount)}`);
   }
+  // A logged-in viewer as after a busy week: 2,000 looks seen over 7 days, 50 "see less", and a
+  // full set of saved "More like this" lists (so each new list also trims the oldest).
+  const viewer = '00000000-0000-4000-8000-000000000999';
+  await db.execute(sql`INSERT INTO profiles (id, handle, account_type)
+                       VALUES (${viewer}, ${SPEED_VIEWER}, 'personal')`);
+  await db.execute(sql`
+    INSERT INTO seen (profile_id, look_id, last_seen_at)
+    SELECT ${viewer}::uuid, ('20000000-0000-4000-8000-' || lpad(((g * 7) % ${lookCount})::text, 12, '0'))::uuid,
+           now() - make_interval(mins => (g * 5) % (7 * 24 * 60))
+      FROM generate_series(0, 1999) g
+    ON CONFLICT DO NOTHING`);
+  await db.execute(sql`
+    INSERT INTO swipes (profile_id, look_id, kind)
+    SELECT ${viewer}::uuid, ('20000000-0000-4000-8000-' || lpad(((g * 101 + 3) % ${lookCount})::text, 12, '0'))::uuid,
+           'see_less'
+      FROM generate_series(0, 49) g
+    ON CONFLICT DO NOTHING`);
+  await db.execute(sql`
+    INSERT INTO look_lists (kind, key, profile_id, look_ids, complete, created_at)
+    SELECT 'similar', ('20000000-0000-4000-8000-' || lpad(((g * 13 + 5) % ${lookCount})::text, 12, '0')),
+           ${viewer}::uuid,
+           ARRAY(SELECT ('20000000-0000-4000-8000-' || lpad(((g + k) % ${lookCount})::text, 12, '0'))::uuid
+                   FROM generate_series(1, ${MAX_SIMILAR_LOOKS}::int) k),
+           true, now() - make_interval(mins => g)
+      FROM generate_series(1, ${LIST_RULES.perProfile}::int) g`);
   await db.execute(sql`DROP TABLE seed_vectors`);
   await db.execute(sql`ANALYZE`);
   const seconds = ((performance.now() - started) / 1000).toFixed(0);

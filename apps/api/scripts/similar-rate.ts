@@ -1,5 +1,6 @@
 // Writes a page to judge "More like this" by eye: 20 seed looks, each with the 8 looks that come
-// first under it (as a logged-out visitor gets them). From the repo root:
+// first under it (as a logged-out visitor gets them), and a few searches' first 8 results (by words
+// and, with EMBEDDER_URL + EMBEDDER_SECRET in .env, by how the words look). From the repo root:
 //   pnpm similar:rate                         20 of @outfitly.picks' looks
 //   pnpm similar:rate --count 30 --author someone --out ./somewhere
 // The page goes to ~/Downloads/outfitly-similar-rating/index.html by default. Needs the looks'
@@ -8,10 +9,14 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createDb, sql } from '@outfitly/db';
+import { searchWords } from '@outfitly/shared';
+import { photoAiClients } from '../src/ai/clients.ts';
+import { WordFingerprints } from '../src/ai/word-fingerprints.ts';
 import { loadConfig, r2Config } from '../src/config.ts';
+import { rankSearch } from '../src/search.ts';
 import { rankSimilarLooks } from '../src/similar-looks.ts';
 import { R2Storage } from '../src/storage.ts';
-import { type RatingPhoto, renderRatingPage } from './similar-rating/page.ts';
+import { type RatingPhoto, type RatingSearch, renderRatingPage } from './similar-rating/page.ts';
 
 const args = process.argv.slice(2);
 const option = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
@@ -21,6 +26,14 @@ const outDir = option('--out')
   ? resolve(process.env['INIT_CWD'] ?? process.cwd(), option('--out') ?? '')
   : join(homedir(), 'Downloads', 'outfitly-similar-rating');
 const SHOWN = 8;
+const SEARCHES = [
+  'beige trench',
+  'red dress',
+  'black leather jacket',
+  'linen',
+  'white sneakers',
+  'sommar',
+];
 if (!Number.isInteger(count) || count < 1) {
   console.error('--count must be a whole number of looks.');
   process.exit(1);
@@ -87,15 +100,31 @@ try {
       }),
     });
   }
+  const embedder = photoAiClients(config).embedder;
+  const words = embedder ? new WordFingerprints(embedder, { timeoutMs: 20_000 }) : null;
+  if (!words) console.log('No EMBEDDER_URL / EMBEDDER_SECRET: searches by words alone.');
+  const searches: RatingSearch[] = [];
+  for (const query of SEARCHES) {
+    const { lookIds } = await rankSearch({ db, storage, words }, searchWords(query));
+    const top = lookIds.slice(0, SHOWN);
+    const found = await covers(top);
+    searches.push({
+      query,
+      results: top.flatMap((id) => {
+        const row = found.get(id);
+        return row ? [photo(row)] : [];
+      }),
+    });
+  }
   await mkdir(outDir, { recursive: true });
   const file = join(outDir, 'index.html');
   await writeFile(
     file,
-    renderRatingPage({ createdAt: new Date().toISOString(), model, looks }),
+    renderRatingPage({ createdAt: new Date().toISOString(), model, looks, searches }),
     'utf8',
   );
   console.log(
-    `${String(looks.length)} looks with their ${String(SHOWN)} nearest. Open:\n  ${file}`,
+    `${String(looks.length)} looks with their ${String(SHOWN)} nearest, ${String(searches.length)} searches. Open:\n  ${file}`,
   );
 } finally {
   await db.$client.end();

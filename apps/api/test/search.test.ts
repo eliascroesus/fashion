@@ -249,9 +249,14 @@ describe('search', () => {
     expect((await get('/v1/search/suggest?q=%00')).statusCode).toBe(400);
   });
 
-  it('refuses an empty search, a bad cursor and too long a text', async () => {
+  it('refuses an empty search and too long a text; a cursor it can’t read starts over', async () => {
     expect((await get('/v1/search/looks?q=%20')).statusCode).toBe(400);
-    expect((await get('/v1/search/looks?q=linen&cursor=nope')).statusCode).toBe(400);
+    // E.g. kept by an older app: page 1 again rather than an error.
+    const restart = await get('/v1/search/looks?q=linen&cursor=nope');
+    expect(restart.statusCode).toBe(200);
+    expect(feedPageSchema.parse(restart.json()).items.map((c) => c.id)).toEqual(
+      (await search('linen')).items.map((c) => c.id),
+    );
     expect((await get(`/v1/search/looks?q=${'a'.repeat(101)}`)).statusCode).toBe(400);
   });
 });

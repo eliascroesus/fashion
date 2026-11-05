@@ -7,7 +7,8 @@
 //                                           local catalogue from `pnpm similar:speed-data`)
 //   --looks N  looks and pieces to try (default 30)
 // Each look's "More like this" is a new list the first time (page 1 ranks it), then read from the
-// list (page 2, and page 1 again as when going back). Direct runs remove their lists first so page
+// list (page 2, and page 1 again as when going back); logged in too when the database has the
+// @speed.viewer that `pnpm similar:speed-data` makes (a week of seen looks, saved lists). Direct runs remove their lists first so page
 // 1 is always measured fresh, and time the words' fingerprint (the fingerprint service) apart.
 import { createDb, inArray, lookLists, sql } from '@outfitly/db';
 import { feedPageSchema, similarPiecesPageSchema } from '@outfitly/shared';
@@ -15,7 +16,7 @@ import { photoAiClients } from '../src/ai/clients.ts';
 import { WordFingerprints } from '../src/ai/word-fingerprints.ts';
 import { loadConfig, r2Config } from '../src/config.ts';
 import { searchLooks } from '../src/search.ts';
-import { similarPage } from '../src/similar-looks.ts';
+import { rankSimilarLooks, similarPage } from '../src/similar-looks.ts';
 import { similarPiecesPage } from '../src/similar-pieces.ts';
 import { R2Storage } from '../src/storage.ts';
 
@@ -92,6 +93,52 @@ try {
         await time('More like this, next page', () => similarPage(deps, null, lookId, cursor));
       }
       await time('More like this, page 1 again', () => similarPage(deps, null, lookId, undefined));
+    }
+    // Recall: how many of each look's true 20 nearest (exact distances, no index) the index-based
+    // list puts on page 1. The list also applies the diversity rules, which may move a few.
+    const recall: number[] = [];
+    for (const lookId of lookIds) {
+      const exact = await db.transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL enable_indexscan = off`);
+        const { rows } = await tx.execute<{ id: string }>(sql`
+          SELECT l.id FROM looks l JOIN look_media lm ON lm.look_id = l.id AND lm.position = 0
+            JOIN media m ON m.id = lm.media_id,
+                 (SELECT m2.embedding FROM look_media lm2 JOIN media m2 ON m2.id = lm2.media_id
+                   WHERE lm2.look_id = ${lookId} AND lm2.position = 0) b
+           WHERE l.id <> ${lookId} AND l.status = 'published' AND l.deleted_at IS NULL
+             AND m.embedding IS NOT NULL
+           ORDER BY m.embedding OPERATOR(extensions.<=>) b.embedding, l.id
+           LIMIT 20`);
+        return rows.map((r) => r.id);
+      });
+      const { lookIds: listed } = await rankSimilarLooks(db, null, lookId);
+      const first = new Set(listed.slice(0, 20));
+      recall.push(exact.filter((id) => first.has(id)).length / Math.max(1, exact.length));
+    }
+    const average = recall.reduce((sum, r) => sum + r, 0) / Math.max(1, recall.length);
+    console.log(
+      `Recall: page 1 holds ${(average * 100).toFixed(1)}% of the true 20 nearest on average (lowest ${(Math.min(...recall) * 100).toFixed(0)}%).`,
+    );
+
+    // Logged in: the viewer `pnpm similar:speed-data` makes (a week of seen looks, saved lists).
+    const { rows: viewers } = await db.execute<{ id: string }>(
+      sql`SELECT id FROM profiles WHERE handle = 'speed.viewer'`,
+    );
+    const viewer = viewers[0]?.id;
+    if (viewer) {
+      await db.execute(sql`DELETE FROM look_lists WHERE profile_id = ${viewer}
+                            AND key = ANY(${`{${lookIds.join(',')}}`}::text[])`);
+      for (const lookId of lookIds) {
+        const first = await time('More like this, logged in, new list', () =>
+          similarPage(deps, viewer, lookId, undefined),
+        );
+        if (first.nextCursor) {
+          const cursor = first.nextCursor;
+          await time('More like this, logged in, next page', () =>
+            similarPage(deps, viewer, lookId, cursor),
+          );
+        }
+      }
     }
     for (const itemId of itemIds) {
       const first = await time('Similar pieces, nearest', () =>

@@ -6,10 +6,11 @@ import { moneySchema } from './money.ts';
 import { GARMENT_CATEGORIES } from './products.ts';
 
 /**
- * "More like this" under a look goes on for at most this many looks (20
- * pages, like a For You list).
+ * "More like this" under a look goes on for at most this many looks (10
+ * pages: practically endless on a phone, and half the storage of a For You
+ * list, since every logged-in look page saves one).
  */
-export const MAX_SIMILAR_LOOKS = 400;
+export const MAX_SIMILAR_LOOKS = 200;
 
 const photoSchema = feedCardSchema.shape.photo;
 

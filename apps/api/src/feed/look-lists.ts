@@ -1,19 +1,41 @@
 // The ranked lists behind "More like this" and search (`look_lists`): page 1 makes one (or
 // reuses a recent one), later pages read on from the cursor's place in it.
-import { and, type Db, desc, eq, gt, isNull, lookLists, lt, notInArray, sql } from '@outfitly/db';
+import {
+  and,
+  type Db,
+  desc,
+  eq,
+  gt,
+  isNull,
+  lookLists,
+  lt,
+  notInArray,
+  or,
+  sql,
+} from '@outfitly/db';
 import { FEED_PAGE_SIZE, type FeedCard, type FeedPage } from '@outfitly/shared';
 import { z } from 'zod';
+import { ApiError } from '../errors.ts';
 import { decodeCursor, encodeCursor, type FeedDeps, loadCards } from './cards.ts';
 
 export type LookListKind = 'similar' | 'search';
 
 export const LIST_RULES = {
-  /** Looks in one list (20 pages). */
+  /** Looks in one list at most (a search's; "More like this" holds MAX_SIMILAR_LOOKS). */
   size: 400,
   /** A list is reused for the same look or words for this long (so going back and forth is free). */
   reuseMinutes: 15,
-  /** A profile keeps its newest this-many lists of a kind; older ones go. */
-  perProfile: 20,
+  /**
+   * A shared "More like this" made by tags (the look has no fingerprint yet)
+   * is reused this long only, so the visual one follows soon after.
+   */
+  tagsOnlyReuseMinutes: 3,
+  /**
+   * A profile keeps its newest this-many lists of a kind; older ones go (a
+   * cursor of one then starts that look's list again). At ~3.2 KB per
+   * "More like this" list: ~32 KB per active profile, gone after a day.
+   */
+  perProfile: 10,
 } as const;
 
 /** Where the next page starts: a place in a saved list. */
@@ -29,7 +51,8 @@ export interface SavedList {
 
 /**
  * The newest reusable list of this kind for `key`: the profile's own (any),
- * or, for `profileId` null, a shared one that is complete.
+ * or, for `profileId` null, a shared one that is complete (a tags-only
+ * "More like this" for a few minutes too: no service to wait for there).
  */
 export async function recentList(
   db: Db,
@@ -45,7 +68,18 @@ export async function recentList(
         eq(lookLists.kind, kind),
         eq(lookLists.key, key),
         profileId === null
-          ? and(isNull(lookLists.profileId), eq(lookLists.complete, true))
+          ? and(
+              isNull(lookLists.profileId),
+              or(
+                eq(lookLists.complete, true),
+                kind === 'similar'
+                  ? gt(
+                      lookLists.createdAt,
+                      sql`now() - make_interval(mins => ${LIST_RULES.tagsOnlyReuseMinutes})`,
+                    )
+                  : sql`false`,
+              ),
+            )
           : eq(lookLists.profileId, profileId),
         gt(lookLists.createdAt, sql`now() - make_interval(mins => ${LIST_RULES.reuseMinutes})`),
       ),
@@ -148,10 +182,13 @@ function readSlice(db: Db, listId: string) {
 }
 
 /**
- * The page a cursor points at, or null when its list is gone (deleted after
- * a day, or one of a profile's older ones), belongs to someone else, or is
- * another kind or key (a cursor from another look's "More like this"): the
- * caller then starts a new list.
+ * The page a cursor points at, or null when the caller should start a new
+ * list instead: the cursor can't be read (e.g. kept by an older app), its
+ * list is gone (deleted after a day, or one of a profile's older ones), is
+ * another kind or key (a cursor from another look's "More like this"), or
+ * isn't the viewer's: a "More like this" must be their own (or, logged out,
+ * a shared one), since it leaves out their own and seen looks; a search may
+ * be shared.
  */
 export async function nextListPage(
   deps: FeedDeps,
@@ -160,7 +197,14 @@ export async function nextListPage(
   key: string,
   cursor: string,
 ): Promise<FeedPage | null> {
-  const { l, i } = decodeCursor(cursorSchema, cursor);
+  let place: z.output<typeof cursorSchema>;
+  try {
+    place = decodeCursor(cursorSchema, cursor);
+  } catch (error) {
+    if (error instanceof ApiError) return null;
+    throw error;
+  }
+  const { l, i } = place;
   // One round trip: the owner, the length and the ids this page most likely needs.
   const [list] = await deps.db
     .select({
@@ -173,7 +217,8 @@ export async function nextListPage(
     .from(lookLists)
     .where(eq(lookLists.id, l));
   if (!list || list.kind !== kind || list.key !== key) return null;
-  if (list.profileId !== null && list.profileId !== viewerProfileId) return null;
+  const owner = kind === 'similar' || list.profileId !== null;
+  if (owner && list.profileId !== viewerProfileId) return null;
   const readMore = readSlice(deps.db, l);
   return fillPage(deps, viewerProfileId, l, i, list.total, (from, count) =>
     from === i ? Promise.resolve(list.ids) : readMore(from, count),
