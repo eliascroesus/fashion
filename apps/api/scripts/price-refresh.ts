@@ -21,12 +21,30 @@ const db = createDb(config.DATABASE_URL, { caCert: config.DATABASE_CA_CERT });
 const boss = createJobQueue(config.DATABASE_URL, config.DATABASE_CA_CERT);
 try {
   if (args.includes('--due')) {
-    const due = await duePages(db, await priceRefreshSettings(db), new Date(), 200);
-    console.table(due);
+    const settings = await priceRefreshSettings(db);
+    for (const group of ['important', 'others'] as const) {
+      console.log(group === 'important' ? 'Saved or popular (daily):' : 'The rest (weekly):');
+      console.table(await duePages(db, settings, new Date(), group, 200));
+    }
   } else {
     await boss.start();
     const started = performance.now();
-    const summary = await runPriceRefresh({ db, queue: boss }, { pageUrl: pageArg });
+    const summary = await runPriceRefresh(
+      {
+        db,
+        queue: boss,
+        onError: (error, pageUrl) => {
+          console.error(`Checking ${pageUrl} failed:`, error);
+        },
+        onSuspectSite: (site, gone, reads) => {
+          console.warn(
+            `${site}: ${String(gone)} of ${String(reads)} pages gone at once; left as they were.`,
+          );
+        },
+      },
+      { pageUrl: pageArg },
+    );
+    if (summary.runId === null) console.log('Another run is going: nothing done.');
     console.log(`Done in ${String(Math.round(performance.now() - started))} ms:`);
     console.log(JSON.stringify(summary, null, 2));
   }

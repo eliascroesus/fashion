@@ -177,17 +177,41 @@ async function liveProduct(tx: Tx, id: string): Promise<Product | null> {
   return row ?? null;
 }
 
+/** Names compared loosely, like brands: case, accents, spaces and punctuation don't count. */
+const nameKey = brandKey;
+
+/** Same shop: the same site, `www.` / `m.` left out. */
+function sameSite(a: string, b: string): boolean {
+  return siteOf(new URL(a).hostname) === siteOf(new URL(b).hostname);
+}
+
+/** The same shop photo: same file, whatever its query says (sizes, cache-busting). */
+export function samePhoto(a: string | null, b: string | null): boolean {
+  if (a === null || b === null) return false;
+  try {
+    const x = new URL(a);
+    const y = new URL(b);
+    return x.host === y.host && x.pathname === y.pathname;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Which product a read is. Only the read itself decides (what the link
  * showed before doesn't): a link that now lands on another page, or a page
  * whose barcode changed, is another product, and the shared product stays as
  * it was.
- * - `page`: the link's own product if it's still the same page, else the
- *   product of another live offer on the same shop page; its barcode must
- *   agree. The read updates it.
+ * - `page`: the link's own product if it's still the same page, or if the
+ *   shop moved it to another page of the same site that still shows the same
+ *   item (same name and brand, and the same barcode or shop photo: colours of
+ *   one item often share a name); else the product of another live offer on
+ *   the same shop page, its barcode agreeing. The read updates it.
  * - `barcode`: a live product with the same barcode and the same brand (both
  *   known), unless it already has a different page on the same shop (two
- *   pages of one shop are two products). The read only fills its gaps.
+ *   pages of one shop are two products). The one exception is the link's own
+ *   page from before, if the item still looks the same (name, or shop photo):
+ *   the shop moved the page. The read only fills its gaps.
  */
 async function matchProduct(
   tx: Tx,
@@ -195,9 +219,15 @@ async function matchProduct(
   sameLink: typeof offers.$inferSelect | undefined,
 ): Promise<{ product: Product; how: 'page' | 'barcode' } | null> {
   const found = read.product;
-  if (sameLink?.pageUrl === read.pageUrl) {
-    const own = await liveProduct(tx, sameLink.productId);
-    if (own && barcodesAgree(own.gtin, found.gtin)) return { product: own, how: 'page' };
+  const own = sameLink ? await liveProduct(tx, sameLink.productId) : null;
+  if (sameLink && own && barcodesAgree(own.gtin, found.gtin)) {
+    if (sameLink.pageUrl === read.pageUrl) return { product: own, how: 'page' };
+    const moved =
+      sameSite(sameLink.pageUrl, read.pageUrl) &&
+      nameKey(own.name) === nameKey(found.name) &&
+      brandKey(own.brand) === brandKey(found.brand) &&
+      ((own.gtin !== null && own.gtin === found.gtin) || samePhoto(own.imageUrl, found.imageUrl));
+    if (moved) return { product: own, how: 'page' };
   }
   const onPage = await tx
     .select({ product: products })
@@ -222,28 +252,28 @@ async function matchProduct(
     .from(products)
     .where(and(eq(products.gtin, found.gtin), isNull(products.deletedAt)));
   if (!byBarcode || brandKey(byBarcode.brand) !== brandKey(found.brand)) return null;
-  // The link's own page from before doesn't count: a shop that moved the page (a new
-  // address for the same barcode) still sells the same item.
   const pages = await tx
     .select({ pageUrl: offers.pageUrl })
     .from(offers)
-    .where(
-      and(
-        eq(offers.productId, byBarcode.id),
-        isNull(offers.deletedAt),
-        sameLink ? ne(offers.id, sameLink.id) : undefined,
-      ),
-    );
+    .where(and(eq(offers.productId, byBarcode.id), isNull(offers.deletedAt)));
   // The same page with or without www. / m. is still the same page.
   const here = new URL(read.pageUrl);
-  const otherPageHere = pages.some((p) => {
+  const otherPagesHere = pages.filter((p) => {
     const there = new URL(p.pageUrl);
     return (
       siteOf(there.hostname) === siteOf(here.hostname) &&
       `${there.pathname}${there.search}` !== `${here.pathname}${here.search}`
     );
   });
-  return otherPageHere ? null : { product: byBarcode, how: 'barcode' };
+  if (otherPagesHere.length === 0) return { product: byBarcode, how: 'barcode' };
+  // Only the link's own old page (every link still on it counts as that page): the shop
+  // moved it, if the item still looks the same. A barcode alone can't say so (a reused one).
+  const onlyOldPage =
+    sameLink !== undefined && otherPagesHere.every((p) => p.pageUrl === sameLink.pageUrl);
+  const looksSame =
+    nameKey(byBarcode.name) === nameKey(found.name) ||
+    samePhoto(byBarcode.imageUrl, found.imageUrl);
+  return onlyOldPage && looksSame ? { product: byBarcode, how: 'barcode' } : null;
 }
 
 /**
@@ -280,6 +310,9 @@ export async function saveLinkRead(db: Db, read: LinkRead, now = new Date()): Pr
       currency: found.currency,
       stock: found.stock,
       lastCheckedAt: now,
+      // A good read: the price check's "page gone" and failure counts start over.
+      refreshGone: 0,
+      refreshFailures: 0,
       deletedAt: null,
     };
     if (sameLink) {

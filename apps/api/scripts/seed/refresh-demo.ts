@@ -81,14 +81,25 @@ export async function attachDemoPiece(
   return { offerId: saved.offerId, lookItemId };
 }
 
-/** Deletes every demo piece, link and product (and clicks on them). Returns the pieces deleted. */
+/** `text` as a LIKE pattern that matches only itself (`%`, `_` and backslashes escaped). */
+function literalLike(text: string): string {
+  return text.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+/**
+ * Deletes every demo piece, link and product (and clicks on them): links to a
+ * demo page, and links of the demo product (test brand and name). Returns the
+ * pieces deleted.
+ */
 export async function removeDemoPieces(db: Db, publicBaseUrl: string): Promise<number> {
-  const like = `${publicBaseUrl.replace(/\/$/, '')}/${DEMO_PREFIX}%`;
+  const like = `${literalLike(`${publicBaseUrl.replace(/\/$/, '')}/${DEMO_PREFIX}`)}%`;
   return db.transaction(async (tx) => {
-    const demo = sql`(SELECT id FROM offers WHERE page_url LIKE ${like})`;
+    const demo = sql`(SELECT o.id FROM offers o JOIN products p ON p.id = o.product_id
+                       WHERE o.page_url LIKE ${like}
+                          OR (p.brand = ${TEST_BRAND} AND p.name = ${DEMO_NAME}))`;
     await tx.execute(sql`DELETE FROM clicks WHERE offer_id IN ${demo}`);
     const items = await tx.execute(sql`DELETE FROM look_items WHERE offer_id IN ${demo}`);
-    await tx.execute(sql`DELETE FROM offers WHERE page_url LIKE ${like}`);
+    await tx.execute(sql`DELETE FROM offers WHERE id IN ${demo}`);
     await tx.execute(sql`
       DELETE FROM products p WHERE p.brand = ${TEST_BRAND} AND p.name = ${DEMO_NAME}
          AND NOT EXISTS (SELECT 1 FROM offers o WHERE o.product_id = p.id)`);

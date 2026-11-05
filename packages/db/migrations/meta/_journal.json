@@ -141,6 +141,13 @@
       "when": 1793858345316,
       "tag": "0019_price_refresh",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793860912385,
+      "tag": "0020_refresh_currency_outcome",
+      "breakpoints": true
     }
   ]
 }

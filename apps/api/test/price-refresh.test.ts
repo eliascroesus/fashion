@@ -5,6 +5,7 @@ import {
   eq,
   inArray,
   lookItems,
+  lookMedia,
   looks,
   offers,
   priceRefreshRuns,
@@ -17,11 +18,13 @@ import {
 import { piecesTotal } from '@outfitly/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { checkLookItem, LINK_CHECK_QUEUES } from '../src/links/check.ts';
+import { PRODUCT_QUEUES } from '../src/links/product-photos.ts';
 import { LinkFetchError, retryAfterMs } from '../src/links/fetch.ts';
 import {
   duePages,
   failureBackoff,
   PRICE_REFRESH_SETTING,
+  redirectedAway,
   type PriceRefreshSettings,
   priceRefreshSettings,
   type RefreshDeps,
@@ -71,6 +74,9 @@ interface PageState {
   price: string | null;
   stock: 'InStock' | 'OutOfStock' | null;
   gtin?: string;
+  /** The shop photo's link. */
+  image?: string;
+  currency?: string;
   /** Instead of the page: an HTTP status (404, 403, 429…), with optional headers. */
   status?: number;
   headers?: Record<string, string>;
@@ -80,14 +86,16 @@ interface PageState {
 
 function productHtml(path: string, state: PageState): string {
   const offer = [
-    state.price === null ? '' : `"price":"${state.price}","priceCurrency":"SEK"`,
+    state.price === null
+      ? ''
+      : `"price":"${state.price}","priceCurrency":"${state.currency ?? 'SEK'}"`,
     state.stock === null ? '' : `"availability":"https://schema.org/${state.stock}"`,
   ]
     .filter(Boolean)
     .join(',');
   return `<!doctype html><html><head><link rel="canonical" href="${path}">
 <script type="application/ld+json">{"@type":"Product","name":"${state.name}","brand":"Filippa K",
-${state.gtin ? `"gtin13":"${state.gtin}",` : ''}"offers":{${offer}}}</script></head><body></body></html>`;
+${state.gtin ? `"gtin13":"${state.gtin}",` : ''}${state.image ? `"image":"${state.image}",` : ''}"offers":{${offer}}}</script></head><body></body></html>`;
 }
 
 /** A product page at `path` (on `host`) whose answer follows `state` as it changes. */
@@ -477,7 +485,8 @@ describe('which pages a run reads', () => {
       { profileId: other, lookId: twice.lookId },
     ]);
     await age([onBoard.offerId, twice.offerId], 21);
-    const due = await duePages(ctx.db, await priceRefreshSettings(ctx.db), new Date(clock), 10);
+    const settingsNow = await priceRefreshSettings(ctx.db);
+    const due = await duePages(ctx.db, settingsNow, new Date(clock), 'important', 10);
     expect(due.map((d) => [d.pageUrl, d.important, d.savers])).toEqual([
       [shop.url('/p/two-saves'), true, 2],
       [shop.url('/p/board'), true, 1],
@@ -584,5 +593,291 @@ describe('the live demo (pnpm refresh:demo)', () => {
     expect(await ctx.db.select().from(offers).where(eq(offers.id, offerId))).toEqual([]);
     const left = await lookDetail({ db: ctx.db, storage: ctx.storage }, null, lookId);
     expect(left.items).toEqual([]);
+  });
+});
+
+describe('after the review', () => {
+  it("never lets a resting shop's pages crowd out the other shops", async () => {
+    await setSettings({ maxPerRun: 1 });
+    const big: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      shopPage(`/p/big-${String(i)}`, { name: `Big ${String(i)}`, price: '500', stock: 'InStock' });
+      big.push((await linkOnLook(shop.url(`/p/big-${String(i)}`, 'big.test'))).offerId);
+    }
+    shopPage('/p/small', { name: 'Small coat', price: '500', stock: 'InStock' });
+    const small = await linkOnLook(shop.url('/p/small', 'small.test'));
+    await ctx.db
+      .insert(priceRefreshSites)
+      .values({ site: 'big.test', restUntil: new Date(clock + 86400e3), lastProblem: 'blocked' });
+    await age(big, 30); // longest unchecked: first in line if resting didn't count
+    await age([small.offerId], 21);
+    const run = await runPriceRefresh(deps());
+    expect(run.reads.savedOrPopular).toBe(1);
+    expect((await offer(small.offerId)).refreshTriedAt).not.toBeNull();
+  });
+
+  it('gives the weekly links their own turn however many daily ones are due', async () => {
+    await setSettings({ maxPerRun: 2, popularLooks: 0, savedOrPopularPerDay: 1 });
+    const daily: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      shopPage(`/p/daily-${String(i)}`, {
+        name: `Daily ${String(i)}`,
+        price: '1',
+        stock: 'InStock',
+      });
+      const link = await linkOnLook(shop.url(`/p/daily-${String(i)}`, `daily${String(i)}.test`));
+      await ctx.db.insert(saves).values({ profileId: author, lookId: link.lookId });
+      daily.push(link.offerId);
+    }
+    shopPage('/p/weekly', { name: 'Weekly coat', price: '500', stock: 'InStock' });
+    const weekly = await linkOnLook(shop.url('/p/weekly', 'weekly.test'));
+    await age(daily, 21);
+    await age([weekly.offerId], 30 * 24);
+    const run = await runPriceRefresh(deps());
+    expect(run.reads).toEqual({ savedOrPopular: 1, others: 1 });
+    expect((await offer(weekly.offerId)).refreshTriedAt).not.toBeNull();
+  });
+
+  it('reads a redirect to a consent page on another site as unreadable, not gone', async () => {
+    shopPage('/p/e', { name: 'E coat', price: '500', stock: 'InStock' });
+    const link = await linkOnLook(shop.url('/p/e', 'eshop.test'));
+    shop.route('/p/e', redirect(shop.url('/consent?return=/p/e', 'consent.test')));
+    shop.route('/consent', page('<html><head><title>Cookies</title></head></html>'));
+    await age([link.offerId], 21);
+    expect((await runPriceRefresh(deps())).found).toMatchObject({ unreadable: 1, gone: 0 });
+    expect(await offer(link.offerId)).toMatchObject({
+      refreshGone: 0,
+      refreshOutcome: 'unreadable',
+    });
+  });
+
+  it('tells a page that went away from one we just could not read', () => {
+    const from = new URL('https://www.shop.test/p/coat?x=1');
+    const away = (to: string) => redirectedAway(from, new URL(to));
+    expect(away('https://shop.test/women/coats')).toBe(true); // same shop, a category page
+    expect(away('https://www.shop.test/')).toBe(true); // the home page
+    expect(away('https://www.shop.test/p/coat?x=1')).toBe(false); // no redirect at all
+    expect(away('https://www.shop.test/sv/p/coat')).toBe(false); // keeps the old path
+    expect(away('https://www.shop.test/login?return=%2Fp%2Fcoat')).toBe(false);
+    expect(away('https://consent.other.test/')).toBe(false); // another site
+  });
+
+  it('reads a page whose only change is its canonical link as unreadable when it has no product', async () => {
+    shopPage('/p/canon', { name: 'Canon coat', price: '500', stock: 'InStock' });
+    const link = await linkOnLook(shop.url('/p/canon'));
+    shop.route('/p/canon', page('<html><head><link rel="canonical" href="/women"></head></html>'));
+    await age([link.offerId], 21);
+    expect((await runPriceRefresh(deps())).found).toMatchObject({ unreadable: 1, gone: 0 });
+  });
+
+  it("leaves a shop's links as they were when most of its pages go at once", async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const state = shopPage(`/p/wave-${String(i)}`, {
+        name: `Wave ${String(i)}`,
+        price: '500',
+        stock: 'InStock',
+      });
+      ids.push((await linkOnLook(shop.url(`/p/wave-${String(i)}`, 'wave.test'))).offerId);
+      state.status = 404;
+    }
+    await age(ids, 21);
+    const flagged: string[] = [];
+    const run = await runPriceRefresh(
+      deps({
+        onSuspectSite: (site) => {
+          flagged.push(site);
+        },
+      }),
+    );
+    expect(run.suspectSites).toEqual(['wave.test']);
+    expect(flagged).toEqual(['wave.test']);
+    expect(run.found).toMatchObject({ gone: 0, unreadable: 4, soldOut: 0 });
+    for (const id of ids) {
+      expect(await offer(id)).toMatchObject({ refreshGone: 0, refreshOutcome: 'unreadable' });
+    }
+  });
+
+  it('keeps the price when the page shows another currency', async () => {
+    const state = shopPage('/p/kroner', { name: 'Kroner coat', price: '500', stock: 'InStock' });
+    const link = await linkOnLook(shop.url('/p/kroner'));
+    state.currency = 'DKK';
+    state.price = '400';
+    await age([link.offerId], 21);
+    expect((await runPriceRefresh(deps())).found).toMatchObject({ currencyChanged: 1, ok: 0 });
+    const row = await offer(link.offerId);
+    expect(row).toMatchObject({
+      priceMinor: 50000,
+      currency: 'SEK',
+      refreshOutcome: 'currency_changed',
+    });
+    expect(row.priceHistory).toHaveLength(1);
+  });
+
+  it("doesn't copy a shop photo again when only its query changed", async () => {
+    const state = shopPage('/p/photo', {
+      name: 'Photo coat',
+      price: '500',
+      stock: 'InStock',
+      image: 'https://cdn.shop.test/coat.jpg?v=1',
+    });
+    const link = await linkOnLook(shop.url('/p/photo'));
+    // Its photo was copied in long ago (any ready photo will do here).
+    const [cover] = await ctx.db
+      .select({ mediaId: lookMedia.mediaId })
+      .from(lookMedia)
+      .where(eq(lookMedia.lookId, link.lookId));
+    await ctx.db
+      .update(products)
+      .set({ imageMediaId: cover?.mediaId ?? null })
+      .where(eq(products.id, link.productId));
+    state.image = 'https://cdn.shop.test/coat.jpg?v=2';
+    await age([link.offerId], 21);
+    ctx.queued.length = 0;
+    await runPriceRefresh(deps());
+    expect(ctx.queued.filter((j) => j.name === PRODUCT_QUEUES.productPhoto)).toEqual([]);
+    const [kept] = await ctx.db.select().from(products).where(eq(products.id, link.productId));
+    expect(kept?.imageUrl).toBe('https://cdn.shop.test/coat.jpg?v=1');
+  });
+
+  it('marks a page whose check crashes as unreadable and goes on with the run', async () => {
+    // The crash page has a photo to copy in, and the job queue is down: queueing it throws.
+    shopPage('/p/crash', {
+      name: 'Crash coat',
+      price: '500',
+      stock: 'InStock',
+      image: 'https://cdn.shop.test/crash.jpg',
+    });
+    shopPage('/p/fine', { name: 'Fine coat', price: '500', stock: 'InStock' });
+    const crash = await linkOnLook(shop.url('/p/crash', 'crash.test'));
+    const fine = await linkOnLook(shop.url('/p/fine', 'fine.test'));
+    await age([crash.offerId], 30);
+    await age([fine.offerId], 21);
+    const errors: string[] = [];
+    const run = await runPriceRefresh(
+      deps({
+        queue: { send: () => Promise.reject(new Error('queue down')) },
+        onError: (_error, pageUrl) => {
+          errors.push(pageUrl);
+        },
+      }),
+    );
+    expect(errors).toEqual([shop.url('/p/crash', 'crash.test')]);
+    expect(run.found).toMatchObject({ unreadable: 1, ok: 1 });
+    expect((await offer(crash.offerId)).refreshOutcome).toBe('unreadable');
+    expect((await offer(fine.offerId)).refreshOutcome).toBe('ok');
+  });
+
+  it("stops saying 'in stock' for a link not read for two weeks", async () => {
+    const state = shopPage('/p/stale', { name: 'Stale coat', price: '500', stock: 'InStock' });
+    const link = await linkOnLook(shop.url('/p/stale', 'stale.test'));
+    state.status = 403;
+    await age([link.offerId], 15 * 24);
+    expect((await runPriceRefresh(deps())).found).toMatchObject({ blocked: 1, wentStale: 1 });
+    expect(await offer(link.offerId)).toMatchObject({ stock: 'unknown', priceMinor: 50000 });
+  });
+
+  it('starts the gone count over on any good read, and looks weekly once sold out', async () => {
+    const state = shopPage('/p/gone-again', { name: 'Gone again', price: '500', stock: 'InStock' });
+    const link = await linkOnLook(shop.url('/p/gone-again'));
+    state.status = 404;
+    for (let i = 0; i < 2; i++) {
+      await age([link.offerId], 21);
+      await runPriceRefresh(deps());
+    }
+    expect((await offer(link.offerId)).refreshGone).toBe(2);
+    // Pasted again while the page is back: a good read starts the count over.
+    state.status = undefined;
+    await saveLinkRead(
+      ctx.db,
+      await readShopLink(new URL(shop.url('/p/gone-again')), { network: shop.network }),
+    );
+    expect((await offer(link.offerId)).refreshGone).toBe(0);
+    state.status = 404;
+    for (let i = 0; i < 3; i++) {
+      await age([link.offerId], 21);
+      await runPriceRefresh(deps());
+    }
+    const row = await offer(link.offerId);
+    expect(row).toMatchObject({ refreshGone: 3, stock: 'out_of_stock' });
+    expect(row.refreshDueAt?.getTime()).toBe(clock + 7 * 24 * 60 * 60 * 1000);
+  });
+
+  it('keeps the product (and a sold-out piece verified) when the shop moves a page within its site', async () => {
+    const photo = 'https://cdn.fshop.test/f-coat.jpg';
+    shop.route(
+      '/p/f',
+      page(productHtml('/p/f', { name: 'F coat', price: '900', stock: 'InStock', image: photo })),
+    );
+    const link = await linkOnLook(shop.url('/p/f', 'www.fshop.test'));
+    shop.route('/p/f', (request, response) => {
+      if ((request.headers.host ?? '').startsWith('www.')) {
+        redirect(shop.url('/p/f', 'fshop.test'), 301)(request, response);
+        return;
+      }
+      const state: PageState = { name: 'F coat', price: '900', stock: 'OutOfStock', image: photo };
+      page(productHtml(shop.url('/p/f', 'fshop.test'), state))(request, response);
+    });
+    await age([link.offerId], 21);
+    ctx.queued.length = 0;
+    const run = await runPriceRefresh(deps());
+    expect(run.found).toMatchObject({ ok: 1, moved: 0, soldOut: 1 });
+    const row = await offer(link.offerId);
+    expect(row).toMatchObject({ productId: link.productId, stock: 'out_of_stock' });
+    expect(row.pageUrl).toBe(shop.url('/p/f', 'fshop.test'));
+    const [item] = await ctx.db.select().from(lookItems).where(eq(lookItems.id, link.itemId));
+    expect(item?.status).toBe('verified');
+    expect(ctx.queued.filter((j) => j.name === LINK_CHECK_QUEUES.linkCheck)).toEqual([]);
+  });
+
+  it('keeps one product when two links to a page move with it (same barcode)', async () => {
+    const gtin = '7350000000115';
+    shopPage('/p/a-old', { name: 'Shared coat', price: '900', stock: 'InStock', gtin });
+    shopPage('/p/a-new', { name: 'Shared coat', price: '900', stock: 'InStock', gtin });
+    const one = await linkOnLook(shop.url('/p/a-old?aff=1'));
+    const two = await linkOnLook(shop.url('/p/a-old?aff=2'));
+    shop.route('/p/a-old', redirect(shop.url('/p/a-new'), 301));
+    await age([one.offerId, two.offerId], 21);
+    ctx.queued.length = 0;
+    expect((await runPriceRefresh(deps())).found).toMatchObject({ ok: 1, moved: 0 });
+    for (const link of [one, two]) {
+      expect((await offer(link.offerId)).productId).toBe(one.productId);
+      const [item] = await ctx.db.select().from(lookItems).where(eq(lookItems.id, link.itemId));
+      expect(item?.status).toBe('verified');
+    }
+    const [kept] = await ctx.db.select().from(products).where(eq(products.id, one.productId));
+    expect(kept?.gtin).toBe(`0${gtin}`);
+    expect(ctx.queued.filter((j) => j.name === LINK_CHECK_QUEUES.linkCheck)).toEqual([]);
+  });
+
+  it("does nothing while another run holds the lock, and counts a run's reads as they happen", async () => {
+    const holder = await ctx.db.$client.connect();
+    try {
+      await holder.query("SELECT pg_advisory_lock(hashtext('price-refresh'))");
+      const blocked = await runPriceRefresh(deps());
+      expect(blocked.runId).toBeNull();
+    } finally {
+      await holder.query("SELECT pg_advisory_unlock(hashtext('price-refresh'))");
+      holder.release();
+    }
+
+    for (const path of ['/p/count-1', '/p/count-2']) {
+      shopPage(path, { name: `Count ${path}`, price: '500', stock: 'InStock' });
+    }
+    const a = await linkOnLook(shop.url('/p/count-1', 'count.test'));
+    const b = await linkOnLook(shop.url('/p/count-2', 'count.test'));
+    await age([a.offerId, b.offerId], 21);
+    let midRun: number | null = null;
+    await runPriceRefresh(
+      deps({
+        // Waiting out the shop's gap between its two pages: the first read is already counted.
+        sleep: async (ms) => {
+          const [row] = await ctx.db.select().from(priceRefreshRuns);
+          midRun = row?.readsSavedOrPopular ?? null;
+          clock += ms;
+        },
+      }),
+    );
+    expect(midRun).toBe(1);
   });
 });

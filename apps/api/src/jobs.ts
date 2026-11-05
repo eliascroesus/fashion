@@ -9,6 +9,7 @@ import {
   media,
   sql,
 } from '@outfitly/db';
+import * as Sentry from '@sentry/node';
 import type { FastifyBaseLogger } from 'fastify';
 import { PgBoss } from 'pg-boss';
 import type { PhotoAiClients } from './ai/clients.ts';
@@ -270,7 +271,23 @@ async function startPriceRefreshJobs(boss: PgBoss, options: WorkerDeps): Promise
     QUEUES.priceRefresh,
     { pollingIntervalSeconds: options.pollingIntervalSeconds ?? 2 },
     async () => {
-      const summary = await runPriceRefresh({ db, queue: boss, network: options.linkNetwork });
+      const summary = await runPriceRefresh({
+        db,
+        queue: boss,
+        network: options.linkNetwork,
+        onError: (error, pageUrl) => {
+          log.error({ err: error, pageUrl }, 'price check of a page failed');
+          Sentry.captureException(error, { tags: { job: QUEUES.priceRefresh } });
+        },
+        onSuspectSite: (site, gone, reads) => {
+          // Not sold out: most of a shop's pages "went" at once (new addresses, a consent wall).
+          log.error({ site, gone, reads }, 'price check: a shop needs a person to look');
+          Sentry.captureMessage(
+            `Price check: ${site} needs a look (${String(gone)} of ${String(reads)} pages gone at once)`,
+            'warning',
+          );
+        },
+      });
       log.info(summary, 'prices and stock checked');
       return summary;
     },

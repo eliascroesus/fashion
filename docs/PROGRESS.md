@@ -3,7 +3,7 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-**Phase 3 — Products and AI, in progress.** Steps 3.1–3.8 are built; 3.3's real-photo check waits for the Gemini key, 3.4's link check waits for Elias's 30 links (and a decision about shops that block link readers), 3.5's 100-pair check waits for the key, the seed looks' product links and Elias's labels, and 3.6's "seed looks show real items" waits for those same links.
+**Phase 3 — Products and AI: every build step (3.1–3.9) is built; next is the Phase 3 gate with Elias.** Steps 3.1–3.9 are built; 3.3's real-photo check waits for the Gemini key, 3.4's link check waits for Elias's 30 links (and a decision about shops that block link readers), 3.5's 100-pair check waits for the key, the seed looks' product links and Elias's labels, and 3.6's "seed looks show real items" waits for those same links.
 - Step 3.1 (Product tables): PR #16, waiting for Elias to merge.
 - Step 3.2 (The fingerprint service): PR #17, stacked on #16 (merge #16 first).
 - Step 3.3 (Garment spotting): PR #18, stacked on #17. Built and tested with a stand-in Gemini; the 50-photo check and the cost per 1,000 photos wait for the key (see Waiting on Elias).
@@ -12,9 +12,10 @@ Claude Code updates this file at the end of every session.
 - Step 3.6 (The shoppable look page): PR #21, stacked on #20. Dots, the piece list with prices and "Total look", ticks with a running total, and board totals work in the iPhone simulator with test pieces; "totals add up correctly in tests" PASS. "The seed looks show real items with prices": WAITING (the seed looks' product links, after the Gemini key).
 - Step 3.7 (Shop clicks): PR #22, stacked on #21. "Every tap creates exactly one click row (tested)": PASS. "The store opens and returns to the same place": PASS in the iPhone simulator (Safari view, Done, the look page pixel-identical with ticks kept); Android not checked (no Android phone or emulator yet).
 - Step 3.8 ("More like this" and "similar pieces"): PR #23, stacked on #22. "Both answer in under 300 ms (p95)": PASS (10,000 looks, server's own time p95: More like this 8–9 ms, similar pieces 24 ms; staging over HTTP p95 125 / 89 ms). "You rate the results on 20 looks as good": WAITING (rating page ready, see Waiting on Elias).
-- Claude isn't allowed to merge in this setup (see Waiting on Elias). Elias was asleep for Steps 3.3–3.8 (2026-11-05 night) and said to keep going, so their plans and decisions are in the PRs instead of a plan approval.
+- Step 3.9 (Price and stock refresh): PR #24, stacked on #23. "A test product marked sold out turns grey after the next run": PASS (a test, and live: our own test page in R2 flipped to sold out, one run, the piece greyed in the iPhone simulator). Runs every 10 minutes on staging; nothing real to check there yet.
+- Claude isn't allowed to merge in this setup (see Waiting on Elias). Elias was asleep for Steps 3.3–3.9 (2026-11-05 night) and said to keep going, so their plans and decisions are in the PRs instead of a plan approval.
 
-Next: Step 3.9 — Price and stock refresh.
+Next: the Phase 3 gate, item by item with Elias (BUILD_PLAN "Phase 3 gate"). Most of it waits on the Gemini key, the seed looks' product links and Elias's checks (see Waiting on Elias).
 
 - Phase 2 passed its gate on 2026-11-04 (PRs #8–#15). "Speed numbers recorded" PASS; "It feels like Pinterest" signed off by Elias. "Both phones" was done in the iPhone simulator only: the real-phone checks (and Step 2.3's mid-range Android check) wait for the hardware. 125 real outfits accepted instead of 300 for now.
 - Phase 1 gate: everything passed except "app on both phones with login", for the same reason.
@@ -291,8 +292,36 @@ Next: Step 3.9 — Price and stock refresh.
     - word matches outweigh fingerprint guesses in search; a few searches are on the rating page; pgvector's operator is named in full; the sheet's "Cheaper" note has its own line (nothing moves when the sort changes); an unreadable cursor starts over;
     - tests: another viewer's cursor, a look hidden mid-scroll (page still full), the "Cheaper" cut at 60, the index path on realistic fingerprints, the settings reset.
 
+- Step 3.9 — Price and stock refresh (PR #24) — **done, live on staging (2026-11-05).**
+  - **The check** (`src/links/refresh.ts`, job `price-refresh` every 10 minutes, one run at a time, also when started by hand): reads shop pages again at their `page_url` (never the poster's affiliate link) and saves every live link to a page from that one read through the paste flow's `saveLinkRead` (history entry only when the price changes; a page now showing another item moves the link, and its look items are checked again). Only links that are a verified piece of a shown look: daily (20 h) for looks that are saved (saves or boards) or among the 200 most popular, weekly for the rest; most saved first; each group asked for separately, resting shops left out in the query itself.
+  - **Caps and politeness** (settings row `price_refresh`): 1,000 pages a day for saved/popular, 500 for the rest, each spread over the runs left in the UTC day, at most 30 a run, at most one read of a shop every 2 s (`www.`/`m.` count as one shop). Runs are logged in `price_refresh_runs` (counted after every page, kept 90 days).
+  - **What a page can say:** read → price, stock and "price checked" updated. Gone (404/410, or a real redirect to another page of the same shop that doesn't carry the old address, like a category page) → counts; 3 in a row → sold out, then only looked at weekly. A shop that turns us away (403), is busy (429/503, `Retry-After` honoured) or doesn't answer → nothing about the item changes, the shop rests (6 h / 30 min or as asked / 1 h, doubling each time in a row; `price_refresh_sites`), the link backs off. A page without product data, a redirect to another site (consent or login wall, another country) or one keeping the old address → "unreadable", nothing changes. Another currency than before → left as it was (`currency_changed`). Most of a shop's pages gone in one run (3 or more, over half) → left as they were and reported to the log and Sentry for a person. A link not read for two weeks stops saying "in stock" (unknown). No AI is asked; it can only follow when a link now shows another item (its link check).
+  - **Pieces:** a verified piece that sells out stays verified and is greyed (Step 3.6), and is normal again when the shop has it back. A waiting piece is rejected as sold out by its check (Step 3.5).
+  - **Paste flow fixes found on the way:** a shop that moves a page (new address, same item: same name and brand plus the same barcode or photo file) keeps the product, also for a link re-pasted later; a product page whose sizes are told apart only by the address's query (`?size=xs`, Google's and Shopify's markup) is read as the whole product (in stock if any size is, no per-size barcode) instead of as its first size; any good read starts the "gone" and failure counts over.
+  - **Migrations:** 0019 (the `refresh_*` columns on `offers`, `offers_page_url_idx`, `price_refresh_runs`, `price_refresh_sites`, the settings row) and 0020 (the `currency_changed` outcome). Applied on outfitly-dev (live lock test 28/28).
+  - **Commands:** `pnpm prices:refresh` (one run now), `--page <url>` (just that page), `--due` (what's due, reads nothing). `pnpm refresh:demo add | sold-out | in-stock | remove`: a test piece whose shop page is our own tiny page in the public R2 bucket, to watch it grey out.
+  - **Shown live (2026-11-05):** staging redeployed; `pnpm refresh:demo add` put the page (in stock, 1 499 kr) on the newest @outfitly.picks look; the iPhone simulator (Release build, staging) showed "Refresh demo coat · 1 499 kr · In stock · Price checked today"; `sold-out` + `pnpm prices:refresh --page …` (≈1 s) → the look page showed it greyed, "Sold out", not counted in the total (after the app's 1-minute cache). Repeated after the review fixes (the API answered `out_of_stock`). Removed afterwards (page 404, 0 pieces). Staging's own 10-minute runs read nothing: no real offers sit on shown looks yet, so no real shop is asked.
+  - **Tests:** API 572 in all (new: `price-refresh.test.ts` 36 — sold out turns grey, history only on change, one read for all links of a page, re-run does nothing, no AI, blocked/busy/silent shops, gone ×3 and back, gone by redirect vs unreadable, consent walls, canonical-only changes, a shop whose pages all "go" at once, currency, photo query, a crashing page, two weeks unread, the gone count, moves within a shop, two links on a moved page, daily vs weekly, boards, the most saved first, resting shops not crowding others, the weekly group's own turn, caps, the per-shop gap, the lock and counts during a run, back-offs, Retry-After, the demo; links 3 new paste-flow tests; parser 1 for query-told sizes; jobs: the schedule); db 72, shared 72, app 154.
+  - **Review (step-reviewer), fixed:**
+    - size variants told apart by the query made the bare page read as its first size (a sold-out XS greyed an in-stock coat, and XS's barcode was kept);
+    - one resting shop's due pages could fill every place in a run, and many saved/popular pages could starve the weekly ones: resting shops are left out in the query, the two groups are asked for separately;
+    - two links on a page the shop moved both became a new product without a barcode (pieces hidden, checks queued), and a reused barcode could keep a "Coat" link on a "Dress" page: the old page counts only if the item still looks the same;
+    - "gone by redirect" now needs a real redirect within the same shop away from the old address, plus the per-shop "gone at once" brake;
+    - a page moved within a shop (no barcode, `www.` dropped) no longer makes a new product and hides the piece;
+    - currency switches, query-only photo changes (no re-copy), a page whose check crashes (unreadable, the run goes on, Sentry), the gone count "in a row" (reset on any good read; weekly once sold out), overlapping runs (a lock), counts saved as the run goes;
+    - also: two weeks unread → stock unknown; the due query skipped when both caps are used; the demo's clean-up matches exactly.
+
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
+- 2026-11-05 — Price and stock check (Step 3.9), decided while Elias slept:
+  - Only verified pieces of shown looks are checked (a link nobody sees needn't be read); every link to one shop page is updated from one read, so their prices never drift apart.
+  - "Gone" needs 3 checks in a row before a link counts as sold out (a page down for a day isn't a sell-out), and a redirect to a page without a product counts only when it stays in the same shop and leaves the old address (a consent wall, a login page or another country's site is "couldn't read"). Failures between "gone" results don't break the row; a good read does.
+  - A shop that turns us away, is busy or doesn't answer is never read as sold out or a price change; it rests, longer each time. After two weeks without a good read a link says "stock unknown" instead of an old "in stock".
+  - Another currency on a re-read is left alone (shops pick the currency by where the reader is; our server is in Stockholm, the Mac sometimes got DKK): the link keeps its price until a person looks.
+  - A shop photo whose link only changed its query (sizes, cache-busting) is the same photo: not copied again. A real new photo file is.
+  - A page moved within the same shop is the same item when name and brand match and the barcode or the photo file does too (colours of one item often share a name, so the name alone isn't enough).
+  - No Microlink and no AI in the check. The check is a recurring reader of shop pages, so robots.txt is an open decision (see Open decisions).
+  - Caps and timings live in the settings row `price_refresh` (1,000 + 500 pages a day, 30 a run, 2 s between reads of one shop, gone after 3), spread over the day; changeable without a deploy.
 - 2026-11-05 — "More like this" and "similar pieces" (Step 3.8), decided while Elias slept:
   - Saved lists (like For You) rather than paging by distance: the index search is approximate and the diversity rules reorder, so page 1 saves the order and later pages read on from it. Storage: a "More like this" list is 200 looks (~3.2 KB) and a profile keeps its newest 10 (~32 KB per active profile, all deleted after a day: ~32 MB at 1,000 daily users); a deep chain of look pages past 10 lists starts the oldest ones over at page 1 (the app drops repeats). Search lists (up to 400) are shared by everyone searching the same words.
   - "More like this" leaves out the viewer's own looks, "see less" looks and looks seen in the last day; looks seen this week come last (For You's rules, so an active tester of a small catalogue still gets a list).
@@ -430,7 +459,7 @@ Next: Step 3.9 — Price and stock refresh.
 - 2026-11-02 — Elias asked Claude to work through Phase 1 and Phase 2 overnight without stopping. Each step still gets its own branch + PR, stacked on the previous step's branch; nothing is merged into `main` without Elias.
 
 ## Waiting on Elias
-- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2), then PR #18 (Step 3.3), then PR #19 (Step 3.4), then PR #20 (Step 3.5), then PR #21 (Step 3.6), then PR #22 (Step 3.7), then PR #23 (Step 3.8), in that order.** Each is built on the one before. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub, or allow Claude to merge (add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings). On GitHub: open the PR → "Merge pull request" → "Confirm merge" → "Delete branch", then do the next one (GitHub then points it at `main` by itself).
+- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2), then PR #18 (Step 3.3), then PR #19 (Step 3.4), then PR #20 (Step 3.5), then PR #21 (Step 3.6), then PR #22 (Step 3.7), then PR #23 (Step 3.8), then PR #24 (Step 3.9), in that order.** Each is built on the one before. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub, or allow Claude to merge (add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings). On GitHub: open the PR → "Merge pull request" → "Confirm merge" → "Delete branch", then do the next one (GitHub then points it at `main` by itself).
 - **Rate "More like this" (Step 3.8), about 10 minutes:** open `~/Downloads/outfitly-similar-rating/index.html` (Finder → Downloads → outfitly-similar-rating → double-click index.html). For each of the 20 looks, look at the 8 looks next to it and click **good** (you'd happily scroll these under it), **okay** or **bad**; then the same for the 6 searches at the bottom. A short note helps. Click **"Copy results for Claude"** at the top and paste it in the chat. To make a fresh page: `pnpm similar:rate`.
 - **Search by how words look on staging (Step 3.8)** needs the fingerprint service's details on the staging API: the same one command as in step 3 of the Gemini item below (it sets `EMBEDDER_URL` and `EMBEDDER_SECRET` too; without the Gemini key yet, leave `GEMINI_API_KEY="$GEMINI_API_KEY"` in: it's simply empty). Until then staging searches by words alone; "More like this" and "similar pieces" already work there.
 - **Gemini key for Step 3.3** (garment spotting is built and waits only for this):
@@ -467,6 +496,8 @@ Next: Step 3.9 — Price and stock refresh.
 - **OK for two small free libraries (Step 1.3)** — `jose` (checks Supabase login tokens) and `@fastify/rate-limit` (rate limiting). Both are free, open source, widely used. Say no and Claude will replace them.
 
 ## Open decisions for Elias
+- **robots.txt for the daily price check (Step 3.9, 2026-11-05).** Pasting a link reads one page at a person's request (like a chat app's link preview), but the price check reads shop pages again by itself every day: that is a crawler, and shops say in their robots.txt what crawlers may read. Checked for the five shops that work (2026-11-05): Zalando, Boozt, Ellos and Gina Tricot allow product pages for every crawler (they only shut out carts, accounts, search, their APIs and some filter links); Nelly's robots.txt itself sat behind a Cloudflare challenge for our reader, so it couldn't be read. **Recommended:** honour robots.txt in the scheduled check (read each shop's once a day, skip pages it disallows and treat them as "couldn't check", keep any crawl delay); the paste flow stays as it is. Say yes and it's a small step.
+  - The user agent points at `https://outfitly.app/bot`, a page that doesn't exist (no domain yet). Before launch: a short page saying what the reader does and how a shop can ask us to stop (in `docs/BEFORE_LAUNCH.md` once the domain is chosen).
 - **Shops that block link readers (Step 3.4, 2026-11-05).** H&M, Arket and Lindex turn automated readers away (their bot protection answers "403 forbidden"), and ASOS doesn't answer at all. With those in your 30 links the 80% goal can't be met by reading pages. Options:
   - (a) **Affiliate product feeds** (e.g. Adtraction or Awin, free to join as a publisher): the shop sends its own product list with name, price, photo and stock, and the same networks pay commissions later. Needs an approved publisher account per network and the shops' OK.
   - (b) **The poster fills in name and price by hand** when a shop can't be read (the photo can come from the poster's own picture).
@@ -479,6 +510,12 @@ Next: Step 3.9 — Price and stock refresh.
 - 18+ only or teens allowed (Step 5.5)
 
 ## Known issues
+- Price and stock check (Step 3.9):
+  - The app keeps a look for a minute before asking again, so a piece that just sold out greys on the next load after that.
+  - A ProductGroup page read as the whole product (sizes told apart by the query) is "in stock" while any size is: a poster's sold-out size still shows in stock. Per-size stock needs the poster's size (Phase 4+).
+  - A real new photo at the same file address with only a new query (e.g. Boozt's `version=`) isn't copied again: the old copy stays until the address changes.
+  - A shop whose robots.txt is behind a challenge (Nelly today) can't be asked; and the check doesn't read robots.txt at all yet (Open decisions).
+  - Staging's machine sleeps when idle, so its 10-minute runs only happen while it's awake; production runs always (Phase 5).
 - "More like this" and "similar pieces" (Step 3.8):
   - A new search waits for the words' fingerprint: ~230–270 ms of CPU on the fingerprint service (p95 ~340 ms), plus ~1 s more when the service is asleep (then the first search after a quiet spell is words-only). Repeat searches use the in-memory copy. Production needs the service awake for search, or accepts words-only first searches (see Later).
   - A search list is reused for the same words for 15 minutes, so a look posted meanwhile shows up for that search only after that.
@@ -533,6 +570,10 @@ Next: Step 3.9 — Price and stock refresh.
 - `pnpm audit`: one moderate advisory in minimatch, pulled in only by ESLint (dev tool reading our own config) — not exploitable here; wait for upstream fix.
 
 ## Measured numbers
+- Price and stock check (Step 3.9, 2026-11-05):
+  - One page checked by hand from the Mac (our R2 test page): ≈1.0 s for the whole run (read, save, log).
+  - Five real shop pages (Zalando, Boozt, Nelly, Ellos, Gina Tricot) read twice a few seconds apart: photo link, price, stock and page identical each time (no daily photo re-copies expected).
+  - Staging's scheduled run on outfitly-dev: 0 pages due (no real offers on shown looks yet), ~45 ms.
 - "More like this", similar pieces and search (Step 3.8, 2026-11-05):
   - Local catalogue of 10,000 looks and 3,000 products (`pnpm similar:speed-data`: the 125 seed looks' real fingerprints, each new one a mix of two plus noise), server's own time (`pnpm similar:speed --direct --database …`), p50 / p95: "More like this" new list 6 / 8 ms logged out, 7 / 9 ms logged in (a viewer with 2,000 looks seen this week, 50 "see less" and 10 saved lists); next page 1 / 2 ms; similar pieces 21 / 24 ms (nearest, next page and cheaper alike); search 10 / 15 ms once the words' fingerprint is in memory. **Target "under 300 ms p95": PASS.**
   - The index finds 95% of each look's true 20 nearest on page 1 on average (lowest 85%; the diversity rules move a few), the same with twice the search width.
@@ -592,6 +633,12 @@ Next: Step 3.9 — Price and stock refresh.
 - First EAS Android preview build (free plan): ~40 min in queue + ~15 min building; APK 107 MB (2026-11-02)
 
 ## Later (parked ideas, not in current scope)
+- Price and stock check (Step 3.9):
+  - Price-drop alerts from `price_history` (the history is kept for this).
+  - Per-size stock once posters pick their size; a link's variant URL could then be read on its own.
+  - Read each shop's robots.txt (if Elias says yes, see Open decisions) and its crawl delay.
+  - A small admin view of `price_refresh_runs` and resting shops (Phase 4 admin), and an alert when a shop has rested for over a week.
+  - Clear `refresh_*` back-offs for a shop by hand once it lets us in again (today they run out by themselves).
 - "More like this" and "similar pieces" (Step 3.8):
   - Faster word fingerprints (ONNX / int8 text model, or a small cache of popular searches' fingerprints in the database) before search depends on them in production; or keep the fingerprint service awake (≈ $34/month, Step 3.2).
   - Garment category labels (English + Swedish) when kinds first show in the app (the "Similar pieces" sheet shows the piece's name for now).
@@ -612,7 +659,6 @@ Next: Step 3.9 — Price and stock refresh.
   - Phase 4 admin page: approve / reject link check items (set the item's status, close the review item).
   - Measure the compare prompt on real pairs (the first `--ai` run) and adjust it if Gemini is often unsure.
 - Link reader (Step 3.4):
-  - Step 3.9's refresh: read an offer's `page_url` and save the read with the offer's own `url` through `saveLinkRead`; the same matching rules then apply (a page that changed item moves the offer).
   - Delete the R2 files of retired product photos with a cleanup job.
   - Show a "try again" button in the app when an answer says `temporary: true`.
 - Photo AI (Step 3.3):
@@ -636,7 +682,6 @@ Next: Step 3.9 — Price and stock refresh.
 - From the Step 3.1 review, for the steps that write these tables:
   - Boxes and scores are checked to lie in 0–1 (scores −1…1), and `1.0000001` is refused: Step 3.3 clamps boxes to the photo and drops zero-size ones before a multi-row insert (one bad box fails them all); Step 3.5 computes similarity in SQL (`1 - (a <=> b)`, which pgvector keeps in range) or clamps it.
   - Step 3.4: store links as `new URL(x).href` (lowercase `https://`, which the check needs; the query and affiliate tags stay), refuse links over 2 KB in its zod schema, and turn barcodes into 14 digits (zero-padded) so a UPC and an EAN for one product don't make two products (then tighten `products_gtin_format`).
-  - Step 3.4 / 3.9: add an index on `offers.page_url` (find the product when a second poster pastes another affiliate link to the same page; fetch each page once a day, not once per link) and update every offer of a page together, or their prices drift apart.
   - Soft-deleted rows keep their unique keys (`offers.url`, `products.gtin`, a look item's look + offer): revive the old row, don't insert a new one.
   - Step 3.5: record what was compared (garment id, offer id) in `link_checks.details`: a look item's garment can change when a photo is spotted again, and the 100-pair evaluation and audits need the original pair.
   - Phase 4: the API checks that a look item's dot photo is one of the look's photos, and the garment's photo (the database doesn't; a composite foreign key would block the seed loader, which rewrites `look_media`). Since 3.6 the look page already ignores a dot on any other photo.

@@ -112,7 +112,9 @@ export const products = pgTable(
 /**
  * What an offer's last price and stock check found (Step 3.9): read fine,
  * the page now shows another item, the page is gone, the shop turned us away,
- * it didn't answer, or the page had no product we could read.
+ * it didn't answer, the page had no product we could read, or it showed the
+ * price in another currency (left as it was: shops change currency by where
+ * the reader is; migration 0020).
  */
 export const OFFER_REFRESH_OUTCOMES = [
   'ok',
@@ -121,6 +123,7 @@ export const OFFER_REFRESH_OUTCOMES = [
   'blocked',
   'failed',
   'unreadable',
+  'currency_changed',
 ] as const;
 
 /**

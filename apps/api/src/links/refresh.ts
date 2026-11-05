@@ -7,6 +7,7 @@ import {
   offers,
   priceRefreshRuns,
   priceRefreshSites,
+  products,
   sql,
 } from '@outfitly/db';
 import { z } from 'zod';
@@ -16,7 +17,13 @@ import type { JobQueue } from '../jobs.ts';
 import { readSetting } from '../settings.ts';
 import { queueLinkCheck } from './check.ts';
 import { LinkFetchError, type NetworkPolicy } from './fetch.ts';
-import { queueProductWork, readShopPage, saveLinkRead, type ShopPage } from './resolve.ts';
+import {
+  queueProductWork,
+  readShopPage,
+  samePhoto,
+  saveLinkRead,
+  type ShopPage,
+} from './resolve.ts';
 import { siteOf } from './urls.ts';
 
 /**
@@ -30,7 +37,8 @@ import { siteOf } from './urls.ts';
  * daily caps, spread over the day; at most one read of a shop every
  * `siteGapMs`; a shop that turns us away, is busy or doesn't answer rests,
  * and that is never read as sold out or a price change. A page gone
- * `goneAfter` checks in a row counts as sold out. No AI is asked here.
+ * `goneAfter` checks in a row counts as sold out, unless most of a shop's
+ * pages "went" at once (then a person should look). No AI is asked here.
  */
 
 /** The `settings` row with the caps and timings (inserted by migration 0019). */
@@ -57,39 +65,51 @@ export function priceRefreshSettings(db: Db): Promise<PriceRefreshSettings> {
 }
 
 const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 /** How often the job runs (its schedule in jobs.ts); the caps are spread over the runs left today. */
 export const RUN_EVERY_MS = 10 * 60 * 1000;
 /** A run stops starting new pages after this, so it never runs into the next one. */
 const RUN_TIME_LIMIT_MS = 8 * 60 * 1000;
 /** "Daily": read again once this long has passed (a little under a day, so runs can drift). */
 const DAILY_MS = 20 * HOUR_MS;
-const WEEKLY_MS = 7 * 24 * HOUR_MS;
+const WEEKLY_MS = 7 * DAY_MS;
+/** Not read successfully for this long: "in stock" is no longer claimed (stock unknown). */
+const STALE_MS = 14 * DAY_MS;
 /** Runs are kept this long (the caps only look at today). */
 const KEEP_RUNS_DAYS = 90;
+/** A shop with at least this many pages gone in one run, and most of its reads, is suspect. */
+const SUSPECT_GONE = 3;
 
-/** What one page's check found, for the run's counts. */
-export type PageFinding = (typeof FINDINGS)[number];
-const FINDINGS = [
+/** What a run counts. */
+export const FINDINGS = [
   'ok',
-  'priceChanged',
-  'soldOut',
-  'backInStock',
   'moved',
   'gone',
   'blocked',
   'failed',
   'unreadable',
+  'currencyChanged',
+  'priceChanged',
+  'soldOut',
+  'backInStock',
+  'wentStale',
 ] as const;
+export type Finding = (typeof FINDINGS)[number];
+
+type Outcome = 'ok' | 'moved' | 'blocked' | 'failed' | 'unreadable' | 'currency_changed';
 
 export interface PageResult {
-  outcome: 'ok' | 'moved' | 'gone' | 'blocked' | 'failed' | 'unreadable' | 'skipped';
+  outcome: Outcome | 'gone' | 'skipped';
   /** Links to the page saved or marked. */
   offers: number;
   priceChanged: number;
   soldOut: number;
   backInStock: number;
+  wentStale: number;
   /** The shop should rest until then (turned us away, busy, or didn't answer). */
   restSiteUntil: Date | null;
+  /** A gone page's links, not marked yet: the run decides (`markGone`, or unreadable if suspect). */
+  gone: LiveOffer[] | null;
 }
 
 export interface RefreshDeps {
@@ -100,14 +120,21 @@ export interface RefreshDeps {
   /** Tests pass a fake clock and a sleep that moves it. */
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
+  /** A page whose check crashed (it's marked unreadable and the run goes on). */
+  onError?: (error: unknown, pageUrl: string) => void;
+  /** Most of a shop's pages "went" in one run: left as they were, for a person to look at. */
+  onSuspectSite?: (site: string, gone: number, reads: number) => void;
 }
 
 export interface RunSummary {
-  runId: string;
+  /** Null when another run was still going (nothing was done). */
+  runId: string | null;
   reads: { savedOrPopular: number; others: number };
-  found: Record<PageFinding, number>;
+  found: Record<Finding, number>;
   /** Shops left alone this run because they're resting. */
   restingSites: string[];
+  /** Shops whose pages "went" all at once this run: not counted as gone. */
+  suspectSites: string[];
 }
 
 const realSleep = (ms: number) =>
@@ -123,22 +150,34 @@ export interface DuePage {
   savers: number;
 }
 
+/** The site of a `page_url` in SQL, like `siteOf` (lower case, `www.` / `m.` left out). */
+const PAGE_SITE = sql`regexp_replace(lower(substring(po.page_url from '^[A-Za-z][A-Za-z0-9+.-]*://([^/?#:]+)')), '^(www|m)\\.', '')`;
+
 /**
- * Pages due for a check, most important first (saved by more people, then
- * popular, then least recently checked): important ones read over 20 hours
- * ago, the rest over a week ago, and pages found gone but not yet counted as
- * sold out daily, to settle it sooner. Only pages with a link on a shown look,
- * and none in a failure's back-off (`refresh_due_at`).
+ * Pages due for a check in one group, most important first (saved by more
+ * people, then popular, then least recently checked): `important` = on a
+ * saved or popular look, read over 20 hours ago; `others` = the rest, read
+ * over a week ago. Pages found gone but not yet sold out come back daily in
+ * either group, to settle it sooner. Only pages with a link on a shown look,
+ * none in a failure's back-off (`refresh_due_at`), none of a resting shop.
  */
 export async function duePages(
   db: Db,
   settings: PriceRefreshSettings,
   now: Date,
+  group: 'important' | 'others',
   limit: number,
 ): Promise<DuePage[]> {
+  if (limit <= 0) return [];
   const at = sql`${now.toISOString()}::timestamptz`;
   const daily = sql`${new Date(now.getTime() - DAILY_MS).toISOString()}::timestamptz`;
   const weekly = sql`${new Date(now.getTime() - WEEKLY_MS).toISOString()}::timestamptz`;
+  const important = sql`(pw.savers > 0 OR pw.popular)`;
+  const settling = sql`(po.gone BETWEEN 1 AND ${settings.goneAfter - 1} AND po.touched < ${daily})`;
+  const inGroup =
+    group === 'important'
+      ? sql`${important} AND (po.touched < ${daily} OR ${settling})`
+      : sql`NOT ${important} AND (po.touched < ${weekly} OR ${settling})`;
   const { rows } = await db.execute<{ page_url: string; important: boolean; savers: number }>(sql`
     WITH shown AS (
       SELECT DISTINCT li.offer_id, li.look_id
@@ -178,14 +217,12 @@ export async function duePages(
         LEFT JOIN popular p ON p.id = pl.look_id
        GROUP BY pl.page_url
     )
-    SELECT po.page_url, (pw.savers > 0 OR pw.popular) AS important, pw.savers
+    SELECT po.page_url, ${important} AS important, pw.savers
       FROM page_offers po JOIN page_weight pw ON pw.page_url = po.page_url
-     WHERE po.due
-       AND (((pw.savers > 0 OR pw.popular) AND po.touched < ${daily})
-            OR po.touched < ${weekly}
-            OR (po.gone BETWEEN 1 AND ${settings.goneAfter - 1} AND po.touched < ${daily}))
-     ORDER BY (pw.savers > 0 OR pw.popular) DESC, pw.savers DESC, pw.popular DESC,
-              po.touched, po.page_url
+     WHERE po.due AND ${inGroup}
+       AND NOT EXISTS (SELECT 1 FROM price_refresh_sites rs
+                        WHERE rs.site = ${PAGE_SITE} AND rs.rest_until > ${at})
+     ORDER BY pw.savers DESC, pw.popular DESC, po.touched, po.page_url
      LIMIT ${limit}`);
   return rows.map((r) => ({ pageUrl: r.page_url, important: r.important, savers: r.savers }));
 }
@@ -210,29 +247,71 @@ export function runShare(left: number, now: Date, maxPerRun: number): number {
   return Math.min(maxPerRun, Math.ceil(left / runsLeft));
 }
 
-/** Shops resting now, and until when. */
-async function restingSites(db: Db, now: Date): Promise<Map<string, Date>> {
+/** Shops resting now. */
+async function restingSites(db: Db, now: Date): Promise<string[]> {
   const rows = await db
-    .select({ site: priceRefreshSites.site, until: priceRefreshSites.restUntil })
+    .select({ site: priceRefreshSites.site })
     .from(priceRefreshSites)
     .where(sql`${priceRefreshSites.restUntil} > ${now.toISOString()}::timestamptz`);
-  return new Map(rows.map((r) => [r.site, r.until]));
+  return rows.map((r) => r.site);
 }
 
 function siteOfPage(pageUrl: string): string {
   return siteOf(new URL(pageUrl).hostname);
 }
 
+function emptyFindings(): Record<Finding, number> {
+  return Object.fromEntries(FINDINGS.map((f) => [f, 0])) as Record<Finding, number>;
+}
+
+const FINDING_OF: Record<Outcome | 'gone', Finding> = {
+  ok: 'ok',
+  moved: 'moved',
+  gone: 'gone',
+  blocked: 'blocked',
+  failed: 'failed',
+  unreadable: 'unreadable',
+  currency_changed: 'currencyChanged',
+};
+
 /**
- * One run: picks the due pages within today's caps, reads them one at a time
- * (at most one read of a shop every `siteGapMs`; a shop that has to rest is
- * skipped for the rest of the run) and logs the run. With `pageUrl`, reads
- * just that page now, whatever is due (scripts; still logged and counted).
+ * One run, if no other is going (manual runs too: a lock held for the run):
+ * picks the due pages within today's caps, reads them one at a time (at most
+ * one read of a shop every `siteGapMs`; a shop that has to rest is skipped
+ * for the rest of the run), then settles gone pages and logs the run (its
+ * counts are written after every page, so a killed run's reads still count).
+ * With `pageUrl`, reads just that page now, whatever is due (scripts).
  */
 export async function runPriceRefresh(
   deps: RefreshDeps,
   options: { pageUrl?: string } = {},
 ): Promise<RunSummary> {
+  const { db } = deps;
+  const lockClient = await db.$client.connect();
+  try {
+    const { rows } = await lockClient.query<{ ok: boolean }>(
+      "SELECT pg_try_advisory_lock(hashtext('price-refresh')) AS ok",
+    );
+    if (!rows[0]?.ok) {
+      return {
+        runId: null,
+        reads: { savedOrPopular: 0, others: 0 },
+        found: emptyFindings(),
+        restingSites: [],
+        suspectSites: [],
+      };
+    }
+    try {
+      return await runLocked(deps, options);
+    } finally {
+      await lockClient.query("SELECT pg_advisory_unlock(hashtext('price-refresh'))");
+    }
+  } finally {
+    lockClient.release();
+  }
+}
+
+async function runLocked(deps: RefreshDeps, options: { pageUrl?: string }): Promise<RunSummary> {
   const { db } = deps;
   const clock = deps.now ?? (() => new Date());
   const sleep = deps.sleep ?? realSleep;
@@ -248,7 +327,7 @@ export async function runPriceRefresh(
     .returning({ id: priceRefreshRuns.id });
   if (!run) throw new Error('Run not logged.');
 
-  const resting = await restingSites(db, started);
+  const resting = options.pageUrl ? [] : await restingSites(db, started);
   let picked: DuePage[];
   if (options.pageUrl) {
     picked = [{ pageUrl: options.pageUrl, important: true, savers: 0 }];
@@ -259,22 +338,26 @@ export async function runPriceRefresh(
       started,
       settings.maxPerRun,
     );
-    const othersShare = runShare(settings.othersPerDay - used.others, started, settings.maxPerRun);
-    // Read more than needed: pages of resting shops are skipped.
-    const due = (await duePages(db, settings, started, settings.maxPerRun * 10)).filter(
-      (page) => !resting.has(siteOfPage(page.pageUrl)),
+    const important = await duePages(db, settings, started, 'important', importantShare);
+    const othersShare = Math.min(
+      runShare(settings.othersPerDay - used.others, started, settings.maxPerRun),
+      settings.maxPerRun - important.length,
     );
-    const important = due.filter((p) => p.important).slice(0, importantShare);
-    const others = due
-      .filter((p) => !p.important)
-      .slice(0, Math.min(othersShare, settings.maxPerRun - important.length));
+    const others = await duePages(db, settings, started, 'others', othersShare);
     picked = [...important, ...others];
   }
 
-  const found = Object.fromEntries(FINDINGS.map((f) => [f, 0])) as Record<PageFinding, number>;
+  const found = emptyFindings();
   const reads = { savedOrPopular: 0, others: 0 };
+  const saveCounts = () =>
+    db
+      .update(priceRefreshRuns)
+      .set({ readsSavedOrPopular: reads.savedOrPopular, readsOthers: reads.others, found })
+      .where(eq(priceRefreshRuns.id, run.id));
   const lastRead = new Map<string, number>();
-  const restingNow = new Set(options.pageUrl ? [] : resting.keys());
+  const restingNow = new Set<string>();
+  const perSite = new Map<string, { reads: number; gone: LiveOffer[][] }>();
+  const suspectSites: string[] = [];
   const waiting = [...picked];
   try {
     while (waiting.length > 0) {
@@ -296,23 +379,60 @@ export async function runPriceRefresh(
       if (!page) break;
       const site = siteOfPage(page.pageUrl);
       lastRead.set(site, clock().getTime());
-      const result = await refreshPage(deps, page.pageUrl, settings, clock());
+      let result: PageResult;
+      try {
+        result = await refreshPage(deps, page.pageUrl, settings, clock());
+      } catch (error) {
+        // A page that crashes its check stops nothing else: unreadable, retried after a back-off.
+        deps.onError?.(error, page.pageUrl);
+        result = await markPageUnreadable(db, page.pageUrl, clock()).catch(() => SKIPPED);
+      }
       if (result.outcome === 'skipped') continue;
       if (page.important) reads.savedOrPopular += 1;
       else reads.others += 1;
-      found[result.outcome] += 1;
-      found.priceChanged += result.priceChanged;
-      found.soldOut += result.soldOut;
-      found.backInStock += result.backInStock;
+      const tally = perSite.get(site) ?? { reads: 0, gone: [] };
+      tally.reads += 1;
+      perSite.set(site, tally);
+      if (result.gone) {
+        tally.gone.push(result.gone);
+      } else {
+        found[FINDING_OF[result.outcome]] += 1;
+        found.priceChanged += result.priceChanged;
+        found.soldOut += result.soldOut;
+        found.backInStock += result.backInStock;
+        found.wentStale += result.wentStale;
+      }
       if (result.restSiteUntil) {
         restingNow.add(site);
         await restSite(db, site, result.outcome, result.restSiteUntil);
-      } else if (result.outcome !== 'unreadable' && result.outcome !== 'gone') {
+      } else if (result.outcome === 'ok' || result.outcome === 'moved') {
         // The shop answered and let us read: any rest is over.
         await db.delete(priceRefreshSites).where(eq(priceRefreshSites.site, site));
       }
+      await saveCounts();
     }
   } finally {
+    // Gone pages, shop by shop: most of a shop's pages gone at once is more likely a shop
+    // change (new addresses, a consent wall) than a sell-out, so a person looks first.
+    const now = clock();
+    for (const [site, tally] of perSite) {
+      if (tally.gone.length === 0) continue;
+      const suspect = tally.gone.length >= SUSPECT_GONE && tally.gone.length * 2 > tally.reads;
+      if (suspect) {
+        suspectSites.push(site);
+        deps.onSuspectSite?.(site, tally.gone.length, tally.reads);
+      }
+      for (const live of tally.gone) {
+        if (suspect) {
+          await markFailed(db, live, 'unreadable', now);
+          found.unreadable += 1;
+        } else {
+          const marked = await markGone(db, live, settings, now);
+          found.gone += 1;
+          found.soldOut += marked.soldOut;
+        }
+      }
+    }
     await db
       .update(priceRefreshRuns)
       .set({
@@ -323,8 +443,19 @@ export async function runPriceRefresh(
       })
       .where(eq(priceRefreshRuns.id, run.id));
   }
-  return { runId: run.id, reads, found, restingSites: [...resting.keys()] };
+  return { runId: run.id, reads, found, restingSites: resting, suspectSites };
 }
+
+const SKIPPED: PageResult = {
+  outcome: 'skipped',
+  offers: 0,
+  priceChanged: 0,
+  soldOut: 0,
+  backInStock: 0,
+  wentStale: 0,
+  restSiteUntil: null,
+  gone: null,
+};
 
 /** A shop rests: until `until`, or longer each time in a row (`strikes`). */
 async function restSite(db: Db, site: string, problem: string, until: Date): Promise<void> {
@@ -345,38 +476,89 @@ async function restSite(db: Db, site: string, problem: string, until: Date): Pro
 export function siteRest(error: LinkFetchError, strikes: number): number {
   const doubling = 2 ** Math.min(Math.max(strikes - 1, 0), 10);
   if (error.httpStatus === 429 || error.httpStatus === 503) {
-    return Math.min(24 * HOUR_MS, Math.max(error.retryAfterMs ?? 0, 0.5 * HOUR_MS * doubling));
+    return Math.min(DAY_MS, Math.max(error.retryAfterMs ?? 0, 0.5 * HOUR_MS * doubling));
   }
-  if (error.problem === 'blocked') return Math.min(7 * 24 * HOUR_MS, 6 * HOUR_MS * doubling);
-  return Math.min(24 * HOUR_MS, HOUR_MS * doubling);
+  if (error.problem === 'blocked') return Math.min(WEEKLY_MS, 6 * HOUR_MS * doubling);
+  return Math.min(DAY_MS, HOUR_MS * doubling);
 }
 
-/** When a link is next due after a check that couldn't read its page (`failures` in a row). */
-export function failureBackoff(outcome: 'blocked' | 'failed' | 'unreadable', failures: number) {
+/** When a link is next due after a check that couldn't use its page (`failures` in a row). */
+export function failureBackoff(
+  outcome: 'blocked' | 'failed' | 'unreadable' | 'currency_changed',
+  failures: number,
+): number {
   const doubling = 2 ** Math.min(Math.max(failures - 1, 0), 10);
-  const base = outcome === 'unreadable' ? DAILY_MS : 6 * HOUR_MS;
+  const base = outcome === 'blocked' || outcome === 'failed' ? 6 * HOUR_MS : DAILY_MS;
   return Math.min(WEEKLY_MS, base * doubling);
 }
 
-type LiveOffer = Pick<
-  typeof offers.$inferSelect,
-  | 'id'
-  | 'url'
-  | 'productId'
-  | 'priceMinor'
-  | 'currency'
-  | 'stock'
-  | 'refreshFailures'
-  | 'refreshGone'
->;
+interface LiveOffer {
+  id: string;
+  url: string;
+  productId: string;
+  priceMinor: number | null;
+  currency: string | null;
+  stock: 'in_stock' | 'out_of_stock' | 'unknown';
+  lastCheckedAt: Date | null;
+  refreshFailures: number;
+  refreshGone: number;
+  /** The shop photo its product has now. */
+  photo: string | null;
+}
+
+async function liveOffers(db: Db, pageUrl: string): Promise<LiveOffer[]> {
+  return db
+    .select({
+      id: offers.id,
+      url: offers.url,
+      productId: offers.productId,
+      priceMinor: offers.priceMinor,
+      currency: offers.currency,
+      stock: offers.stock,
+      lastCheckedAt: offers.lastCheckedAt,
+      refreshFailures: offers.refreshFailures,
+      refreshGone: offers.refreshGone,
+      photo: products.imageUrl,
+    })
+    .from(offers)
+    .innerJoin(products, eq(products.id, offers.productId))
+    .where(and(eq(offers.pageUrl, pageUrl), isNull(offers.deletedAt)));
+}
+
+/**
+ * Whether a read that found no product means the page is gone: the shop
+ * redirected it (a real HTTP redirect) to another page of the same site that
+ * doesn't carry the old address, like a category or the home page. A changed
+ * canonical link alone, a redirect to another site (a consent or login wall,
+ * another country) or one keeping the old path (`/sv/p/coat`,
+ * `/login?return=/p/coat`) only means we couldn't read it.
+ */
+export function redirectedAway(requested: URL, finalUrl: URL): boolean {
+  const from = new URL(requested.href);
+  const to = new URL(finalUrl.href);
+  from.hash = '';
+  to.hash = '';
+  if (from.href === to.href) return false;
+  if (siteOf(from.hostname) !== siteOf(to.hostname)) return false;
+  const oldPath = from.pathname.replace(/\/$/, '');
+  if (oldPath === '') return false;
+  let target = `${to.pathname}${to.search}`;
+  try {
+    target = decodeURIComponent(target);
+  } catch {
+    // Keep it encoded.
+  }
+  return !target.includes(oldPath);
+}
 
 /**
  * Checks one shop page and every live link to it. A read page saves every
  * link from the one read (price, stock, `last_checked_at`; history only when
  * the price changed; a page now showing another item moves the link and its
- * looks are checked again). A page that's gone counts toward sold out; a shop
- * that turned us away, was busy or didn't answer changes nothing but the
- * check's own record (and the shop rests).
+ * looks are checked again). A gone page is handed back for the run to mark
+ * (`gone`). A shop that turned us away, was busy or didn't answer, a page we
+ * couldn't read, or one in another currency changes nothing but the check's
+ * own record (and a shop that turned us away rests).
  */
 export async function refreshPage(
   deps: RefreshDeps,
@@ -385,67 +567,65 @@ export async function refreshPage(
   now: Date,
 ): Promise<PageResult> {
   const { db, queue } = deps;
-  const live: LiveOffer[] = await db
-    .select({
-      id: offers.id,
-      url: offers.url,
-      productId: offers.productId,
-      priceMinor: offers.priceMinor,
-      currency: offers.currency,
-      stock: offers.stock,
-      refreshFailures: offers.refreshFailures,
-      refreshGone: offers.refreshGone,
-    })
-    .from(offers)
-    .where(and(eq(offers.pageUrl, pageUrl), isNull(offers.deletedAt)));
-  const none: PageResult = {
-    outcome: 'skipped',
-    offers: 0,
-    priceChanged: 0,
-    soldOut: 0,
-    backInStock: 0,
-    restSiteUntil: null,
-  };
-  if (live.length === 0) return none;
+  const live = await liveOffers(db, pageUrl);
+  if (live.length === 0) return SKIPPED;
+  const result: PageResult = { ...SKIPPED, offers: live.length };
+  const failed = async (outcome: Exclude<Outcome, 'ok' | 'moved'>) => ({
+    ...result,
+    outcome,
+    wentStale: await markFailed(db, live, outcome, now),
+  });
 
+  const requested = new URL(pageUrl);
   let page: ShopPage;
   try {
-    page = await readShopPage(new URL(pageUrl), deps.network);
+    page = await readShopPage(requested, deps.network);
   } catch (error) {
     if (!(error instanceof LinkFetchError)) throw error;
-    if (error.problem === 'not_found') return markGone(db, live, settings, now);
+    if (error.problem === 'not_found') return { ...result, outcome: 'gone', gone: live };
     if (
       error.problem === 'blocked' ||
       error.problem === 'too_slow' ||
       error.problem === 'unreachable'
     ) {
       const outcome = error.problem === 'blocked' ? 'blocked' : 'failed';
-      await markFailed(db, live, outcome, now);
       const [site] = await db
         .select({ strikes: priceRefreshSites.strikes })
         .from(priceRefreshSites)
         .where(eq(priceRefreshSites.site, siteOfPage(pageUrl)));
       const until = new Date(now.getTime() + siteRest(error, (site?.strikes ?? 0) + 1));
-      return { ...none, outcome, offers: live.length, restSiteUntil: until };
+      return { ...(await failed(outcome)), restSiteUntil: until };
     }
-    await markFailed(db, live, 'unreadable', now);
-    return { ...none, outcome: 'unreadable', offers: live.length };
+    return failed('unreadable');
   }
-  if (!page.product) {
-    // Sent on to a page without a product (a removed item's category page): gone. The same
-    // page without product data (a redesign, a broken page) only couldn't be read.
-    if (page.pageUrl !== pageUrl) return markGone(db, live, settings, now);
-    await markFailed(db, live, 'unreadable', now);
-    return { ...none, outcome: 'unreadable', offers: live.length };
+  const product = page.product;
+  if (!product) {
+    if (redirectedAway(requested, page.finalUrl)) {
+      return { ...result, outcome: 'gone', gone: live };
+    }
+    return failed('unreadable');
+  }
+  // Shops show prices in the reader's currency (where our server is, a CDN's guess): a
+  // switch isn't a price change, so the link keeps what it had until a person looks.
+  if (
+    product.currency !== null &&
+    live.some((o) => o.currency !== null && o.currency !== product.currency)
+  ) {
+    return failed('currency_changed');
   }
 
-  const product = page.product;
-  const result: PageResult = { ...none, outcome: 'ok', offers: live.length };
   const moved: string[] = [];
   for (const offer of live) {
+    // The same shop photo with another query (sizes, cache-busting) isn't a new photo.
+    const photo = samePhoto(offer.photo, product.imageUrl) ? offer.photo : product.imageUrl;
     const saved = await saveLinkRead(
       db,
-      { url: offer.url, pageUrl: page.pageUrl, product, truncated: page.truncated },
+      {
+        url: offer.url,
+        pageUrl: page.pageUrl,
+        product: { ...product, imageUrl: photo },
+        truncated: page.truncated,
+      },
       now,
     );
     await queueProductWork(queue, db, saved.productId, saved.copyPhoto);
@@ -453,24 +633,13 @@ export async function refreshPage(
     if (saved.productId !== offer.productId) moved.push(offer.id);
     const known = product.priceMinor !== null && product.currency !== null;
     const wasKnown = offer.priceMinor !== null && offer.currency !== null;
-    if (
-      known &&
-      wasKnown &&
-      (product.priceMinor !== offer.priceMinor || product.currency !== offer.currency)
-    ) {
-      result.priceChanged += 1;
-    }
+    if (known && wasKnown && product.priceMinor !== offer.priceMinor) result.priceChanged += 1;
     if (offer.stock !== 'out_of_stock' && product.stock === 'out_of_stock') result.soldOut += 1;
     if (offer.stock === 'out_of_stock' && product.stock !== 'out_of_stock') {
       result.backInStock += 1;
     }
   }
-  const checked = {
-    refreshTriedAt: now,
-    refreshFailures: 0,
-    refreshGone: 0,
-    refreshDueAt: new Date(now.getTime() + DAILY_MS),
-  };
+  const checked = { refreshTriedAt: now, refreshDueAt: new Date(now.getTime() + DAILY_MS) };
   await db
     .update(offers)
     .set({ ...checked, refreshOutcome: 'ok' })
@@ -481,22 +650,25 @@ export async function refreshPage(
       ),
     );
   if (moved.length > 0) {
-    result.outcome = 'moved';
     await db
       .update(offers)
       .set({ ...checked, refreshOutcome: 'moved' })
       .where(inArray(offers.id, moved));
   }
-  return result;
+  return { ...result, outcome: moved.length > 0 ? 'moved' : 'ok' };
 }
 
-/** The page is gone: one more in a row; at `goneAfter` its links count as sold out. */
-async function markGone(
+/**
+ * The page is gone: one more in a row (failures don't break the row, a good
+ * read does); at `goneAfter` its links count as sold out and are then only
+ * looked at weekly, in case the page comes back.
+ */
+export async function markGone(
   db: Db,
   live: LiveOffer[],
   settings: PriceRefreshSettings,
   now: Date,
-): Promise<PageResult> {
+): Promise<{ soldOut: number }> {
   let soldOut = 0;
   for (const offer of live) {
     const gone = offer.refreshGone + 1;
@@ -510,29 +682,32 @@ async function markGone(
         refreshFailures: offer.refreshFailures + 1,
         refreshGone: gone,
         ...(nowSoldOut ? { stock: 'out_of_stock' as const } : {}),
-        refreshDueAt: new Date(now.getTime() + DAILY_MS),
+        refreshDueAt: new Date(now.getTime() + (nowSoldOut ? WEEKLY_MS : DAILY_MS)),
       })
       .where(eq(offers.id, offer.id));
   }
-  return {
-    outcome: 'gone',
-    offers: live.length,
-    priceChanged: 0,
-    soldOut,
-    backInStock: 0,
-    restSiteUntil: null,
-  };
+  return { soldOut };
 }
 
-/** Couldn't read the page: nothing about the item changes, only the check's own record. */
+/**
+ * Couldn't use the page: nothing about the item changes, only the check's own
+ * record. A link not read for two weeks no longer says "in stock" (unknown):
+ * a shop that keeps us out could have sold it long ago. Returns how many went
+ * stale now.
+ */
 async function markFailed(
   db: Db,
   live: LiveOffer[],
-  outcome: 'blocked' | 'failed' | 'unreadable',
+  outcome: Exclude<Outcome, 'ok' | 'moved'>,
   now: Date,
-): Promise<void> {
+): Promise<number> {
+  let wentStale = 0;
   for (const offer of live) {
     const failures = offer.refreshFailures + 1;
+    const stale =
+      offer.stock === 'in_stock' &&
+      (offer.lastCheckedAt === null || now.getTime() - offer.lastCheckedAt.getTime() > STALE_MS);
+    if (stale) wentStale += 1;
     await db
       .update(offers)
       .set({
@@ -540,7 +715,17 @@ async function markFailed(
         refreshOutcome: outcome,
         refreshFailures: failures,
         refreshDueAt: new Date(now.getTime() + failureBackoff(outcome, failures)),
+        ...(stale ? { stock: 'unknown' as const } : {}),
       })
       .where(eq(offers.id, offer.id));
   }
+  return wentStale;
+}
+
+/** After a crash checking a page: its links are marked unreadable (with the usual back-off). */
+async function markPageUnreadable(db: Db, pageUrl: string, now: Date): Promise<PageResult> {
+  const live = await liveOffers(db, pageUrl);
+  if (live.length === 0) return SKIPPED;
+  const wentStale = await markFailed(db, live, 'unreadable', now);
+  return { ...SKIPPED, outcome: 'unreadable', offers: live.length, wentStale };
 }

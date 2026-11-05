@@ -484,6 +484,25 @@ function samePage(a: unknown, page: URL): boolean {
   }
 }
 
+/**
+ * Whether a variant's URL is this page: same host and path, and every query
+ * parameter it has is on the page too. Variants told apart only by the query
+ * (`/p/coat?size=xs`, Google's and Shopify's markup) never match the bare
+ * product page, so one sold-out size can't stand for the whole product.
+ */
+function variantOnPage(a: unknown, page: URL): boolean {
+  if (typeof a !== 'string') return false;
+  try {
+    const url = new URL(a, page);
+    if (url.hostname !== page.hostname || url.pathname !== page.pathname) return false;
+    return [...url.searchParams].every(([key, value]) =>
+      page.searchParams.getAll(key).includes(value),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function fromJsonLd(blocks: unknown[], page: URL): PageProduct | null {
   const found = productNodes(blocks).filter((f) => text(f.node.name));
   const sellable = (n: Node) => pricesOf(n).length > 0 || list(n.hasVariant).length > 0;
@@ -500,8 +519,9 @@ function fromJsonLd(blocks: unknown[], page: URL): PageProduct | null {
   if (!node) return null;
 
   const variants = list(node.hasVariant).filter(isNode);
-  // A variant on this exact URL (a colour or size page), else all of them for the price.
-  const variant = variants.find((v) => samePage(v.url ?? v['@id'], page)) ?? null;
+  // The one variant this exact page is (a colour or size page), else all of them for the price.
+  const onPage = variants.filter((v) => variantOnPage(v.url ?? v['@id'], page));
+  const variant = onPage.length === 1 ? (onPage[0] ?? null) : null;
   let prices = variant ? pricesOf(variant) : [];
   if (prices.length === 0) prices = pricesOf(node);
   if (prices.length === 0) prices = variants.flatMap(pricesOf);
