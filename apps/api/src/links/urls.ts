@@ -61,6 +61,28 @@ export function fitsLinkLimit(url: string): boolean {
 }
 
 /**
+ * A link at the end of a sentence loses the sentence's punctuation, like chat
+ * apps do: "…?aff=x." → "…?aff=x", "(see https://…/p/1)" → "…/p/1", but a
+ * closing bracket the link itself opened stays ("…/Coat_(black)").
+ */
+function withoutTrailingPunctuation(link: string): string {
+  let text = link;
+  for (;;) {
+    const last = text.at(-1) ?? '';
+    const pairs: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
+    const opener = pairs[last];
+    if (opener !== undefined) {
+      const opened = text.split(opener).length - 1;
+      const closed = text.split(last).length - 1;
+      if (closed <= opened) return text;
+    } else if (!'.,;:!?\'"*'.includes(last) || last === '') {
+      return text;
+    }
+    text = text.slice(0, -1);
+  }
+}
+
+/**
  * The link in what someone pasted or shared: the first http(s) link in the
  * text, or the text itself with https added if it looks like `www.shop.se/…`.
  * Nothing in the link itself is changed (URL parsing only normalises spelling,
@@ -69,11 +91,11 @@ export function fitsLinkLimit(url: string): boolean {
 export function linkFromInput(input: string): URL | null {
   const text = input.trim();
   const inText = /https?:\/\/[^\s<>"']+/i.exec(text)?.[0];
-  const candidate =
-    inText ?? (/^[^\s/:]+\.[a-z]{2,}(\/\S*)?$/i.test(text) ? `https://${text}` : null);
-  if (!candidate) return null;
+  const bare = /^[^\s/:]+\.[a-z]{2,}(\/\S*)?$/i.test(text) ? `https://${text}` : null;
+  const found = inText ?? bare;
+  if (!found) return null;
   try {
-    const url = new URL(candidate);
+    const url = new URL(withoutTrailingPunctuation(found));
     return url.protocol === 'https:' || url.protocol === 'http:' ? url : null;
   } catch {
     return null;
@@ -91,7 +113,8 @@ function withoutTracking(url: URL): URL {
   return clean;
 }
 
-function siteOf(host: string): string {
+/** A shop's site: its host without `www.` or `m.`. */
+export function siteOf(host: string): string {
   return host.toLowerCase().replace(/^(www|m)\./, '');
 }
 

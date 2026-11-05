@@ -27,7 +27,9 @@ describe('prices', () => {
     ['1299', 'SEK', 129900],
     ['1299.5', 'SEK', 129950],
     ['12,5', 'EUR', 1250],
-    ['1.299', 'EUR', 129900],
+    ['1299.000', 'SEK', 129900],
+    ['1.299.000', 'SEK', 129900000],
+    ['12,345.67', 'USD', 1234567],
     ['1,299,000', 'SEK', 129900000],
     ['SEK 499', 'SEK', 49900],
     ['499 kr', 'SEK', 49900],
@@ -51,6 +53,13 @@ describe('prices', () => {
     [Number.NaN, 'SEK'],
     ['99999999999', 'SEK'],
     [null, 'SEK'],
+    // Thousands or decimals? No price rather than a wrong one.
+    ['199.000', 'SEK'],
+    ['1.299', 'EUR'],
+    ['1,299', 'USD'],
+    ['1,2.3', 'SEK'],
+    ['1.2,30', 'SEK'],
+    ['499', 'ABC'],
   ])('%s %s → no price', (value, currency) => {
     expect(parsePrice(value, currency)).toBeNull();
   });
@@ -173,6 +182,48 @@ describe('reading product pages', () => {
   });
 });
 
+describe('hostile or odd pages', () => {
+  const MB3 = 3 * 1024 * 1024;
+  it.each([
+    ['unclosed <meta', '<meta '],
+    ['unclosed <script', '<script '],
+    ['unclosed <link', '<link '],
+    ['scripts that never close', '<script>'],
+    ['tiny meta tags', '<meta>'],
+    ['tiny scripts', '<script></script>'],
+    ['ld+json blocks', '<script type="application/ld+json">{}</script>'],
+    ['lone brackets', '<'],
+    ['attribute soup', '<meta a="'],
+  ])('reads 3 MB of %s quickly', (_name, piece) => {
+    const html = piece.repeat(Math.ceil(MB3 / piece.length));
+    const started = performance.now();
+    readProductPage(html, page);
+    expect(performance.now() - started).toBeLessThan(300);
+  });
+
+  it('ignores odd @type values, control characters and unknown entities', () => {
+    const html = `<script type="application/ld+json">[
+      {"@type": {"toString": 1}, "name": "Not a product"},
+      {"@type": ["Product", {"x": 1}], "name": "Coat\\u0000 &constructor; &toString;", "brand": "Ar\u0000ket",
+       "offers": {"price": "100", "priceCurrency": "SEK"}}
+    ]</script>`;
+    expect(readProductPage(html, page).product).toMatchObject({
+      name: 'Coat &constructor; &toString;',
+      brand: 'Ar ket',
+      priceMinor: 10000,
+    });
+  });
+
+  it('treats 0 as no price', () => {
+    const html = `<script type="application/ld+json">{"@type":"Product","name":"Coat","offers":[
+      {"@type":"Offer","price":"0","priceCurrency":"SEK","availability":"InStock"},
+      {"@type":"Offer","price":"799","priceCurrency":"SEK","availability":"OutOfStock"}]}</script>`;
+    expect(readProductPage(html, page).product).toMatchObject({ priceMinor: 79900 });
+    const zero = html.replace('"799"', '"0"');
+    expect(readProductPage(zero, page).product).toMatchObject({ priceMinor: null, currency: null });
+  });
+});
+
 describe('links', () => {
   it('finds the link in shared text and adds https to a bare address', () => {
     expect(linkFromInput('Look at this! https://shop.example/p/1?aff=7 so nice')?.href).toBe(
@@ -181,6 +232,14 @@ describe('links', () => {
     expect(linkFromInput('www.zalando.se/jacka-123.html')?.href).toBe(
       'https://www.zalando.se/jacka-123.html',
     );
+    expect(linkFromInput('Get it here: https://shop.example/p/1?aff=x.')?.href).toBe(
+      'https://shop.example/p/1?aff=x',
+    );
+    expect(linkFromInput('(see https://shop.example/p/1)!')?.href).toBe('https://shop.example/p/1');
+    expect(linkFromInput('https://shop.example/Coat_(black)')?.href).toBe(
+      'https://shop.example/Coat_(black)',
+    );
+    expect(linkFromInput('"https://shop.example/p/1",')?.href).toBe('https://shop.example/p/1');
     expect(linkFromInput('just words')).toBeNull();
     expect(linkFromInput('ftp://shop.example/file')).toBeNull();
     expect(linkFromInput('javascript:alert(1)')).toBeNull();

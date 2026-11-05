@@ -3,13 +3,14 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-**Phase 3 — Products and AI, in progress.** Steps 3.1–3.3 are built; 3.3's real-photo check waits for the Gemini key.
+**Phase 3 — Products and AI, in progress.** Steps 3.1–3.4 are built; 3.3's real-photo check waits for the Gemini key, and 3.4's link check waits for Elias's 30 links (and a decision about shops that block link readers).
 - Step 3.1 (Product tables): PR #16, waiting for Elias to merge.
 - Step 3.2 (The fingerprint service): PR #17, stacked on #16 (merge #16 first).
 - Step 3.3 (Garment spotting): PR #18, stacked on #17. Built and tested with a stand-in Gemini; the 50-photo check and the cost per 1,000 photos wait for the key (see Waiting on Elias).
-- Claude isn't allowed to merge in this setup (see Waiting on Elias). Elias was asleep for Step 3.3 (2026-11-05 night) and said to keep going, so its plan and decisions are in the PR instead of a plan approval.
+- Step 3.4 (Paste a link, get a product): PR #19, stacked on #18. "80% of 30 links": FAIL for now (15 of 30 provisional links, 50%): H&M, Arket and Lindex block automated readers and ASOS doesn't answer (see Open decisions). Elias's own 30 links are still to come.
+- Claude isn't allowed to merge in this setup (see Waiting on Elias). Elias was asleep for Steps 3.3 and 3.4 (2026-11-05 night) and said to keep going, so their plans and decisions are in the PRs instead of a plan approval.
 
-Next: Step 3.4 — Paste a link, get a product.
+Next: Step 3.5 — Automatic link check.
 
 - Phase 2 passed its gate on 2026-11-04 (PRs #8–#15). "Speed numbers recorded" PASS; "It feels like Pinterest" signed off by Elias. "Both phones" was done in the iPhone simulator only: the real-phone checks (and Step 2.3's mid-range Android check) wait for the hardware. 125 real outfits accepted instead of 300 for now.
 - Phase 1 gate: everything passed except "app on both phones with login", for the same reason.
@@ -204,8 +205,31 @@ Next: Step 3.4 — Paste a link, get a product.
     - The rest is under Known issues and Later.
 
 
+- Step 3.4 — Paste a link, get a product (PR #19) — **built, live on staging (2026-11-05); "80% of your 30 links" FAIL for now (provisional set: 50%).**
+  - **What it does:** `POST /v1/links/resolve` takes a pasted shop link (or a shared text with one in it), opens the page the way a browser would see it, and reads the product: name, brand, barcode, photo, price, currency and stock. It reads the shop's schema.org data first (what Google Shopping reads), then the page's Open Graph tags. Then it creates or updates the product and the offer, and copies the shop's photo into our own storage, where it gets its fingerprint (jobs `product-photo` and `product-fingerprint`).
+  - **The poster's link is kept exactly** (`offers.url`, affiliate tags and all: what Shop opens). The shop's own page, with tracking and affiliate tags removed, is `offers.page_url` (what price checks will read).
+  - **Same item, same product:** the same link is the same offer; another poster's link to the same page is the same product; another shop's page is merged only by barcode and only with the same brand (two pages of one shop never are). A link that now lands on another page, or a page whose barcode changed, moves its offer to another product, and the shared product stays untouched. Removed products are never brought back. The price history gets an entry when the price changes.
+  - **Safety (SSRF):** only public internet addresses, checked on the very connection (no trick with a name that answers differently the second time), numeric and IPv6-wrapped addresses included; http(s) on the normal ports only; up to 5 redirects, each checked again; 3 s to connect, 10 s in total; pages read up to 3 MB, photos up to 25 MB; compressed pages limited the same way. The page reader is one pass over the page, so a hostile 3 MB page reads in milliseconds. Shops that turn our reader away are left alone.
+  - **Answers:** a link read in the last hour comes from our database. Problems are a 422 with a reason the app can show (`bad_link`, `forbidden`, `not_found`, `blocked`, `unreachable`, `too_slow`, `too_many_redirects`, `not_a_page`, `no_product`) and `temporary: true` when it may work later (then the same request can simply be sent again). 20 links a minute per login.
+  - **Microlink** is built as a fallback behind the `link_reader_microlink` flag, **off**, and only for pages we could open but found no product data on.
+  - **Migrations 0013 + 0014** (applied on `outfitly-dev`): a shop's photo has no owner but keeps its source link (`media.source_url`); every photo has one or the other.
+  - **Try it:** `pnpm links:try <links…>` or `--file links.txt [--out report.md]` prints what each link gives (nothing is saved); `--save` also saves them, copies their photos and fingerprints them. Live: 3 real links saved this way; the posted link kept its `utm_source` and `aff` tags, the photos were copied to R2 (Zalando's at 800×1156 after a fix) and fingerprinted by the staging fingerprint service.
+  - **Tests:** a local "shop" server for redirects, limits, slow and hostile pages, private addresses and gzip/brotli; shop-shaped pages (JSON-LD, ProductGroup, AggregateOffer, sale prices, Open Graph only, articles); the route end to end (affiliate link kept, created / updated / recent, price history, barcode merges and their limits, moved links, removed products, five resolves of one link at once, retries with the same key, the rate limit); the photo jobs end to end. API 416 tests.
+  - **Review (step-reviewer):** two blocking issues, fixed.
+    - A hostile page could keep the server busy for minutes (the tag search re-read the page for every unclosed tag). Now one pass; a test reads 3 MB of each kind in well under 300 ms.
+    - Reading a link again could rewrite a product other posters share into a different item. Now the read decides which product it is, and the offer moves instead.
+    - Also fixed: odd JSON-LD that crashed the reader, control characters, `&constructor;`; ambiguous prices ("199.000") give no price instead of a wrong one, 0 is no price, unknown currency codes are refused; barcode merges need the same brand; removed products stay removed; a lock on the link itself (concurrent resolves); a lost photo job is asked for again; temporary problems free the idempotency key; unwanted answer bodies aren't downloaded; trailing punctuation after a pasted link is dropped; every ownerless photo must have a source link (0014); the test script's money format; the answer only shows our own photo copy.
+
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
+- 2026-11-05 — Link reading uses no HTML library and no new package: Node's own http(s) with a guarded name lookup, and a small one-pass reader for JSON-LD and meta tags (that's all the product data lives in).
+- 2026-11-05 — Link reader identifies itself honestly (`OutfitlyBot/1.0`) and never pretends to be a browser. A shop that blocks it is a result, not something to get around; Microlink is never sent to such a shop either (Claude Code's safety check also refused testing that, as "bot check circumvention").
+- 2026-11-05 — Product photos copied from shops have no owner (they belong to the product, not to whoever pasted the link, so deleting an account can't break a product); `media.source_url` keeps where they came from, so the same photo isn't copied twice.
+- 2026-11-05 — Product matching: same link = same offer; same shop page = same product (if its barcode agrees); another shop's page joins a product only by barcode and the same brand; two pages of one shop are always two products. Only the new read decides, so a shared product is never rewritten into another item. Barcodes are padded to 14 digits and their check digit verified; a ProductGroup's per-size barcodes aren't kept.
+- 2026-11-05 — Prices: exact, in minor units with each currency's own decimals; "199.000" or "1,299" (thousands or decimals?) give no price rather than a wrong one; 0 counts as no price; the lowest in-stock price of a page wins; a re-read without a price stores "unknown", not the old price.
+- 2026-11-05 — A link read in the last hour is answered from the database without asking the shop again. 20 link reads a minute per login (all its profiles together).
+- 2026-11-05 — Temporary link problems (shop slow, down or busy) free the idempotency key, so sending the same request again reads again; lasting ones (no product, not found, blocked) are replayed like other 4xx answers.
+- 2026-11-05 — No robots.txt check: each read is one page, at a user's explicit request (like a chat app's link preview).
 - 2026-11-05 — Garment spotting uses Gemini 3.1 Flash-Lite (`gemini-3.1-flash-lite`, Google's stable version): $0.25 per million input tokens (photos included) and $1.50 per million output tokens (thinking included), about $1 per 1,000 photos by estimate (to be measured). It's called with plain `fetch` (no new library). The model is a setting, but only models with a price in the code are accepted (3.1 / 3.5 / 2.5 Flash-Lite), so every call's cost is known for the daily cap. Thinking is set to "minimal" to save output tokens.
 - 2026-11-05 — The paid Gemini tier, not the free one: Google's terms allow only paid use for apps used by people in the EEA, Switzerland or the UK, and free-tier data may be used to improve Google's products.
 - 2026-11-05 — Not self-hosted for now (Elias asked if a free model could do it). Open models that find things in photos (OWLv2, Grounding DINO) plus our own fashion model could run on the fingerprint machine for no per-photo fee. But on a CPU they take several seconds per photo, find pieces less well, can't read brand text and don't write descriptions or safety flags. Gemini costs about a cent per 10 photos.
@@ -306,7 +330,7 @@ Next: Step 3.4 — Paste a link, get a product.
 - 2026-11-02 — Elias asked Claude to work through Phase 1 and Phase 2 overnight without stopping. Each step still gets its own branch + PR, stacked on the previous step's branch; nothing is merged into `main` without Elias.
 
 ## Waiting on Elias
-- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2), then PR #18 (Step 3.3), in that order.** Each is built on the one before. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub, or allow Claude to merge (add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings). On GitHub: open the PR → "Merge pull request" → "Confirm merge" → "Delete branch", then do the next one (GitHub then points it at `main` by itself).
+- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2), then PR #18 (Step 3.3), then PR #19 (Step 3.4), in that order.** Each is built on the one before. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub, or allow Claude to merge (add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings). On GitHub: open the PR → "Merge pull request" → "Confirm merge" → "Delete branch", then do the next one (GitHub then points it at `main` by itself).
 - **Gemini key for Step 3.3** (garment spotting is built and waits only for this):
   1. Go to https://aistudio.google.com → "Get API key" (left side) → "Create API key", on a Google Cloud project with billing on (the free tier isn't allowed for an app used in the EU).
   2. In the project folder's `.env`, fill in the line `GEMINI_API_KEY=` with the key (Claude can do this if you paste the key in the chat).
@@ -318,7 +342,7 @@ Next: Step 3.4 — Paste a link, get a product.
   - If a seed look is wrongly flagged in the check (hidden), running the seed loader again (`pnpm seed:looks ~/Downloads/outfitly-seed`) brings it back. A proper approve button comes with the admin page in Phase 4.
 - **For Phase 3 (BUILD_PLAN "You provide"):**
   - The Gemini API key: see above.
-  - 30 real product links from Nordic shops you want to support (Zalando, H&M, Boozt, NA-KD, Nelly, ASOS…): needed for Step 3.4.
+  - 30 real product links from Nordic shops you want to support (Zalando, H&M, Boozt, NA-KD, Nelly, ASOS…): needed for Step 3.4's check. Put them in a text file, one per line (e.g. `~/Downloads/links.txt`), and tell Claude, or run `pnpm links:try --file ~/Downloads/links.txt --out ~/Downloads/link-report.md` yourself. Then open the report and fill in the "Right?" column by eye: "OK" only means a name and a price came out, not that they're the right ones. Also decide about the shops that block us (Open decisions).
   - The seed looks' product links, where you know them: helps Steps 3.4–3.6.
 - **More outfit photos (2026-11-04):** Streetwear and Sporty have no outfits yet (those folders held only products), Edgy has 6 and Colorful 13. Aim for about 20 each: a person wearing the whole look, or the whole outfit laid out (not one item on its own). Same Drive folders; Claude loads them the same way (`~/Downloads/outfitly-seed`, `looks.json`, `pnpm seed:looks`).
 - **300 outfit photos (Step 2.1), first batch done 2026-11-04 (125 outfits):** put them in one folder (any of JPG / PNG / WebP / HEIC, max 25 MB each, each picture once), then `pnpm seed:looks <folder> --init` writes `looks.json` with one look per photo; fill in caption, tags (occasions/seasons above) and author handle, put several photos in one look if wanted, and run `pnpm seed:looks <folder>`. Claude can do the commands; Elias only needs to give the folder (and captions if he wants them).
@@ -336,6 +360,11 @@ Next: Step 3.4 — Paste a link, get a product.
 - **OK for two small free libraries (Step 1.3)** — `jose` (checks Supabase login tokens) and `@fastify/rate-limit` (rate limiting). Both are free, open source, widely used. Say no and Claude will replace them.
 
 ## Open decisions for Elias
+- **Shops that block link readers (Step 3.4, 2026-11-05).** H&M, Arket and Lindex turn automated readers away (their bot protection answers "403 forbidden"), and ASOS doesn't answer at all. With those in your 30 links the 80% goal can't be met by reading pages. Options:
+  - (a) **Affiliate product feeds** (e.g. Adtraction or Awin, free to join as a publisher): the shop sends its own product list with name, price, photo and stock, and the same networks pay commissions later. Needs an approved publisher account per network and the shops' OK.
+  - (b) **The poster fills in name and price by hand** when a shop can't be read (the photo can come from the poster's own picture).
+  - (c) A paid page reader that gets past the shops' bot protection. **Not recommended:** it's getting around the shops' own "no", and Claude Code's safety check refused even testing it.
+  - Recommended: (a) + (b). Say which, and it goes in the plan.
 - Domain name (outfitly.com or other) — none yet (2026-11-02); everything that waits on it is in `docs/BEFORE_LAUNCH.md`; outfitly.com is registered by someone else (since 2011). Until we have one, images use the R2 public dev address (r2.dev — rate-limited and meant for development, so connect `img.<domain>` as a Custom Domain on `outfitly-public-dev` and update `MEDIA_PUBLIC_BASE_URL` before launch) and Turnstile allows `outfitly-api-staging.fly.dev` (`EXPO_PUBLIC_TURNSTILE_ORIGIN`)
 - App ID (default `com.outfitly.app`)
 - Dark or light theme by default (Step 5.3)
@@ -343,6 +372,13 @@ Next: Step 3.4 — Paste a link, get a product.
 - 18+ only or teens allowed (Step 5.5)
 
 ## Known issues
+- Link reader (Step 3.4):
+  - Barcode merges trust the shop's catalogue: a shop with a wrong barcode (and the same brand) could join two different items. And copied product photos get no safety check (only look photos are read by the AI). Both matter more once anyone can post links (Phase 4).
+  - Phase 4: when looks or avatars attach a photo, the API must require that the photo's owner is the active profile; ownerless (shop) photos must never be attachable.
+  - A shop that never answers (ASOS) makes the request wait the full 10 s.
+  - Single-brand shops often name no brand in their data (NA-KD), so `brand` is empty there.
+  - NA-KD from the Stockholm machine once gave a page without product data, then a normal one on the next read: intermittent.
+  - Retired product photos are soft-deleted rows; their files stay in R2 (tiny).
 - Photo AI (Step 3.3), to decide before anyone can post (Phase 4):
   - If reading a photo fails for good, or the daily cap is hit, its look stays published without a safety check. Options: hold new looks as "pending" until read, or read before publishing.
   - Re-running `seed:looks` publishes flagged seed looks again while their review item stays open, and there's no approve / restore tool yet (Phase 4 admin).
@@ -400,7 +436,7 @@ Next: Step 3.4 — Paste a link, get a product.
 - Feed p95 (Step 2.2, staging, 10,000 looks, 2026-11-03, after review fixes): For You logged out over HTTP from the Mac — page 1 p95 51 ms (p50 43), next pages p95 44 ms (40 runs, final deploy); server's own time page 1 ~29 ms, next pages ~21 ms (Fly logs). Logged in, feed code on the Mac against the staging database (≈ 16 ms per round trip, so mostly network): `@loadtest.01` (5 follows, taste, 300 seen) page 1 p95 114 ms, next pages 41 ms; Following p95 66 ms; worst case `@loadtest.07` (taste no look matches, so the taste pool reads the whole catalogue) page 1 p95 165 ms. Before fixing the query shape: logged-in page 1 600 ms.
 - Cold start to cached feed: —
 - AI cost per 1,000 photos: — (Step 3.3; measured by `pnpm ai:spot-check` once the Gemini key exists. Estimate ≈ $1: about 1,500 input and 400 output tokens per photo on 3.1 Flash-Lite)
-- Link-resolve success rate: —
+- Link-resolve success rate (Step 3.4, 2026-11-05): **provisional 15 of 30 (50%)**, read from the Mac, on 30 product links Claude found by web search (Elias's own 30 still to come). Zalando 4/4, Nelly 3/3, Boozt 2/2, Ellos 2/2, Gina Tricot 2/2, NA-KD 2/3 (the third now redirects to a category: the product is gone), H&M 0/4, Arket 0/3, Lindex 0/2 (all "403" from Akamai bot protection), ASOS 0/3 (no answer in 10 s), Stayhard 0/2 (pages gone, 404). Without the 3 dead links: 15 of 27 (56%). Names, prices and stock checked by eye on the results: right. From the Stockholm staging machine: Zalando, Boozt, Nelly, Ellos and Gina Tricot read fine; H&M and Lindex blocked; NA-KD once no product data, then fine. Time per link: 0.1–1.1 s (ASOS 10 s, the time limit); with `--save` (photo copy + fingerprint) 3–5 s.
 - Popularity recompute on 10,000 looks (dev DB, from the Mac): 0.8 s first run (every score written), 39 ms when nothing changed (2026-11-03)
 - Monthly running cost estimate (fingerprint service, from Fly's prices × 1.038 for Stockholm; 2026-11-04):
   - Staging: asleep almost all the time. Stored files (~1.1 GB at $0.15/GB) ≈ $0.20–0.40, plus $0.0475 per hour awake (≈ $0.25 for 5 hours of testing). **≈ $0.50–1/month.**
@@ -415,6 +451,11 @@ Next: Step 3.4 — Paste a link, get a product.
 - First EAS Android preview build (free plan): ~40 min in queue + ~15 min building; APK 107 MB (2026-11-02)
 
 ## Later (parked ideas, not in current scope)
+- Link reader (Step 3.4):
+  - Step 3.5 can set `products.category` from the linked garment (the reader leaves it empty).
+  - Step 3.9's refresh: read an offer's `page_url` and save the read with the offer's own `url` through `saveLinkRead`; the same matching rules then apply (a page that changed item moves the offer).
+  - Delete the R2 files of retired product photos with a cleanup job.
+  - Show a "try again" button in the app when an answer says `temporary: true`.
 - Photo AI (Step 3.3):
   - Train our own small detector once we have tens of thousands of photos read by Gemini, plus users' corrections ("wrong item?", Phase 4). It could run on the fingerprint machine, bringing the cost per photo close to zero (Pinterest's way, at our size).
   - Gemini's Batch mode is half price: use it for big backlogs (e.g. a bulk import in Phase 7), which don't need answers within seconds.

@@ -145,3 +145,15 @@ export function registerIdempotency(app: FastifyInstance, { db }: { db: Db }): v
     return payload;
   });
 }
+
+/**
+ * For an answer that's worth retrying with the same key (a shop that was slow
+ * or busy): frees the key, so the retry runs again instead of getting this
+ * answer replayed. The app keeps one key per user action, as everywhere.
+ */
+export async function releaseIdempotencyKey(db: Db, request: FastifyRequest): Promise<void> {
+  const id = request.idempotencyKeyId;
+  if (!id) return;
+  request.idempotencyKeyId = null;
+  await db.delete(idempotencyKeys).where(eq(idempotencyKeys.id, id));
+}

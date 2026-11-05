@@ -25,42 +25,44 @@ export interface PageRead {
   canonicalUrl: string | null;
 }
 
-const NAMED_ENTITIES: Record<string, string> = {
-  amp: '&',
-  lt: '<',
-  gt: '>',
-  quot: '"',
-  apos: "'",
-  nbsp: ' ',
-  ndash: '–',
-  mdash: '—',
-  lsquo: '‘',
-  rsquo: '’',
-  ldquo: '“',
-  rdquo: '”',
-  hellip: '…',
-  euro: '€',
-  pound: '£',
-  trade: '™',
-  reg: '®',
-  copy: '©',
-  aring: 'å',
-  Aring: 'Å',
-  auml: 'ä',
-  Auml: 'Ä',
-  ouml: 'ö',
-  Ouml: 'Ö',
-  oslash: 'ø',
-  Oslash: 'Ø',
-  aelig: 'æ',
-  AElig: 'Æ',
-  uuml: 'ü',
-  Uuml: 'Ü',
-  eacute: 'é',
-  Eacute: 'É',
-  egrave: 'è',
-  szlig: 'ß',
-};
+const NAMED_ENTITIES = new Map<string, string>(
+  Object.entries({
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: "'",
+    nbsp: ' ',
+    ndash: '–',
+    mdash: '—',
+    lsquo: '‘',
+    rsquo: '’',
+    ldquo: '“',
+    rdquo: '”',
+    hellip: '…',
+    euro: '€',
+    pound: '£',
+    trade: '™',
+    reg: '®',
+    copy: '©',
+    aring: 'å',
+    Aring: 'Å',
+    auml: 'ä',
+    Auml: 'Ä',
+    ouml: 'ö',
+    Ouml: 'Ö',
+    oslash: 'ø',
+    Oslash: 'Ø',
+    aelig: 'æ',
+    AElig: 'Æ',
+    uuml: 'ü',
+    Uuml: 'Ü',
+    eacute: 'é',
+    Eacute: 'É',
+    egrave: 'è',
+    szlig: 'ß',
+  }),
+);
 
 export function decodeEntities(text: string): string {
   return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+\d*);/gi, (whole, name: string) => {
@@ -71,21 +73,27 @@ export function decodeEntities(text: string): string {
         ? String.fromCodePoint(code)
         : whole;
     }
-    return NAMED_ENTITIES[name] ?? whole;
+    return NAMED_ENTITIES.get(name) ?? whole;
   });
 }
 
-/** Entities decoded, whitespace collapsed; null when nothing is left. */
+// Control characters, NUL included (Postgres refuses it in text).
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f]/g;
+
+/** Entities decoded, control characters removed, whitespace collapsed; null when nothing is left. */
 function clean(value: unknown, maxLength = 300): string | null {
   if (typeof value === 'number') return String(value);
   if (typeof value !== 'string') return null;
-  const text = decodeEntities(value).replace(/\s+/g, ' ').trim();
+  const text = decodeEntities(value).replace(CONTROL, ' ').replace(/\s+/g, ' ').trim();
   return text === '' ? null : text.slice(0, maxLength).trim();
 }
 
+const CURRENCIES = new Set(Intl.supportedValuesOf('currency'));
+
 /** Fraction digits of a currency (2 for SEK, 0 for ISK and JPY), or null if it isn't one. */
 export function minorDigits(currency: string): number | null {
-  if (!/^[A-Z]{3}$/.test(currency)) return null;
+  if (!CURRENCIES.has(currency)) return null;
   try {
     return (
       new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions()
@@ -97,8 +105,12 @@ export function minorDigits(currency: string): number | null {
 }
 
 /**
- * A price as written on a page ("1 299,00", "1.299,00", "1,299.00", 1299.5,
- * "SEK 499") in minor units (öre, cents), or null. Exact: no floating point.
+ * A price as written on a page in minor units (öre, cents), or null. Exact:
+ * no floating point. Spaces and apostrophes group thousands ("1 299,00"); with
+ * both "." and "," the later one is the decimal point ("1.299,00",
+ * "1,299.00"); a single "." or "," is a decimal point (schema.org writes
+ * prices "1299.00"), except before exactly three digits ("199.000", "1,299"),
+ * which could mean either: then there's no price rather than a wrong one.
  */
 export function parsePrice(value: unknown, currency: string): number | null {
   const digits = minorDigits(currency);
@@ -110,25 +122,10 @@ export function parsePrice(value: unknown, currency: string): number | null {
   } else if (typeof value === 'string') {
     const match = /\d[\d\s.,']*/.exec(decodeEntities(value));
     if (!match) return null;
-    text = match[0].replace(/[\s']/g, '').replace(/[.,]+$/, '');
-    const lastDot = text.lastIndexOf('.');
-    const lastComma = text.lastIndexOf(',');
-    if (lastDot !== -1 && lastComma !== -1) {
-      // Both: the later one separates the decimals.
-      const decimal = lastDot > lastComma ? '.' : ',';
-      const thousands = decimal === '.' ? ',' : '.';
-      text = text.split(thousands).join('').replace(decimal, '.');
-    } else {
-      const separator = lastDot !== -1 ? '.' : lastComma !== -1 ? ',' : null;
-      if (separator) {
-        const parts = text.split(separator);
-        const [first = '', ...rest] = parts;
-        // "1.299" or "1,299,000": thousands. "12,50", "1299.5" or "0.005": decimals.
-        const grouped = /^[1-9]\d{0,2}$/.test(first) && rest.every((p) => p.length === 3);
-        const thousands = grouped && (rest.length > 1 || digits !== 3);
-        text = thousands ? parts.join('') : parts.join('.');
-      }
-    }
+    const plain = match[0].replace(/[\s']/g, '').replace(/[.,]+$/, '');
+    const normal = decimalPoint(plain, digits);
+    if (normal === null) return null;
+    text = normal;
   } else {
     return null;
   }
@@ -140,6 +137,31 @@ export function parsePrice(value: unknown, currency: string): number | null {
   if (Number(fraction[digits] ?? '0') >= 5) minor += 1; // round half up
   // offers.price_minor is a 32-bit integer.
   return Number.isSafeInteger(minor) && minor <= 2_000_000_000 ? minor : null;
+}
+
+/** Digits with "." as the only (decimal) separator, or null when it's ambiguous. */
+function decimalPoint(text: string, digits: number): string | null {
+  const lastDot = text.lastIndexOf('.');
+  const lastComma = text.lastIndexOf(',');
+  if (lastDot !== -1 && lastComma !== -1) {
+    const at = Math.max(lastDot, lastComma);
+    const thousands = lastDot > lastComma ? ',' : '.';
+    const [first = '', ...groups] = text.slice(0, at).split(thousands);
+    // "1.299,00" and "12,345.67" yes; "1,2.3" or "1.2,3" (groups not of three) no.
+    if (!/^\d{1,3}$/.test(first) || !groups.every((g) => /^\d{3}$/.test(g))) return null;
+    return `${first}${groups.join('')}.${text.slice(at + 1)}`;
+  }
+  const separator = lastDot !== -1 ? '.' : lastComma !== -1 ? ',' : null;
+  if (!separator) return text;
+  const [first = '', ...rest] = text.split(separator);
+  if (rest.length > 1) {
+    // "1.299.000" or "1,299,000": thousands, if every group is three digits.
+    const grouped = /^\d{1,3}$/.test(first) && rest.every((g) => /^\d{3}$/.test(g));
+    return grouped ? `${first}${rest.join('')}` : null;
+  }
+  const after = rest[0] ?? '';
+  const couldBeThousands = after.length === 3 && /^[1-9]\d{0,2}$/.test(first) && digits !== 3;
+  return couldBeThousands ? null : `${first}.${after}`;
 }
 
 /** A barcode (GTIN-8/12/13/14) padded to 14 digits, or null if it isn't a valid one. */
@@ -202,15 +224,64 @@ function attributes(tag: string): Map<string, string> {
   return found;
 }
 
+/** Most tags of one kind read per page: real pages have far fewer. */
+const MAX_TAGS = 2000;
+/** Longer meta / link tags are skipped (real ones are a few hundred bytes). */
+const MAX_TAG_LENGTH = 16 * 1024;
+
+/** Whether `html` has `<name` (any case) at `at`, followed by a space, `/` or `>`. */
+function opensTag(html: string, at: number, name: string): boolean {
+  for (let k = 0; k < name.length; k++) {
+    // `| 0x20` lower-cases ASCII letters; names are lower-case letters.
+    if ((html.charCodeAt(at + 1 + k) | 0x20) !== name.charCodeAt(k)) return false;
+  }
+  const next = html.charCodeAt(at + 1 + name.length);
+  return (
+    Number.isNaN(next) || next === 0x2f || next === 0x3e || /\s/.test(String.fromCharCode(next))
+  );
+}
+
+/**
+ * Each `<name …>` tag (and with `content`, what's up to its `</name`), in one
+ * pass over the page: every search starts where the last one ended, and an
+ * unclosed tag ends the scan, so a hostile page can't make it slow.
+ */
+function* elements(
+  html: string,
+  name: string,
+  content: boolean,
+): Generator<{ tag: string; content: string }> {
+  let from = 0;
+  for (let found = 0; found < MAX_TAGS;) {
+    const open = html.indexOf('<', from);
+    if (open === -1) return;
+    from = open + 1;
+    if (!opensTag(html, open, name)) continue;
+    const end = html.indexOf('>', open);
+    if (end === -1) return;
+    from = end + 1;
+    found += 1;
+    if (!content) {
+      if (end - open <= MAX_TAG_LENGTH) yield { tag: html.slice(open, end + 1), content: '' };
+      continue;
+    }
+    let close = html.indexOf('</', from);
+    while (close !== -1 && !opensTag(html, close + 1, name)) close = html.indexOf('</', close + 2);
+    if (close === -1) return;
+    const closeEnd = html.indexOf('>', close);
+    if (closeEnd === -1) return;
+    yield { tag: html.slice(open, end + 1), content: html.slice(end + 1, close) };
+    from = closeEnd + 1;
+  }
+}
+
 function jsonLdBlocks(html: string): unknown[] {
   const blocks: unknown[] = [];
-  for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
-    const type = attributes(`<script ${match[1] ?? ''}>`)
-      .get('type')
-      ?.trim()
-      .toLowerCase();
+  for (const { tag, content } of elements(html, 'script', true)) {
+    if (tag.length > MAX_TAG_LENGTH) continue;
+    const type = attributes(tag).get('type')?.trim().toLowerCase();
     if (type !== 'application/ld+json') continue;
-    const text = (match[2] ?? '')
+    const text = content
       .trim()
       .replace(/^<!--|-->$/g, '')
       .replace(/^\/\*\s*<!\[CDATA\[\s*\*\/|\/\*\s*\]\]>\s*\*\/$/g, '')
@@ -218,9 +289,9 @@ function jsonLdBlocks(html: string): unknown[] {
     try {
       blocks.push(JSON.parse(text));
     } catch {
-      // Raw line breaks and tabs inside strings are the usual mistake.
+      // Raw line breaks, tabs (or other control characters) inside strings are the usual mistake.
       try {
-        blocks.push(JSON.parse(text.replace(/[\n\r\t]+/g, ' ')));
+        blocks.push(JSON.parse(text.replace(CONTROL, ' ')));
       } catch {
         // Unreadable block: the meta tags may still have the product.
       }
@@ -231,8 +302,8 @@ function jsonLdBlocks(html: string): unknown[] {
 
 function metaTags(html: string): Map<string, string> {
   const found = new Map<string, string>();
-  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
-    const attrs = attributes(match[0]);
+  for (const { tag } of elements(html, 'meta', false)) {
+    const attrs = attributes(tag);
     const key = (
       attrs.get('property') ??
       attrs.get('name') ??
@@ -245,8 +316,8 @@ function metaTags(html: string): Map<string, string> {
 }
 
 function canonicalOf(html: string, base: URL): string | null {
-  for (const match of html.matchAll(/<link\b[^>]*>/gi)) {
-    const attrs = attributes(match[0]);
+  for (const { tag } of elements(html, 'link', false)) {
+    const attrs = attributes(tag);
     const rel = attrs.get('rel')?.toLowerCase().split(/\s+/) ?? [];
     if (rel.includes('canonical')) return absolute(attrs.get('href') ?? null, base);
   }
@@ -266,11 +337,9 @@ function list(value: unknown): unknown[] {
 }
 
 function types(node: Node): string[] {
-  return list(node['@type']).map((t) =>
-    String(t)
-      .replace(/^(https?:\/\/schema\.org\/|schema:)/i, '')
-      .toLowerCase(),
-  );
+  return list(node['@type'])
+    .filter((t): t is string => typeof t === 'string')
+    .map((t) => t.replace(/^(https?:\/\/schema\.org\/|schema:)/i, '').toLowerCase());
 }
 
 const PRODUCT_TYPES = [
@@ -397,7 +466,9 @@ function pricesOf(node: Node): PriceRead[] {
 }
 
 /** The lowest price people can pay; in stock if any offer is. */
-function bestPrice(prices: PriceRead[]): PriceRead | null {
+function bestPrice(all: PriceRead[]): PriceRead | null {
+  // Shops put 0 where they have no price (sold-out sizes, "from" placeholders).
+  const prices = all.filter((p) => p.priceMinor > 0);
   if (prices.length === 0) return null;
   const counts = new Map<string, number>();
   for (const p of prices) counts.set(p.currency, (counts.get(p.currency) ?? 0) + 1);

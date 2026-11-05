@@ -152,6 +152,13 @@ describe('product photos', () => {
     expect((await productRow(id))?.embedding).toBeNull();
   });
 
+  it('only lets a shop photo (with its link) be ownerless', async () => {
+    const id = crypto.randomUUID();
+    await expect(
+      ctx.db.insert(media).values({ id, ownerProfileId: null, originalKey: `originals/${id}` }),
+    ).rejects.toMatchObject({ cause: { constraint: 'media_owner_or_source' } });
+  });
+
   it('leaves a product without a copied photo alone', async () => {
     const id = await product(shop.url('/red.jpg'));
     expect(await fingerprintProduct(deps, id)).toEqual({

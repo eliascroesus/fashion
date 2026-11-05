@@ -7,6 +7,7 @@ import { toMediaResponse } from '../media/pipeline.ts';
 import type { PhotoStorage } from '../storage.ts';
 import {
   checkUrl,
+  isTemporary,
   LinkFetchError,
   type NetworkPolicy,
   PUBLIC_INTERNET,
@@ -15,7 +16,7 @@ import {
 import { MICROLINK_FLAG, readWithMicrolink } from './microlink.ts';
 import { type PageProduct, pageText, readProductPage } from './parse.ts';
 import { PRODUCT_QUEUES } from './product-photos.ts';
-import { fitsLinkLimit, linkFromInput, shopPageUrl } from './urls.ts';
+import { fitsLinkLimit, linkFromInput, shopPageUrl, siteOf } from './urls.ts';
 
 /** Pages above this are read only this far: product data is near the top (or not there at all). */
 const PAGE_BYTES = 3 * 1024 * 1024;
@@ -48,6 +49,9 @@ export interface LinkRead {
   truncated: boolean;
 }
 
+/** Another reader for pages we could open but found no product data on (Microlink). */
+export type FallbackReader = (pageUrl: string) => Promise<PageProduct | null>;
+
 export function linkProblem(problem: LinkProblem, message: string): LinkFetchError {
   return new LinkFetchError(problem, message);
 }
@@ -63,14 +67,14 @@ export function parseLink(input: string, network: NetworkPolicy = PUBLIC_INTERNE
 
 /**
  * Reads a shop link: follows its redirects and reads the product from the
- * page. A page we could open but found no product data on goes to Microlink
- * when its flag is on. A shop that turns readers away (`blocked`) is left
+ * page. A page we could open but found no product data on goes to the
+ * fallback reader, if any. A shop that turns readers away (`blocked`) is left
  * alone: no other reader is sent past its bot protection. Throws
  * `LinkFetchError`. Writes nothing.
  */
 export async function readShopLink(
   url: URL,
-  options: { network?: NetworkPolicy; microlink: boolean },
+  options: { network?: NetworkPolicy; fallback?: FallbackReader | null },
 ): Promise<LinkRead> {
   let finalUrl = url;
   let product: PageProduct | null = null;
@@ -94,18 +98,20 @@ export async function readShopLink(
     if (!(error instanceof LinkFetchError)) throw error;
     failure = error;
   }
-  if (!product && options.microlink && failure === null) {
-    product = await readWithMicrolink(finalUrl.href, options.network).catch(() => null);
+  if (!product && options.fallback && failure === null) {
+    product = await options.fallback(finalUrl.href).catch(() => null);
   }
   if (!product) {
     throw failure ?? linkProblem('no_product', 'We found no product on that page.');
   }
-  if (product.imageUrl && !fitsLinkLimit(product.imageUrl))
+  if (product.imageUrl && !fitsLinkLimit(product.imageUrl)) {
     product = { ...product, imageUrl: null };
+  }
   return { url: url.href, pageUrl: shopPageUrl(finalUrl, canonicalUrl), product, truncated };
 }
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+type Product = typeof products.$inferSelect;
 
 interface Saved {
   offerId: string;
@@ -114,63 +120,122 @@ interface Saved {
   copyPhoto: boolean;
 }
 
+/** Waits for (and holds until the transaction ends) a lock on one key of a kind. */
+async function lock(tx: Tx, kind: string, key: string): Promise<void> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${kind}), hashtext(${key}))`);
+}
+
+/** Brands compared loosely: "H&M" = "h & m", "Filippa K" = "FILIPPA-K", "Acné" = "Acne". */
+function brandKey(brand: string | null): string {
+  return (brand ?? '')
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+function barcodesAgree(a: string | null, b: string | null): boolean {
+  return a === null || b === null || a === b;
+}
+
+async function liveProduct(tx: Tx, id: string): Promise<Product | null> {
+  const [row] = await tx
+    .select()
+    .from(products)
+    .where(and(eq(products.id, id), isNull(products.deletedAt)));
+  return row ?? null;
+}
+
 /**
- * Creates or updates the product and the offer. The same link is the same
- * offer; the same shop page (another poster's link to it) or the same barcode
- * is the same product. Products found through another shop's barcode keep
- * their first name and photo; only gaps are filled.
+ * Which product a read is. Only the read itself decides (what the link
+ * showed before doesn't): a link that now lands on another page, or a page
+ * whose barcode changed, is another product, and the shared product stays as
+ * it was.
+ * - `page`: the link's own product if it's still the same page, else the
+ *   product of another live offer on the same shop page; its barcode must
+ *   agree. The read updates it.
+ * - `barcode`: a live product with the same barcode and the same brand (both
+ *   known), unless it already has a different page on the same shop (two
+ *   pages of one shop are two products). The read only fills its gaps.
+ */
+async function matchProduct(
+  tx: Tx,
+  read: LinkRead,
+  sameLink: typeof offers.$inferSelect | undefined,
+): Promise<{ product: Product; how: 'page' | 'barcode' } | null> {
+  const found = read.product;
+  if (sameLink?.pageUrl === read.pageUrl) {
+    const own = await liveProduct(tx, sameLink.productId);
+    if (own && barcodesAgree(own.gtin, found.gtin)) return { product: own, how: 'page' };
+  }
+  const onPage = await tx
+    .select({ product: products })
+    .from(offers)
+    .innerJoin(products, eq(products.id, offers.productId))
+    .where(
+      and(
+        eq(offers.pageUrl, read.pageUrl),
+        isNull(offers.deletedAt),
+        isNull(products.deletedAt),
+        sameLink ? ne(offers.id, sameLink.id) : undefined,
+      ),
+    )
+    .orderBy(offers.createdAt)
+    .limit(20);
+  const shared = onPage.find((row) => barcodesAgree(row.product.gtin, found.gtin));
+  if (shared) return { product: shared.product, how: 'page' };
+
+  if (!found.gtin || !found.brand) return null;
+  const [byBarcode] = await tx
+    .select()
+    .from(products)
+    .where(and(eq(products.gtin, found.gtin), isNull(products.deletedAt)));
+  if (!byBarcode || brandKey(byBarcode.brand) !== brandKey(found.brand)) return null;
+  const pages = await tx
+    .select({ pageUrl: offers.pageUrl })
+    .from(offers)
+    .where(and(eq(offers.productId, byBarcode.id), isNull(offers.deletedAt)));
+  // The same page with or without www. / m. is still the same page.
+  const here = new URL(read.pageUrl);
+  const otherPageHere = pages.some((p) => {
+    const there = new URL(p.pageUrl);
+    return (
+      siteOf(there.hostname) === siteOf(here.hostname) &&
+      `${there.pathname}${there.search}` !== `${here.pathname}${here.search}`
+    );
+  });
+  return otherPageHere ? null : { product: byBarcode, how: 'barcode' };
+}
+
+/**
+ * Creates or updates the product and the offer for one read. The same link is
+ * the same offer (a removed one comes back); which product it shows is
+ * decided by `matchProduct`, and the offer moves when that changes. A later
+ * re-check of an offer (Step 3.9) can read its `page_url` and save the read
+ * with the offer's own `url`: the same rules apply.
  */
 export async function saveLinkRead(db: Db, read: LinkRead, now = new Date()): Promise<Saved> {
   const { product: found } = read;
   return db.transaction(async (tx) => {
-    // One shop's links at a time, then one barcode at a time (always in that order, so no deadlocks).
-    const site = new URL(read.pageUrl).hostname.replace(/^(www|m)\./, '');
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext('link-resolve'), hashtext(${site}))`,
-    );
-    if (found.gtin) {
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtext('product-gtin'), hashtext(${found.gtin}))`,
-      );
-    }
+    // The link, then its shop, then the barcode: always in this order, so no deadlocks.
+    await lock(tx, 'offer-link', read.url);
+    await lock(tx, 'link-resolve', siteOf(new URL(read.pageUrl).hostname));
+    if (found.gtin) await lock(tx, 'product-gtin', found.gtin);
 
-    // Unique links: a removed offer for the same link comes back.
     const [sameLink] = await tx.select().from(offers).where(eq(offers.url, read.url));
-    let productId = sameLink?.productId ?? null;
-    let ownPage = sameLink !== undefined;
-    if (!productId) {
-      const [samePage] = await tx
-        .select({ productId: offers.productId })
-        .from(offers)
-        .innerJoin(products, eq(products.id, offers.productId))
-        .where(
-          and(
-            eq(offers.pageUrl, read.pageUrl),
-            isNull(offers.deletedAt),
-            isNull(products.deletedAt),
-          ),
-        )
-        .limit(1);
-      productId = samePage?.productId ?? null;
-      ownPage = samePage !== undefined;
+    const match = await matchProduct(tx, read, sameLink);
+    let productId: string;
+    let copyPhoto: boolean;
+    if (match) {
+      productId = match.product.id;
+      copyPhoto = await updateProduct(tx, match.product, found, match.how === 'page');
+    } else {
+      productId = await insertProduct(tx, found);
+      copyPhoto = found.imageUrl !== null;
     }
-    if (!productId && found.gtin) {
-      const [sameBarcode] = await tx
-        .select({ id: products.id })
-        .from(products)
-        .where(eq(products.gtin, found.gtin));
-      productId = sameBarcode?.id ?? null;
-    }
-
-    const copyPhoto = productId
-      ? await updateProduct(tx, productId, found, ownPage)
-      : await insertProduct(tx, found).then((id) => {
-          productId = id;
-          return found.imageUrl !== null;
-        });
-    if (!productId) throw new Error('No product after saving.');
 
     const values = {
+      productId,
       pageUrl: read.pageUrl,
       priceMinor: found.priceMinor,
       currency: found.currency,
@@ -179,7 +244,9 @@ export async function saveLinkRead(db: Db, read: LinkRead, now = new Date()): Pr
       deletedAt: null,
     };
     if (sameLink) {
-      const history = sameLink.priceHistory as PriceChange[];
+      // A link now showing another item starts that item's price history afresh.
+      const history =
+        sameLink.productId === productId ? (sameLink.priceHistory as PriceChange[]) : [];
       await tx
         .update(offers)
         .set({ ...values, priceHistory: withPrice(history, found, now) })
@@ -188,7 +255,7 @@ export async function saveLinkRead(db: Db, read: LinkRead, now = new Date()): Pr
     }
     const [created] = await tx
       .insert(offers)
-      .values({ ...values, productId, url: read.url, priceHistory: withPrice([], found, now) })
+      .values({ ...values, url: read.url, priceHistory: withPrice([], found, now) })
       .returning({ id: offers.id });
     if (!created) throw new Error('Offer not saved.');
     return { offerId: created.id, productId, outcome: 'created', copyPhoto };
@@ -204,6 +271,7 @@ function withPrice(history: PriceChange[], found: PageProduct, now: Date): Price
   return [...history, entry].slice(-MAX_PRICE_HISTORY);
 }
 
+/** Whether no other product holds the barcode (removed ones too: barcodes are unique). */
 async function barcodeFree(tx: Tx, gtin: string, productId: string | null): Promise<boolean> {
   const [other] = await tx
     .select({ id: products.id })
@@ -231,19 +299,21 @@ async function insertProduct(tx: Tx, found: PageProduct): Promise<string> {
   return created.id;
 }
 
-/** Updates a product from a fresh read. Returns whether its photo needs (re)copying. */
+/**
+ * Updates a product from a read: from its own page the read's values win, from
+ * a barcode match it only fills gaps. Returns whether its photo needs
+ * (re)copying.
+ */
 async function updateProduct(
   tx: Tx,
-  productId: string,
+  current: Product,
   found: PageProduct,
   ownPage: boolean,
 ): Promise<boolean> {
-  const [current] = await tx.select().from(products).where(eq(products.id, productId));
-  if (!current) throw new Error('Product disappeared.');
   // A product's barcode never changes; one it lacks is added if no other product has it.
   const gtin =
     current.gtin ??
-    (found.gtin && (await barcodeFree(tx, found.gtin, productId)) ? found.gtin : null);
+    (found.gtin && (await barcodeFree(tx, found.gtin, current.id)) ? found.gtin : null);
   const next = ownPage
     ? {
         name: found.name,
@@ -257,8 +327,8 @@ async function updateProduct(
       };
   await tx
     .update(products)
-    .set({ ...next, gtin, deletedAt: null })
-    .where(eq(products.id, productId));
+    .set({ ...next, gtin })
+    .where(eq(products.id, current.id));
   return (
     next.imageUrl !== null && (next.imageUrl !== current.imageUrl || current.imageMediaId === null)
   );
@@ -288,7 +358,7 @@ export async function resolvedLinkAnswer(
       brand: product.brand,
       category: product.category,
       gtin: product.gtin,
-      imageUrl: product.imageUrl,
+      // Only our own copy is ever shown; it follows within seconds of the first read.
       image:
         image?.urls && image.width && image.height && image.thumbhash && image.dominantColor
           ? {
@@ -315,8 +385,18 @@ export async function resolvedLinkAnswer(
 function unreadable(error: LinkFetchError): ApiError {
   return new ApiError(422, 'link_unreadable', error.message, {
     problem: error.problem,
+    temporary: isTemporary(error),
     ...(error.httpStatus === null ? {} : { shopStatus: error.httpStatus }),
   });
+}
+
+/** A link problem that may go away (a slow, down or busy shop): worth trying again later. */
+export function isTemporaryLinkError(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.code === 'link_unreadable' &&
+    (error.details as { temporary?: unknown } | undefined)?.temporary === true
+  );
 }
 
 /** `POST /v1/links/resolve`: a pasted link in, the product and offer out (created or updated). */
@@ -336,20 +416,29 @@ export async function resolveLink(
   }
 
   const [known] = await db
-    .select({ id: offers.id, lastCheckedAt: offers.lastCheckedAt })
+    .select({
+      id: offers.id,
+      lastCheckedAt: offers.lastCheckedAt,
+      productId: products.id,
+      shopPhoto: products.imageUrl,
+      copiedPhoto: products.imageMediaId,
+    })
     .from(offers)
     .innerJoin(products, eq(products.id, offers.productId))
     .where(and(eq(offers.url, url.href), isNull(offers.deletedAt), isNull(products.deletedAt)));
   if (known?.lastCheckedAt && Date.now() - known.lastCheckedAt.getTime() < RECENT_MS) {
+    // A photo copy or fingerprint that never happened (a lost job) is asked for again.
+    const copyPhoto = known.shopPhoto !== null && known.copiedPhoto === null;
+    await queueProductWork(queue, db, known.productId, copyPhoto);
     return resolvedLinkAnswer(db, storage, known.id, 'recent');
   }
 
+  const fallback: FallbackReader | null = (await isFlagOn(db, MICROLINK_FLAG, profileId))
+    ? (pageUrl) => readWithMicrolink(pageUrl, { network: deps.network })
+    : null;
   let read: LinkRead;
   try {
-    read = await readShopLink(url, {
-      network: deps.network,
-      microlink: await isFlagOn(db, MICROLINK_FLAG, profileId),
-    });
+    read = await readShopLink(url, { network: deps.network, fallback });
   } catch (error) {
     if (error instanceof LinkFetchError) throw unreadable(error);
     throw error;

@@ -1,6 +1,7 @@
 import { resolvedLinkSchema, resolveLinkBodySchema } from '@outfitly/shared';
 import type { FastifyInstance } from 'fastify';
-import { type LinkDeps, resolveLink } from '../links/resolve.ts';
+import { releaseIdempotencyKey } from '../idempotency.ts';
+import { isTemporaryLinkError, type LinkDeps, resolveLink } from '../links/resolve.ts';
 import { requireActiveProfile } from '../profiles.ts';
 import type { ZodTypeProvider } from '../zod.ts';
 
@@ -30,7 +31,13 @@ export function linksRoutes(app: FastifyInstance, deps: LinkDeps): void {
     },
     async (request) => {
       const profileId = await requireActiveProfile(deps.db, request);
-      return resolveLink(deps, profileId, request.body.url);
+      try {
+        return await resolveLink(deps, profileId, request.body.url);
+      } catch (error) {
+        // A slow or busy shop may answer next time: a retry with the same key reads it again.
+        if (isTemporaryLinkError(error)) await releaseIdempotencyKey(deps.db, request);
+        throw error;
+      }
     },
   );
 }

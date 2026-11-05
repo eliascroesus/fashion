@@ -71,5 +71,10 @@ export const media = pgTable(
       sql`${t.status} <> 'ready' or (${t.key1080} is not null and ${t.key600} is not null and ${t.key300} is not null and ${t.width} > 0 and ${t.height} > 0 and ${t.thumbhash} is not null and ${t.dominantColor} is not null)`,
     ),
     check('media_dominant_color_format', sql`${t.dominantColor} ~ '^#[0-9a-f]{6}$'`),
+    // An upload has an owner; only a photo copied from a shop (with its link) may have none.
+    check(
+      'media_owner_or_source',
+      sql`${t.ownerProfileId} is not null or ${t.sourceUrl} is not null`,
+    ),
   ],
 ).enableRLS();

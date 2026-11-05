@@ -21,6 +21,17 @@ export type OfferStock = (typeof OFFER_STOCK)[number];
  * means the shop turned our reader away (bot protection), not that the link
  * is wrong.
  */
+/**
+ * `details` of a `link_unreadable` error: the problem, whether it may go away
+ * (a slow, down or busy shop: the same request with the same key reads again),
+ * and the shop's HTTP status when it answered.
+ */
+export interface LinkUnreadableDetails {
+  problem: LinkProblem;
+  temporary: boolean;
+  shopStatus?: number;
+}
+
 export const LINK_PROBLEMS = [
   /** Not a web link we can open (bad format, not http(s), odd port, user:password@). */
   'bad_link',
@@ -52,8 +63,7 @@ export const resolvedLinkSchema = z.object({
     brand: z.string().nullable(),
     category: z.enum(GARMENT_CATEGORIES).nullable(),
     gtin: z.string().nullable(),
-    /** The shop's photo; our copy (`image`) follows within seconds. */
-    imageUrl: z.string().nullable(),
+    /** Our copy of the shop's photo: null for the few seconds until it's copied in. */
     image: z
       .object({
         width: z.number().int(),

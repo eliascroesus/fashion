@@ -37,6 +37,12 @@ export class LinkFetchError extends Error {
   }
 }
 
+/** Worth trying again later: the shop was down, slow or busy (429 / 503), not refusing. */
+export function isTemporary(error: LinkFetchError): boolean {
+  if (error.problem === 'unreachable' || error.problem === 'too_slow') return true;
+  return error.problem === 'blocked' && (error.httpStatus === 429 || error.httpStatus === 503);
+}
+
 /** Network rules; tests loosen them to reach a local server. */
 export interface NetworkPolicy {
   resolve: Resolver;
@@ -173,7 +179,8 @@ function requestOnce(
       const contentType = (response.headers['content-type'] ?? '').toLowerCase();
       const location = response.headers.location ?? null;
       if (status !== 200) {
-        response.resume();
+        // The body of a redirect or an error page isn't wanted: don't download it.
+        response.destroy();
         resolve({ status, location, contentType, body: Buffer.alloc(0), truncated: false });
         return;
       }

@@ -21,9 +21,10 @@ const answerShape = z.object({
 
 export async function readWithMicrolink(
   pageUrl: string,
-  network?: NetworkPolicy,
+  options: { network?: NetworkPolicy; endpoint?: string } = {},
 ): Promise<PageProduct | null> {
-  const request = new URL(ENDPOINT);
+  const { network } = options;
+  const request = new URL(options.endpoint ?? ENDPOINT);
   request.searchParams.set('url', pageUrl);
   const answer = await safeFetch(request, {
     accept: 'application/json',
@@ -32,7 +33,13 @@ export async function readWithMicrolink(
     contentTypes: ['application/json'],
     network,
   });
-  const parsed = answerShape.safeParse(JSON.parse(answer.body.toString('utf8')));
+  let body: unknown;
+  try {
+    body = JSON.parse(answer.body.toString('utf8'));
+  } catch {
+    return null;
+  }
+  const parsed = answerShape.safeParse(body);
   if (!parsed.success) return null;
   const name = parsed.data.data.title?.replace(/\s+/g, ' ').trim().slice(0, 300);
   if (!name) return null;

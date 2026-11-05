@@ -55,6 +55,15 @@ beforeAll(async () => {
   shop.route('/slow', () => {
     // Never answers.
   });
+  shop.route('/drip', (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    const timer = setInterval(() => res.write('<'), 50);
+    res.on('close', () => {
+      clearInterval(timer);
+    });
+  });
+  shop.route('/to-file', redirect('file:///etc/passwd'));
+  shop.route('/to-script', redirect('javascript:alert(1)'));
   shop.route('/pdf', (_req, res) =>
     res.writeHead(200, { 'content-type': 'application/pdf' }).end('%PDF'),
   );
@@ -140,6 +149,32 @@ describe('safe fetching', () => {
     const started = Date.now();
     expect(await problem(get(shop.url('/slow'), { timeoutMs: 300 }))).toBe('too_slow');
     expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it('gives up on a page that arrives a byte at a time', async () => {
+    const started = Date.now();
+    expect(await problem(get(shop.url('/drip'), { timeoutMs: 400 }))).toBe('too_slow');
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it('refuses redirects to file: and javascript: links', async () => {
+    expect(await problem(get(shop.url('/to-file')))).toBe('bad_link');
+    expect(await problem(get(shop.url('/to-script')))).toBe('bad_link');
+  });
+
+  it('refuses IPv4 addresses written as numbers, octal or hex', async () => {
+    const real = { ...PUBLIC_INTERNET, resolve: shop.network.resolve };
+    for (const link of [
+      'http://2130706433/',
+      'http://0x7f.0.0.1/',
+      'http://0177.0.0.1/',
+      'http://127.1/',
+      'http://0/',
+      'http://167772161/',
+      'http://[::ffff:a9fe:a9fe]/',
+    ]) {
+      expect(await problem(get(link, { network: real })), link).toBe('forbidden');
+    }
   });
 
   it('names the problem for odd answers', async () => {

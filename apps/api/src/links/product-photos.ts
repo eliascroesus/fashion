@@ -4,7 +4,7 @@ import type { EmbedderClient } from '../ai/embedder.ts';
 import { ImageRejectedError } from '../media/image.ts';
 import { markMediaFailed, originalKey, processUploadedMedia } from '../media/pipeline.ts';
 import type { PhotoStorage } from '../storage.ts';
-import { LinkFetchError, type NetworkPolicy, safeFetch } from './fetch.ts';
+import { isTemporary, LinkFetchError, type NetworkPolicy, safeFetch } from './fetch.ts';
 
 export const PRODUCT_QUEUES = {
   /** Copies a product's shop photo into our storage and makes the public sizes. */
@@ -67,7 +67,7 @@ export async function copyProductPhoto(
     });
     photo = { body: answer.body, contentType: answer.contentType.split(';')[0] ?? '' };
   } catch (error) {
-    if (error instanceof LinkFetchError && !retryable(error)) {
+    if (error instanceof LinkFetchError && !isTemporary(error)) {
       return { outcome: 'refused', reason: error.message };
     }
     throw error;
@@ -75,7 +75,7 @@ export async function copyProductPhoto(
 
   const mediaId = crypto.randomUUID();
   const key = originalKey(mediaId);
-  await storage.putOriginal(key, photo.body, photo.contentType);
+  // The row first: a stored file then always has a row saying what it is (no orphans in R2).
   await db.insert(media).values({
     id: mediaId,
     ownerProfileId: null,
@@ -86,6 +86,7 @@ export async function copyProductPhoto(
     sourceUrl,
   });
   try {
+    await storage.putOriginal(key, photo.body, photo.contentType);
     await processUploadedMedia(db, storage, mediaId);
   } catch (error) {
     if (!(error instanceof ImageRejectedError)) {
@@ -113,12 +114,6 @@ export async function copyProductPhoto(
     }
   });
   return { outcome: 'copied', mediaId };
-}
-
-/** Worth trying again later: the shop's server was down, slow or busy (429 / 503), not refusing. */
-export function retryable(error: LinkFetchError): boolean {
-  if (error.problem === 'unreachable' || error.problem === 'too_slow') return true;
-  return error.problem === 'blocked' && (error.httpStatus === 429 || error.httpStatus === 503);
 }
 
 export type ProductFingerprintOutcome =

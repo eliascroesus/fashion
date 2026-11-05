@@ -4,7 +4,10 @@
 //   pnpm links:try --file links.txt            one link per line (# starts a comment)
 //   pnpm links:try --file links.txt --save     also save products and offers in the database in
 //                                              .env, copy their photos and fingerprint them
-//   pnpm links:try --file links.txt --out report.md
+//   pnpm links:try --file links.txt --out report.md   also a report with a "Right?" column to
+//                                              fill in by eye
+//   --microlink                                ask Microlink about pages without product data
+// "OK" only means a name and a price came out: whether they're the right ones needs an eye.
 // Without --save nothing is written and no database is needed. Requests go one at a time.
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -12,6 +15,8 @@ import { createDb } from '@outfitly/db';
 import { photoAiClients } from '../src/ai/clients.ts';
 import { loadConfig, r2Config } from '../src/config.ts';
 import { LinkFetchError } from '../src/links/fetch.ts';
+import { readWithMicrolink } from '../src/links/microlink.ts';
+import { minorDigits } from '../src/links/parse.ts';
 import { copyProductPhoto, fingerprintProduct } from '../src/links/product-photos.ts';
 import { type LinkRead, parseLink, readShopLink, saveLinkRead } from '../src/links/resolve.ts';
 import { R2Storage } from '../src/storage.ts';
@@ -69,7 +74,8 @@ interface Row {
 
 function money(minor: number | null, currency: string | null): string {
   if (minor === null || currency === null) return '—';
-  return `${(minor / 100).toFixed(2)} ${currency}`;
+  const digits = minorDigits(currency) ?? 2;
+  return `${(minor / 10 ** digits).toFixed(digits)} ${currency}`;
 }
 
 const rows: Row[] = [];
@@ -79,7 +85,9 @@ for (const [i, link] of links.entries()) {
   try {
     const url = parseLink(link);
     shop = url.hostname.replace(/^www\d?\./, '');
-    const read = await readShopLink(url, { microlink });
+    const read = await readShopLink(url, {
+      fallback: microlink ? (pageUrl) => readWithMicrolink(pageUrl) : null,
+    });
     let photo = read.product.imageUrl ? 'shop photo found' : 'no photo';
     if (saving) {
       const saved = await saveLinkRead(saving.db, read);
@@ -144,8 +152,10 @@ if (out) {
     '',
     `${String(okCount)} of ${String(rows.length)} links gave a product with a price (${String(rate)}%).`,
     '',
-    '| # | Shop | Result | Name | Brand | Price | Stock | Photo | Source |',
-    '| - | - | - | - | - | - | - | - | - |',
+    'Fill in **Right?** by eye: yes only if the name, price and photo match the shop page.',
+    '',
+    '| # | Shop | Result | Name | Brand | Price | Stock | Photo | Source | Right? |',
+    '| - | - | - | - | - | - | - | - | - | - |',
     ...rows.map((r, i) => {
       const p = r.read?.product;
       const cells = p
@@ -158,7 +168,7 @@ if (out) {
             p.source,
           ]
         : [r.problem, '', '', '', '', ''];
-      return `| ${String(i + 1)} | ${r.shop} | ${r.ok ? 'OK' : 'FAIL'} | ${cells.map((c) => c.replace(/\|/g, '/')).join(' | ')} |`;
+      return `| ${String(i + 1)} | ${r.shop} | ${r.ok ? 'OK' : 'FAIL'} | ${cells.map((c) => c.replace(/\|/g, '/')).join(' | ')} | |`;
     }),
   ];
   await writeFile(here(out), `${lines.join('\n')}\n`);
