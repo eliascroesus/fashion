@@ -16,6 +16,9 @@ Things we've parked on purpose. None of them block building, but all of them mus
 - [ ] Then edit the templates "Confirm sign up", "Magic Link" and "Change Email Address": subject "Your Outfitly code", and a body that shows the code `{{ .Token }}`. Without this, people get a link instead of a code and email login doesn't work.
 - [ ] Until it's done, the app's "Continue with email" option doesn't work: hide it or finish this before testers.
 
+## Shops and money
+- [ ] Revisit affiliate networks' product feeds (Adtraction first: Lindex's programme is there; Awin for others): free to join, each shop approves us once the app or site is live. They give price and stock for shops that turn our reader away, and commissions later (Phase 9). Not chosen for V1 (Elias, 2026-11-06), to decide at launch.
+
 ## Content
 - [ ] The seed photos (loaded 2026-11-04 as `@outfitly.picks`) look saved from Pinterest and Instagram. Before anyone outside the team sees them: get each owner's permission (and credit them), or replace them with photos we may use.
 

@@ -8,6 +8,7 @@ import { createDb } from '@outfitly/db';
 import { loadConfig } from '../src/config.ts';
 import { createJobQueue } from '../src/jobs.ts';
 import { duePages, priceRefreshSettings, runPriceRefresh } from '../src/links/refresh.ts';
+import { inSalePeriod } from '../src/links/sale-periods.ts';
 
 const args = process.argv.slice(2);
 const pageArg = args.includes('--page') ? args[args.indexOf('--page') + 1] : undefined;
@@ -22,9 +23,20 @@ const boss = createJobQueue(config.DATABASE_URL, config.DATABASE_CA_CERT);
 try {
   if (args.includes('--due')) {
     const settings = await priceRefreshSettings(db);
+    const now = new Date();
+    const sale = inSalePeriod(now);
+    console.log(sale ? 'In a sale period: checked more often.' : 'Not in a sale period.');
     for (const group of ['important', 'others'] as const) {
-      console.log(group === 'important' ? 'Saved or popular (daily):' : 'The rest (weekly):');
-      console.table(await duePages(db, settings, new Date(), group, 200));
+      const every =
+        group === 'important'
+          ? sale
+            ? 'daily'
+            : 'every 3 days'
+          : sale
+            ? 'every 3 days'
+            : 'weekly';
+      console.log(group === 'important' ? `Saved or popular (${every}):` : `The rest (${every}):`);
+      console.table(await duePages(db, settings, now, group, 200, sale));
     }
   } else {
     await boss.start();

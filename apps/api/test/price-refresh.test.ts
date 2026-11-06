@@ -52,6 +52,8 @@ let defaults: PriceRefreshSettings;
 
 /** The clock the runs see; sleeping moves it (no real waiting). */
 let clock = Date.now();
+/** Hours since its last read that make a saved look's page due outside sales (3 days). */
+const DUE_HOURS = 72;
 const slept: number[] = [];
 function deps(extra: Partial<RefreshDeps> = {}): RefreshDeps {
   return {
@@ -59,6 +61,8 @@ function deps(extra: Partial<RefreshDeps> = {}): RefreshDeps {
     queue: ctx.queue,
     network: shop.network,
     now: () => new Date(clock),
+    // Outside a sale, whatever today's date is; the sale test says otherwise.
+    inSale: () => false,
     sleep: (ms) => {
       slept.push(ms);
       clock += ms;
@@ -203,7 +207,7 @@ describe('a run', () => {
     expect(piecesTotal(before.items).totals).toEqual([{ amountMinor: 129900, currency: 'SEK' }]);
 
     state.stock = 'OutOfStock';
-    await age([offerId], 21);
+    await age([offerId], DUE_HOURS);
     shop.requests.length = 0;
     const summary = await runPriceRefresh(deps());
     expect(summary.found).toMatchObject({ ok: 1, soldOut: 1 });
@@ -218,7 +222,7 @@ describe('a run', () => {
     expect(shop.requests.map((r) => r.path)).toEqual(['/p/demo-coat']);
     // And it's normal again once the shop has it back.
     state.stock = 'InStock';
-    await age([offerId], 21);
+    await age([offerId], DUE_HOURS);
     expect((await runPriceRefresh(deps())).found).toMatchObject({ ok: 1, backInStock: 1 });
     expect((await offer(offerId)).stock).toBe('in_stock');
   });
@@ -230,12 +234,12 @@ describe('a run', () => {
       ((await offer(offerId)).priceHistory as { priceMinor: number }[]).map((h) => h.priceMinor);
     expect(await history()).toEqual([100000]);
 
-    await age([offerId], 21);
+    await age([offerId], DUE_HOURS);
     expect((await runPriceRefresh(deps())).found).toMatchObject({ ok: 1, priceChanged: 0 });
     expect(await history()).toEqual([100000]);
 
     state.price = '800';
-    await age([offerId], 21);
+    await age([offerId], DUE_HOURS);
     expect((await runPriceRefresh(deps())).found).toMatchObject({ ok: 1, priceChanged: 1 });
     expect(await history()).toEqual([100000, 80000]);
     const row = await offer(offerId);
@@ -248,7 +252,7 @@ describe('a run', () => {
     const first = await linkOnLook(shop.url('/p/shared?aff=anna'));
     const second = await linkOnLook(shop.url('/p/shared?aff=bo'));
     expect(second.productId).toBe(first.productId);
-    await age([first.offerId, second.offerId], 21);
+    await age([first.offerId, second.offerId], DUE_HOURS);
     shop.requests.length = 0;
     const summary = await runPriceRefresh(deps());
     expect(summary.reads.savedOrPopular).toBe(1);
@@ -263,7 +267,7 @@ describe('a run', () => {
   it('does nothing more when run again straight away', async () => {
     shopPage('/p/again', { name: 'Again coat', price: '500', stock: 'InStock' });
     const { offerId } = await linkOnLook(shop.url('/p/again'));
-    await age([offerId], 21);
+    await age([offerId], DUE_HOURS);
     expect((await runPriceRefresh(deps())).reads.savedOrPopular).toBe(1);
     const again = await runPriceRefresh(deps());
     expect(again.reads).toEqual({ savedOrPopular: 0, others: 0 });
@@ -280,7 +284,7 @@ describe('a run', () => {
       .values({ lookId: otherLook, offerId: shown.offerId, status: 'pending' })
       .returning({ id: lookItems.id });
     state.stock = 'OutOfStock';
-    await age([shown.offerId], 21);
+    await age([shown.offerId], DUE_HOURS);
     expect((await runPriceRefresh(deps())).found.soldOut).toBe(1);
     const status = async (id: string) =>
       (await ctx.db.select().from(lookItems).where(eq(lookItems.id, id)))[0]?.status;
@@ -298,7 +302,7 @@ describe('a run', () => {
     shopPage('/p/no-ai', { name: 'No AI coat', price: '500', stock: 'OutOfStock' });
     const { offerId } = await linkOnLook(shop.url('/p/no-ai'));
     const calls = (await ctx.db.select().from(aiCalls)).length;
-    await age([offerId], 21);
+    await age([offerId], DUE_HOURS);
     await runPriceRefresh(deps());
     expect((await ctx.db.select().from(aiCalls)).length).toBe(calls);
     expect(ctx.queued.filter((j) => j.name === LINK_CHECK_QUEUES.linkCheck)).toEqual([]);
@@ -312,7 +316,7 @@ describe('what a page can answer', () => {
     const one = await linkOnLook(shop.url('/p/walled', 'wall.test'));
     const two = await linkOnLook(shop.url('/p/walled-2', 'wall.test'));
     state.status = 403;
-    await age([one.offerId, two.offerId], 21);
+    await age([one.offerId, two.offerId], DUE_HOURS);
     const read = await offer(one.offerId);
     shop.requests.length = 0;
 
@@ -344,7 +348,7 @@ describe('what a page can answer', () => {
     const { offerId } = await linkOnLook(shop.url('/p/busy', 'busy.test'));
     state.status = 429;
     state.headers = { 'retry-after': '7200' };
-    await age([offerId], 21);
+    await age([offerId], DUE_HOURS);
     expect((await runPriceRefresh(deps())).found).toMatchObject({ blocked: 1, soldOut: 0 });
     const [site] = await ctx.db.select().from(priceRefreshSites);
     expect(site?.restUntil.getTime()).toBe(clock + 2 * 60 * 60 * 1000);
@@ -355,7 +359,7 @@ describe('what a page can answer', () => {
     const state = shopPage('/p/slow', { name: 'Slow coat', price: '700', stock: 'InStock' });
     const { offerId } = await linkOnLook(shop.url('/p/slow', 'slow.test'));
     state.hang = true;
-    await age([offerId], 21);
+    await age([offerId], DUE_HOURS);
     const summary = await runPriceRefresh(deps());
     expect(summary.found).toMatchObject({ failed: 1, soldOut: 0 });
     expect(await offer(offerId)).toMatchObject({
@@ -376,7 +380,8 @@ describe('what a page can answer', () => {
       { gone: 2, stock: 'in_stock' },
       { gone: 3, stock: 'out_of_stock' },
     ]) {
-      await age([offerId], 21);
+      // Due as usual the first time; once gone, it comes back the next day (21 h), not in 3 days.
+      await age([offerId], expected.gone === 1 ? DUE_HOURS : 21);
       const summary = await runPriceRefresh(deps());
       expect(summary.found.gone).toBe(1);
       expect(summary.found.soldOut).toBe(expected.stock === 'out_of_stock' ? 1 : 0);
@@ -388,7 +393,7 @@ describe('what a page can answer', () => {
     }
     // The page comes back: in stock again, the count starts over.
     state.status = undefined;
-    await age([offerId], 21);
+    await age([offerId], DUE_HOURS);
     expect((await runPriceRefresh(deps())).found).toMatchObject({ ok: 1, backInStock: 1 });
     expect(await offer(offerId)).toMatchObject({ refreshGone: 0, stock: 'in_stock' });
   });
@@ -402,7 +407,7 @@ describe('what a page can answer', () => {
     const blank = await linkOnLook(shop.url('/p/blank'));
     shop.route('/p/retired', redirect(shop.url('/women/coats')));
     shop.route('/p/blank', page('<html><head><title>Coat</title></head></html>'));
-    await age([retired.offerId, blank.offerId], 21);
+    await age([retired.offerId, blank.offerId], DUE_HOURS);
     const summary = await runPriceRefresh(deps());
     expect(summary.found).toMatchObject({ gone: 1, unreadable: 1, soldOut: 0 });
     expect(await offer(retired.offerId)).toMatchObject({ refreshOutcome: 'gone', refreshGone: 1 });
@@ -419,7 +424,7 @@ describe('what a page can answer', () => {
     shop.route('/p/other-dress', page(productHtml('/p/other-dress', { ...coat, name: 'Dress' })));
     const { offerId, productId, itemId } = await linkOnLook(shop.url('/p/real-coat'));
     shop.route('/p/real-coat', redirect(shop.url('/p/other-dress')));
-    await age([offerId], 21);
+    await age([offerId], DUE_HOURS);
     expect((await runPriceRefresh(deps())).found).toMatchObject({ moved: 1 });
     const row = await offer(offerId);
     expect(row.productId).not.toBe(productId);
@@ -442,7 +447,7 @@ describe('what a page can answer', () => {
     shop.route('/p/new-slug', page(productHtml('/p/new-slug', { ...coat, gtin })));
     const { offerId, productId, itemId } = await linkOnLook(shop.url('/p/old-slug'));
     shop.route('/p/old-slug', redirect(shop.url('/p/new-slug'), 301));
-    await age([offerId], 21);
+    await age([offerId], DUE_HOURS);
     expect((await runPriceRefresh(deps())).found).toMatchObject({ ok: 1, moved: 0 });
     const row = await offer(offerId);
     expect(row).toMatchObject({ productId, pageUrl: shop.url('/p/new-slug') });
@@ -452,7 +457,7 @@ describe('what a page can answer', () => {
 });
 
 describe('which pages a run reads', () => {
-  it('reads links on saved looks daily and the rest weekly', async () => {
+  it('reads links on saved looks every 3 days and the rest weekly', async () => {
     await setSettings({ popularLooks: 0 });
     shopPage('/p/saved', { name: 'Saved coat', price: '500', stock: 'InStock' });
     shopPage('/p/plain', { name: 'Plain coat', price: '500', stock: 'InStock' });
@@ -460,12 +465,31 @@ describe('which pages a run reads', () => {
     const plain = await linkOnLook(shop.url('/p/plain'));
     await ctx.db.insert(saves).values({ profileId: author, lookId: saved.lookId });
 
-    await age([saved.offerId, plain.offerId], 21);
+    await age([saved.offerId, plain.offerId], 2 * 24);
+    expect((await runPriceRefresh(deps())).reads).toEqual({ savedOrPopular: 0, others: 0 });
+
+    await age([saved.offerId, plain.offerId], DUE_HOURS);
     expect((await runPriceRefresh(deps())).reads).toEqual({ savedOrPopular: 1, others: 0 });
     expect((await offer(plain.offerId)).refreshTriedAt).toBeNull();
 
     await age([plain.offerId], 8 * 24);
     expect((await runPriceRefresh(deps())).reads).toEqual({ savedOrPopular: 0, others: 1 });
+  });
+
+  it('reads them daily and the rest every 3 days in a sale', async () => {
+    await setSettings({ popularLooks: 0 });
+    shopPage('/p/sale-saved', { name: 'Saved coat', price: '500', stock: 'InStock' });
+    shopPage('/p/sale-plain', { name: 'Plain coat', price: '500', stock: 'InStock' });
+    const saved = await linkOnLook(shop.url('/p/sale-saved'));
+    const plain = await linkOnLook(shop.url('/p/sale-plain'));
+    await ctx.db.insert(saves).values({ profileId: author, lookId: saved.lookId });
+    const sale = deps({ inSale: () => true });
+
+    await age([saved.offerId, plain.offerId], 21);
+    expect((await runPriceRefresh(sale)).reads).toEqual({ savedOrPopular: 1, others: 0 });
+
+    await age([plain.offerId], DUE_HOURS);
+    expect((await runPriceRefresh(sale)).reads).toEqual({ savedOrPopular: 0, others: 1 });
   });
 
   it('counts a board as saved, and puts the most saved first', async () => {
@@ -484,9 +508,9 @@ describe('which pages a run reads', () => {
       { profileId: author, lookId: twice.lookId },
       { profileId: other, lookId: twice.lookId },
     ]);
-    await age([onBoard.offerId, twice.offerId], 21);
+    await age([onBoard.offerId, twice.offerId], DUE_HOURS);
     const settingsNow = await priceRefreshSettings(ctx.db);
-    const due = await duePages(ctx.db, settingsNow, new Date(clock), 'important', 10);
+    const due = await duePages(ctx.db, settingsNow, new Date(clock), 'important', 10, false);
     expect(due.map((d) => [d.pageUrl, d.important, d.savers])).toEqual([
       [shop.url('/p/two-saves'), true, 2],
       [shop.url('/p/board'), true, 1],
@@ -508,7 +532,7 @@ describe('which pages a run reads', () => {
     const one = await linkOnLook(shop.url('/p/cap-1'));
     const two = await linkOnLook(shop.url('/p/cap-2'));
     await setSettings({ savedOrPopularPerDay: 1 });
-    await age([one.offerId, two.offerId], 21);
+    await age([one.offerId, two.offerId], DUE_HOURS);
     expect((await runPriceRefresh(deps())).reads.savedOrPopular).toBe(1);
     expect((await runPriceRefresh(deps())).reads.savedOrPopular).toBe(0); // cap used up today
 
@@ -526,7 +550,7 @@ describe('which pages a run reads', () => {
     const a1 = await linkOnLook(shop.url('/p/gap-a1', 'gap-a.test'));
     const a2 = await linkOnLook(shop.url('/p/gap-a2', 'www.gap-a.test'));
     const b1 = await linkOnLook(shop.url('/p/gap-b1', 'gap-b.test'));
-    await age([a1.offerId, a2.offerId, b1.offerId], 21);
+    await age([a1.offerId, a2.offerId, b1.offerId], DUE_HOURS);
     shop.requests.length = 0;
     const run = await runPriceRefresh(deps());
     expect(run.reads.savedOrPopular).toBe(3);
@@ -609,8 +633,8 @@ describe('after the review', () => {
     await ctx.db
       .insert(priceRefreshSites)
       .values({ site: 'big.test', restUntil: new Date(clock + 86400e3), lastProblem: 'blocked' });
-    await age(big, 30); // longest unchecked: first in line if resting didn't count
-    await age([small.offerId], 21);
+    await age(big, DUE_HOURS + 8); // longest unchecked: first in line if resting didn't count
+    await age([small.offerId], DUE_HOURS);
     const run = await runPriceRefresh(deps());
     expect(run.reads.savedOrPopular).toBe(1);
     expect((await offer(small.offerId)).refreshTriedAt).not.toBeNull();
@@ -631,7 +655,7 @@ describe('after the review', () => {
     }
     shopPage('/p/weekly', { name: 'Weekly coat', price: '500', stock: 'InStock' });
     const weekly = await linkOnLook(shop.url('/p/weekly', 'weekly.test'));
-    await age(daily, 21);
+    await age(daily, DUE_HOURS);
     await age([weekly.offerId], 30 * 24);
     const run = await runPriceRefresh(deps());
     expect(run.reads).toEqual({ savedOrPopular: 1, others: 1 });
@@ -643,7 +667,7 @@ describe('after the review', () => {
     const link = await linkOnLook(shop.url('/p/e', 'eshop.test'));
     shop.route('/p/e', redirect(shop.url('/consent?return=/p/e', 'consent.test')));
     shop.route('/consent', page('<html><head><title>Cookies</title></head></html>'));
-    await age([link.offerId], 21);
+    await age([link.offerId], DUE_HOURS);
     expect((await runPriceRefresh(deps())).found).toMatchObject({ unreadable: 1, gone: 0 });
     expect(await offer(link.offerId)).toMatchObject({
       refreshGone: 0,
@@ -666,7 +690,7 @@ describe('after the review', () => {
     shopPage('/p/canon', { name: 'Canon coat', price: '500', stock: 'InStock' });
     const link = await linkOnLook(shop.url('/p/canon'));
     shop.route('/p/canon', page('<html><head><link rel="canonical" href="/women"></head></html>'));
-    await age([link.offerId], 21);
+    await age([link.offerId], DUE_HOURS);
     expect((await runPriceRefresh(deps())).found).toMatchObject({ unreadable: 1, gone: 0 });
   });
 
@@ -681,7 +705,7 @@ describe('after the review', () => {
       ids.push((await linkOnLook(shop.url(`/p/wave-${String(i)}`, 'wave.test'))).offerId);
       state.status = 404;
     }
-    await age(ids, 21);
+    await age(ids, DUE_HOURS);
     const flagged: string[] = [];
     const run = await runPriceRefresh(
       deps({
@@ -703,7 +727,7 @@ describe('after the review', () => {
     const link = await linkOnLook(shop.url('/p/kroner'));
     state.currency = 'DKK';
     state.price = '400';
-    await age([link.offerId], 21);
+    await age([link.offerId], DUE_HOURS);
     expect((await runPriceRefresh(deps())).found).toMatchObject({ currencyChanged: 1, ok: 0 });
     const row = await offer(link.offerId);
     expect(row).toMatchObject({
@@ -732,7 +756,7 @@ describe('after the review', () => {
       .set({ imageMediaId: cover?.mediaId ?? null })
       .where(eq(products.id, link.productId));
     state.image = 'https://cdn.shop.test/coat.jpg?v=2';
-    await age([link.offerId], 21);
+    await age([link.offerId], DUE_HOURS);
     ctx.queued.length = 0;
     await runPriceRefresh(deps());
     expect(ctx.queued.filter((j) => j.name === PRODUCT_QUEUES.productPhoto)).toEqual([]);
@@ -751,8 +775,8 @@ describe('after the review', () => {
     shopPage('/p/fine', { name: 'Fine coat', price: '500', stock: 'InStock' });
     const crash = await linkOnLook(shop.url('/p/crash', 'crash.test'));
     const fine = await linkOnLook(shop.url('/p/fine', 'fine.test'));
-    await age([crash.offerId], 30);
-    await age([fine.offerId], 21);
+    await age([crash.offerId], DUE_HOURS + 8);
+    await age([fine.offerId], DUE_HOURS);
     const errors: string[] = [];
     const run = await runPriceRefresh(
       deps({
@@ -777,12 +801,28 @@ describe('after the review', () => {
     expect(await offer(link.offerId)).toMatchObject({ stock: 'unknown', priceMinor: 50000 });
   });
 
+  it('brings a gone page back the next day in the weekly group too', async () => {
+    await setSettings({ popularLooks: 0 });
+    const state = shopPage('/p/gone-weekly', {
+      name: 'Gone weekly',
+      price: '500',
+      stock: 'InStock',
+    });
+    const { offerId } = await linkOnLook(shop.url('/p/gone-weekly'));
+    state.status = 404;
+    await age([offerId], 8 * 24);
+    expect((await runPriceRefresh(deps())).reads).toEqual({ savedOrPopular: 0, others: 1 });
+    await age([offerId], 21);
+    expect((await runPriceRefresh(deps())).reads).toEqual({ savedOrPopular: 0, others: 1 });
+    expect((await offer(offerId)).refreshGone).toBe(2);
+  });
+
   it('starts the gone count over on any good read, and looks weekly once sold out', async () => {
     const state = shopPage('/p/gone-again', { name: 'Gone again', price: '500', stock: 'InStock' });
     const link = await linkOnLook(shop.url('/p/gone-again'));
     state.status = 404;
     for (let i = 0; i < 2; i++) {
-      await age([link.offerId], 21);
+      await age([link.offerId], DUE_HOURS);
       await runPriceRefresh(deps());
     }
     expect((await offer(link.offerId)).refreshGone).toBe(2);
@@ -795,7 +835,7 @@ describe('after the review', () => {
     expect((await offer(link.offerId)).refreshGone).toBe(0);
     state.status = 404;
     for (let i = 0; i < 3; i++) {
-      await age([link.offerId], 21);
+      await age([link.offerId], DUE_HOURS);
       await runPriceRefresh(deps());
     }
     const row = await offer(link.offerId);
@@ -818,7 +858,7 @@ describe('after the review', () => {
       const state: PageState = { name: 'F coat', price: '900', stock: 'OutOfStock', image: photo };
       page(productHtml(shop.url('/p/f', 'fshop.test'), state))(request, response);
     });
-    await age([link.offerId], 21);
+    await age([link.offerId], DUE_HOURS);
     ctx.queued.length = 0;
     const run = await runPriceRefresh(deps());
     expect(run.found).toMatchObject({ ok: 1, moved: 0, soldOut: 1 });
@@ -837,7 +877,7 @@ describe('after the review', () => {
     const one = await linkOnLook(shop.url('/p/a-old?aff=1'));
     const two = await linkOnLook(shop.url('/p/a-old?aff=2'));
     shop.route('/p/a-old', redirect(shop.url('/p/a-new'), 301));
-    await age([one.offerId, two.offerId], 21);
+    await age([one.offerId, two.offerId], DUE_HOURS);
     ctx.queued.length = 0;
     expect((await runPriceRefresh(deps())).found).toMatchObject({ ok: 1, moved: 0 });
     for (const link of [one, two]) {
@@ -866,7 +906,7 @@ describe('after the review', () => {
     }
     const a = await linkOnLook(shop.url('/p/count-1', 'count.test'));
     const b = await linkOnLook(shop.url('/p/count-2', 'count.test'));
-    await age([a.offerId, b.offerId], 21);
+    await age([a.offerId, b.offerId], DUE_HOURS);
     let midRun: number | null = null;
     await runPriceRefresh(
       deps({

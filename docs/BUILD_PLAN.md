@@ -460,7 +460,7 @@ This is the full list of tables the MVP needs, so Claude Code designs Phase 1 wi
   - creates or updates the product and offer, and fingerprints the product image
 - A paid page reader (Microlink) is only a fallback behind a feature flag.
 - Security: block requests to private network addresses (SSRF), with strict timeouts and size limits.
-- **Done when:** at least 80% of your 30 test links resolve correctly, and the success rate is recorded.
+- **Done when:** at least 80% of your 30 test links resolve correctly, and the success rate is recorded. Counted on shops that let our server read their pages (decided 2026-11-06): shops that turn link readers away (H&M, Zara, Bershka, Lindex…) are read on the poster's phone in Step 4.2.
 
 ### Step 3.5 — Automatic link check
 
@@ -495,7 +495,7 @@ This is the full list of tables the MVP needs, so Claude Code designs Phase 1 wi
 
 ### Step 3.9 — Price and stock refresh
 
-- A daily job re-checks offers that are saved or in popular looks, with a daily cap; everything else weekly.
+- A job re-checks offers that are saved or in popular looks every 3 days, with a daily cap; everything else weekly. In big sale periods (Black Week to Cyber Monday, Singles' Day, the Christmas and January sales, the summer sale) saved or popular ones daily and the rest every 3 days (decided 2026-11-06).
 - Sold-out items turn grey. Every price change is kept as history for later price-drop alerts.
 - **Done when:** a test product marked sold out turns grey after the next run.
 
@@ -542,6 +542,7 @@ Three account types share one login system. The database was built for this in P
 
 1. Any account type can post from the Create tab. Pick up to 10 photos; they are shrunk on the phone and uploaded with a progress bar.
 2. The AI's finds appear as cards ("We found 3 items"). For each one, confirm, swap, remove, paste your own link, or type it in (brand, name, price, link).
+   - A pasted link from a shop that turns our server away (H&M, Zara, Lindex…) is read on the poster's phone: the shop page opens inside the app (web view) and the app reads the product data from the page the poster sees. Name and price count as "as the poster saw it"; the link check still compares the photo. If nothing can be read there either, the poster types brand, name and price (decided 2026-11-06).
 3. Dots can be dragged into place.
 4. Add a caption plus occasion and season chips. The "contains affiliate links" label switches on by itself when a link has an affiliate tag.
 5. Business accounts can also pick products from their own Products tab.
