@@ -18,6 +18,8 @@ import { LookGrid } from '../../components/look-grid';
 import { LookPhotos } from '../../components/look-photos';
 import { SaveButton } from '../../components/save-button';
 import { SelectionBar, ShopTheLook } from '../../components/shop-the-look';
+import { showToast } from '../../components/toast';
+import { openShop, originFromParams, prepareShop } from '../../clicks';
 import type { CardList } from '../../feed/card-list';
 import { markLookShown } from '../../looks/open-timing';
 import { NO_ITEMS, selection } from '../../looks/shop';
@@ -140,7 +142,7 @@ export default function LookScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, from, pos } = useLocalSearchParams<{ id: string; from?: string; pos?: string }>();
   const detail = useLookDetail(id);
   const similar = useSimilarLooks(id);
   // "More like this" (below the screen at first) is fetched at once but only built after the
@@ -153,6 +155,19 @@ export default function LookScreen() {
   const retry = { label: t('errors.retry'), onPress: () => void detail.refetch() };
   const pieces = usePieceScroll();
   const items = detail.data?.items ?? NO_ITEMS;
+  const hasItems = items.length > 0;
+  useEffect(() => {
+    if (hasItems) prepareShop();
+  }, [hasItems]);
+  // The shop opens over this screen, so coming back finds it as it was: scrolled, ticks kept.
+  const shop = (item: LookItem) => {
+    void openShop(id, item, originFromParams(from, pos), {
+      bar: colors.surface,
+      controls: colors.text,
+    }).then((result) => {
+      if (result === 'failed') showToast(t('look.shopFailed'));
+    });
+  };
   const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
   const tick = (itemId: string) => {
     setTicked((current) => {
@@ -181,6 +196,7 @@ export default function LookScreen() {
               ticked={ticked}
               onTick={tick}
               highlighted={pieces.highlighted}
+              onShop={shop}
               onItemLayout={pieces.onPieceY}
             />
           </View>
@@ -225,6 +241,7 @@ export default function LookScreen() {
           scrollRef={pieces.listRef}
           bottomInset={selection(items, ticked).count > 0 ? insets.bottom + SELECTION_BAR_SPACE : 0}
           list={opened ? similar : NOT_BUILT_YET}
+          origin="more_like_this"
           testID="look-page"
           cardTestID="similar-card"
           header={header}

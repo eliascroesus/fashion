@@ -185,6 +185,7 @@ export default function ProfileScreen() {
       {profileId ? (
         <LookGrid
           list={looks}
+          origin="profile"
           testID="profile-own-looks"
           cardTestID="profile-card"
           header={header}

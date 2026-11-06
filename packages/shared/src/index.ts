@@ -1,4 +1,5 @@
 export * from './api.ts';
+export * from './clicks.ts';
 export * from './events.ts';
 export * from './feed.ts';
 export * from './links.ts';

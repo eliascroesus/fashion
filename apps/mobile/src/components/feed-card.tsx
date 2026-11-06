@@ -1,11 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import type { FeedCard as Card } from '@outfitly/shared';
+import type { FeedCard as Card, ClickSource } from '@outfitly/shared';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { Link } from 'expo-router';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet, View } from 'react-native';
+import { originParams } from '../clicks/shop';
 import { DOWNSCALE_PHOTOS } from '../lib/photos';
 import { markLookOpening } from '../looks/open-timing';
 import { radii, spacing, ThemedText, useColors } from '../theme';
@@ -22,6 +23,9 @@ interface FeedCardProps {
   uri: string;
   /** Press and hold: the look's menu (save to board, see less). */
   onMenu: (lookId: string) => void;
+  /** The list this card is in and its place there, passed to the look (a Shop tap records them). */
+  origin?: ClickSource;
+  position: number;
   /** The save button gets `-save` added. */
   testID?: string;
 }
@@ -38,13 +42,15 @@ export const FeedCard = memo(function FeedCard({
   height,
   uri,
   onMenu,
+  origin,
+  position,
   testID = 'feed-card',
 }: FeedCardProps) {
   const { t } = useTranslation();
   const colors = useColors();
   return (
     <Link
-      href={{ pathname: '/look/[id]', params: { id: card.id } }}
+      href={{ pathname: '/look/[id]', params: { id: card.id, ...originParams(origin, position) } }}
       asChild
       onPress={markLookOpening}
     >

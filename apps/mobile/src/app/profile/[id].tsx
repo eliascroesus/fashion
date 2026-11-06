@@ -32,6 +32,7 @@ export default function ProfileScreen() {
     content = (
       <LookGrid
         list={looks}
+        origin="profile"
         testID="profile-looks"
         cardTestID="profile-card"
         header={<ProfileHeader profile={profile.data} isMe={isMe} />}

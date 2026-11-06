@@ -111,6 +111,7 @@ export default function BoardScreen() {
       ) : null}
       <LookGrid
         list={looks}
+        origin="board"
         testID="board-looks"
         cardTestID="board-card"
         endMessage={null}

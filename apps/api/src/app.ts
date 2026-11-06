@@ -11,6 +11,7 @@ import { registerIdempotency } from './idempotency.ts';
 import type { JobQueue } from './jobs.ts';
 import type { NetworkPolicy } from './links/fetch.ts';
 import { boardsRoutes } from './routes/boards.ts';
+import { clicksRoutes } from './routes/clicks.ts';
 import { eventsRoutes } from './routes/events.ts';
 import { feedRoutes } from './routes/feed.ts';
 import { linksRoutes } from './routes/links.ts';
@@ -81,6 +82,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       mediaRoutes(v1, deps);
       feedRoutes(v1, deps);
       eventsRoutes(v1, deps);
+      clicksRoutes(v1, deps);
       savesRoutes(v1, deps);
       boardsRoutes(v1, deps);
       looksRoutes(v1, deps);

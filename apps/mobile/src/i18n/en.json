@@ -86,6 +86,8 @@
     "checkedDaysAgo_other": "Price checked {{count}} days ago",
     "shop": "Shop",
     "shopLabel": "Shop {{name}} at {{shop}}",
+    "shopHint": "Opens {{shop}} inside Outfitly",
+    "shopFailed": "Couldn't open the shop. Try again.",
     "tickLabel": "Count {{name}} in your total",
     "dotLabel": "Show {{name}}",
     "moreLikeThis": "More like this",

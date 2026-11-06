@@ -1,4 +1,6 @@
 import '../i18n';
+// Starts the Shop click queue: clicks kept on the phone are sent at app start.
+import '../clicks';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import Constants from 'expo-constants';
 import { type ErrorBoundaryProps, Stack, ThemeProvider } from 'expo-router';
