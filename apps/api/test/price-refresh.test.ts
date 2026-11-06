@@ -380,7 +380,8 @@ describe('what a page can answer', () => {
       { gone: 2, stock: 'in_stock' },
       { gone: 3, stock: 'out_of_stock' },
     ]) {
-      await age([offerId], DUE_HOURS);
+      // Due as usual the first time; once gone, it comes back the next day (21 h), not in 3 days.
+      await age([offerId], expected.gone === 1 ? DUE_HOURS : 21);
       const summary = await runPriceRefresh(deps());
       expect(summary.found.gone).toBe(1);
       expect(summary.found.soldOut).toBe(expected.stock === 'out_of_stock' ? 1 : 0);
@@ -632,7 +633,7 @@ describe('after the review', () => {
     await ctx.db
       .insert(priceRefreshSites)
       .values({ site: 'big.test', restUntil: new Date(clock + 86400e3), lastProblem: 'blocked' });
-    await age(big, 30); // longest unchecked: first in line if resting didn't count
+    await age(big, DUE_HOURS + 8); // longest unchecked: first in line if resting didn't count
     await age([small.offerId], DUE_HOURS);
     const run = await runPriceRefresh(deps());
     expect(run.reads.savedOrPopular).toBe(1);
@@ -798,6 +799,22 @@ describe('after the review', () => {
     await age([link.offerId], 15 * 24);
     expect((await runPriceRefresh(deps())).found).toMatchObject({ blocked: 1, wentStale: 1 });
     expect(await offer(link.offerId)).toMatchObject({ stock: 'unknown', priceMinor: 50000 });
+  });
+
+  it('brings a gone page back the next day in the weekly group too', async () => {
+    await setSettings({ popularLooks: 0 });
+    const state = shopPage('/p/gone-weekly', {
+      name: 'Gone weekly',
+      price: '500',
+      stock: 'InStock',
+    });
+    const { offerId } = await linkOnLook(shop.url('/p/gone-weekly'));
+    state.status = 404;
+    await age([offerId], 8 * 24);
+    expect((await runPriceRefresh(deps())).reads).toEqual({ savedOrPopular: 0, others: 1 });
+    await age([offerId], 21);
+    expect((await runPriceRefresh(deps())).reads).toEqual({ savedOrPopular: 0, others: 1 });
+    expect((await offer(offerId)).refreshGone).toBe(2);
   });
 
   it('starts the gone count over on any good read, and looks weekly once sold out', async () => {
