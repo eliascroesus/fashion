@@ -1,4 +1,4 @@
-import type { FeedCard } from '@outfitly/shared';
+import type { ClickSource, FeedCard } from '@outfitly/shared';
 import {
   FlashList,
   type FlashListRef,
@@ -9,6 +9,7 @@ import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import {
   type ReactElement,
+  type RefObject,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -79,6 +80,12 @@ interface LookGridProps {
   endMessage?: string | null;
   /** Pull to refresh (off on the look page, where pulling down may close an iOS zoom). */
   refreshable?: boolean;
+  /** To scroll the grid from outside (e.g. to a piece in the header). */
+  scrollRef?: RefObject<FlashListRef<FeedCard> | null>;
+  /** Extra room under the last cards, for something floating over the bottom. */
+  bottomInset?: number;
+  /** Which list this is, so a Shop tap on a look opened from it says where the look came from. */
+  origin?: ClickSource;
 }
 
 /**
@@ -99,11 +106,15 @@ export function LookGrid({
   onScrollBeginDrag,
   endMessage,
   refreshable = true,
+  scrollRef,
+  bottomInset = 0,
+  origin,
 }: LookGridProps) {
   const { t } = useTranslation();
   const colors = useColors();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
-  const listRef = useRef<FlashListRef<FeedCard>>(null);
+  const ownRef = useRef<FlashListRef<FeedCard>>(null);
+  const listRef = scrollRef ?? ownRef;
   const viewport = useRef(screenHeight);
   const furthestVisible = useRef(-1);
   const prefetched = useRef(new Set<string>());
@@ -124,7 +135,7 @@ export function LookGrid({
     // Always: the list may have moved without a scroll event (e.g. while another tab showed).
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
     listRef.current?.recomputeViewableItems();
-  }, [resetKey]);
+  }, [resetKey, listRef]);
 
   const prefetchAhead = useCallback(() => {
     const urls = photosToPrefetch({
@@ -166,7 +177,7 @@ export function LookGrid({
   }, []);
 
   const renderItem = useCallback(
-    ({ item }: ListRenderItemInfo<FeedCard>) => (
+    ({ item, index }: ListRenderItemInfo<FeedCard>) => (
       <View style={styles.cell}>
         <FeedCardView
           card={item}
@@ -174,11 +185,13 @@ export function LookGrid({
           height={photoHeight(item.photo, width)}
           uri={pickPhotoUrl(item.photo.urls, widthPx)}
           onMenu={openMenu}
+          origin={origin}
+          position={index}
           testID={cardTestID}
         />
       </View>
     ),
-    [width, widthPx, openMenu, cardTestID],
+    [width, widthPx, openMenu, origin, cardTestID],
   );
 
   let footer: ReactElement | null = null;
@@ -244,7 +257,11 @@ export function LookGrid({
       }
       // iOS: keeps the last cards clear of the floating tab bar.
       contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={styles.content}
+      contentContainerStyle={
+        bottomInset > 0
+          ? { ...styles.content, paddingBottom: styles.content.paddingBottom + bottomInset }
+          : styles.content
+      }
       ListHeaderComponent={header ?? null}
       ListEmptyComponent={
         <View style={[styles.empty, { minHeight: screenHeight / 2 }]}>{emptyState}</View>

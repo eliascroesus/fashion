@@ -1,7 +1,7 @@
 import type { Db } from '@outfitly/db';
-import { eventBatchResultSchema, eventBatchSchema } from '@outfitly/shared';
+import { eventBatchInputSchema, eventBatchResultSchema } from '@outfitly/shared';
 import type { FastifyInstance } from 'fastify';
-import { recordEvents } from '../events.ts';
+import { readableEvents, recordEvents } from '../events.ts';
 import { findActiveProfile } from '../profiles.ts';
 import type { ZodTypeProvider } from '../zod.ts';
 
@@ -30,11 +30,13 @@ export function eventsRoutes(app: FastifyInstance, { db }: { db: Db }): void {
         },
       },
       bodyLimit: 64 * 1024,
-      schema: { body: eventBatchSchema, response: { 200: eventBatchResultSchema } },
+      schema: { body: eventBatchInputSchema, response: { 200: eventBatchResultSchema } },
     },
     async (request) => {
       const profileId = await findActiveProfile(db, request);
-      return { accepted: await recordEvents(db, profileId, request.body) };
+      const events = readableEvents(request.body.events);
+      if (events.length === 0) return { accepted: 0 };
+      return { accepted: await recordEvents(db, profileId, { ...request.body, events }) };
     },
   );
 }

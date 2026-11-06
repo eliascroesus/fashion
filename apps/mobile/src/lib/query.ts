@@ -33,3 +33,11 @@ export const queryPersister = createAsyncStoragePersister({
 });
 
 export const PERSIST_MAX_AGE = DAY;
+
+/**
+ * Bumped whenever a cached answer's shape changes within one app version, so
+ * the phone drops the old cache instead of restoring answers missing fields
+ * (2: Step 3.6's look pieces and board totals; 3: Step 3.8's "More like this"
+ * and search lists, whose old cursors the server no longer reads).
+ */
+export const CACHE_SHAPE = 3;

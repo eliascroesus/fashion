@@ -85,6 +85,69 @@
       "when": 1793824058368,
       "tag": "0011_halfvec_and_link_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793836013142,
+      "tag": "0012_garment_spotting",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793839046207,
+      "tag": "0013_product_photos",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793841698553,
+      "tag": "0014_media_owner_or_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1793843005528,
+      "tag": "0015_link_check",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793845267865,
+      "tag": "0016_link_check_review",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793853183995,
+      "tag": "0017_look_lists",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793856646300,
+      "tag": "0018_look_lists_profile_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793858345316,
+      "tag": "0019_price_refresh",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793860912385,
+      "tag": "0020_refresh_currency_outcome",
+      "breakpoints": true
     }
   ]
 }

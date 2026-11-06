@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import type { Board } from '@outfitly/shared';
+import { type Board, formatTotals } from '@outfitly/shared';
 import { FlashList } from '@shopify/flash-list';
 import { router } from 'expo-router';
 import { useState } from 'react';
@@ -12,6 +12,7 @@ import { Button } from '../../components/button';
 import { FeedMessage } from '../../components/feed-message';
 import { LookGrid } from '../../components/look-grid';
 import { SegmentedSwitch } from '../../components/segmented-switch';
+import { useMoneyLocale } from '../../lib/money';
 import { useBoards, useSaves } from '../../saves/queries';
 import { grid, radii, Screen, spacing, ThemedText, useColors } from '../../theme';
 
@@ -41,6 +42,7 @@ function SavesPart({ guest }: { guest: boolean }) {
   return (
     <LookGrid
       list={saves}
+      origin="saved"
       testID="saved-looks"
       cardTestID="saved-card"
       endMessage={null}
@@ -69,6 +71,7 @@ type Tile = { kind: 'new' } | { kind: 'board'; board: Board };
 function BoardsPart({ guest }: { guest: boolean }) {
   const { t } = useTranslation();
   const colors = useColors();
+  const locale = useMoneyLocale();
   const { width } = useWindowDimensions();
   const loggedIn = useMe() !== null;
   const { boards, query } = useBoards();
@@ -136,8 +139,13 @@ function BoardsPart({ guest }: { guest: boolean }) {
             <ThemedText variant="bodyStrong" numberOfLines={1}>
               {item.board.name}
             </ThemedText>
-            <ThemedText variant="caption" tone="muted">
-              {t('screens.saved.lookCount', { count: item.board.lookCount })}
+            <ThemedText variant="caption" tone="muted" numberOfLines={1}>
+              {item.board.totals?.length
+                ? t('screens.saved.boardMeta', {
+                    count: item.board.lookCount,
+                    total: formatTotals(item.board.totals, locale),
+                  })
+                : t('screens.saved.lookCount', { count: item.board.lookCount })}
             </ThemedText>
           </Pressable>
         )

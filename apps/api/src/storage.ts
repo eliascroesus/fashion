@@ -36,6 +36,8 @@ export interface PhotoStorage {
   /** Stores an original from the server side (seed scripts); the app uploads with a link instead. */
   putOriginal(key: string, body: Buffer, contentType: string): Promise<void>;
   putPublic(key: string, body: Buffer, contentType: string): Promise<void>;
+  /** Downloads one of our public sizes (for the AI), refusing anything over `maxBytes`. */
+  getPublic(key: string, maxBytes: number): Promise<Buffer>;
   publicUrl(key: string): string;
 }
 
@@ -115,10 +117,16 @@ export class R2Storage implements PhotoStorage {
   }
 
   async getOriginal(key: string, maxBytes: number): Promise<Buffer> {
-    const object = await this.#s3.send(
-      new GetObjectCommand({ Bucket: this.#config.originalsBucket, Key: key }),
-    );
-    if (!object.Body) throw new Error(`Original ${key} has no body.`);
+    return this.#get(this.#config.originalsBucket, key, maxBytes);
+  }
+
+  async getPublic(key: string, maxBytes: number): Promise<Buffer> {
+    return this.#get(this.#config.publicBucket, key, maxBytes);
+  }
+
+  async #get(bucket: string, key: string, maxBytes: number): Promise<Buffer> {
+    const object = await this.#s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    if (!object.Body) throw new Error(`${key} has no body.`);
     if (object.ContentLength === undefined || object.ContentLength > maxBytes) {
       object.Body.transformToWebStream()
         .cancel()

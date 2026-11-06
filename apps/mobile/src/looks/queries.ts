@@ -1,8 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
+import type { SimilarPieceSort } from '@outfitly/shared';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { api } from '../api';
 import { useMe } from '../auth/store';
 import { type CardList, usePagedCards } from '../feed/card-list';
-import { lookQueryKey, similarQueryKey } from './keys';
+import { lookQueryKey, similarPiecesQueryKey, similarQueryKey } from './keys';
+import { uniquePieces } from './similar';
 
 /** Everything the look page shows (photos, poster, caption), cached on the phone. */
 export function useLookDetail(lookId: string) {
@@ -21,4 +24,17 @@ export function useSimilarLooks(lookId: string): CardList {
     (cursor, signal) => api.looks.similar(lookId, cursor, signal),
     true,
   );
+}
+
+/** "Similar pieces" for one of a look's pieces, 20 at a time; repeats across pages are dropped. */
+export function useSimilarPieces(itemId: string, sort: SimilarPieceSort) {
+  const query = useInfiniteQuery({
+    queryKey: similarPiecesQueryKey(itemId, sort),
+    queryFn: ({ pageParam, signal }) =>
+      api.looks.similarPieces(itemId, sort, pageParam ?? undefined, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+  });
+  const pieces = useMemo(() => uniquePieces(query.data?.pages ?? []), [query.data]);
+  return { pieces, query };
 }

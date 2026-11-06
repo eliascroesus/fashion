@@ -32,6 +32,7 @@ export function FeedGrid({ kind, active, empty, testID }: FeedGridProps) {
 
   return (
     <LookGrid
+      origin={SOURCE[kind]}
       list={feed}
       empty={empty}
       testID={testID}

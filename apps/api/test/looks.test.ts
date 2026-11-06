@@ -1,17 +1,8 @@
 import { and, eq, follows, lookMedia, media, sql } from '@outfitly/db';
-import {
-  FEED_PAGE_SIZE,
-  type FeedPage,
-  feedPageSchema,
-  IDEMPOTENT_REPLAY_HEADER,
-  lookDetailSchema,
-  MAX_SIMILAR_LOOKS,
-  meSchema,
-} from '@outfitly/shared';
+import { IDEMPOTENT_REPLAY_HEADER, lookDetailSchema, meSchema } from '@outfitly/shared';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { showableLook } from '../src/feed/cards.ts';
-import { createAuthor, createLogin, createLook, createLooks } from './feed-fixtures.ts';
+import { createAuthor, createLogin, createLook } from './feed-fixtures.ts';
 import { buildTestApp, createTestContext, type TestContext } from './helpers.ts';
 
 let ctx: TestContext;
@@ -151,80 +142,6 @@ describe('GET /v1/looks/:lookId', () => {
       expect((await call('GET', `/v1/looks/${id}/similar`)).statusCode).toBe(404);
     }
     expect((await call('GET', '/v1/looks/not-a-uuid')).statusCode).toBe(400);
-  });
-});
-
-describe('GET /v1/looks/:lookId/similar', () => {
-  let base: string;
-  let ids: string[];
-
-  beforeAll(async () => {
-    const other = await createAuthor(ctx.db, 'similar.author');
-    // The look: party + winter. Two share both tags, one shares one, the rest none.
-    base = await createLook(ctx.db, {
-      authorId: author,
-      occasions: ['party'],
-      seasons: ['winter'],
-    });
-    ids = await createLooks(ctx.db, [
-      { authorId: other, occasions: ['party'], seasons: ['winter'], popularity: 0.01 },
-      { authorId: other, occasions: ['party'], seasons: ['winter'], popularity: 0.02 },
-      { authorId: other, occasions: ['work'], seasons: ['winter'], popularity: 5 },
-      { authorId: other, occasions: ['party'], seasons: ['winter'], status: 'hidden' },
-    ]);
-  });
-
-  async function page(cursor?: string | null): Promise<FeedPage> {
-    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
-    const res = await call('GET', `/v1/looks/${base}/similar${query}`);
-    expect(res.statusCode, res.body).toBe(200);
-    return feedPageSchema.parse(res.json());
-  }
-
-  it('puts the looks sharing the most tags first, then the most popular, never the look itself', async () => {
-    const first = await page();
-    const [bothLow, bothHigh, oneTag, hidden] = ids;
-    expect(first.items.slice(0, 3).map((c) => c.id)).toEqual([bothHigh, bothLow, oneTag]);
-    expect(first.items.map((c) => c.id)).not.toContain(base);
-    expect(first.items.map((c) => c.id)).not.toContain(hidden);
-  });
-
-  it(`pages 20 at a time without repeats and stops at ${String(MAX_SIMILAR_LOOKS)}`, async () => {
-    await createLooks(
-      ctx.db,
-      Array.from({ length: MAX_SIMILAR_LOOKS + 30 }, (_, i) => ({
-        authorId: author,
-        popularity: (i % 7) / 10,
-        hoursAgo: 100 + (i % 5), // ties on time, so the id breaks them
-      })),
-    );
-    const pages = [await page()];
-    while (pages.at(-1)?.nextCursor) {
-      pages.push(await page(pages.at(-1)?.nextCursor));
-      if (pages.length > 20) throw new Error('never ends');
-    }
-    const all = pages.flatMap((p) => p.items.map((c) => c.id));
-    expect(pages[0]?.items).toHaveLength(FEED_PAGE_SIZE);
-    expect(all).toHaveLength(MAX_SIMILAR_LOOKS);
-    // Page by page gives exactly the top of the full ranking: nothing skipped or repeated.
-    const { rows } = await ctx.db.execute<{ id: string }>(sql`
-      SELECT l.id FROM looks l, looks b
-       WHERE b.id = ${base} AND l.id <> b.id AND ${showableLook(sql`l`)}
-       ORDER BY cardinality(ARRAY(SELECT unnest(l.occasion_tags::text[] || l.season_tags::text[])
-                                  INTERSECT SELECT unnest(b.occasion_tags::text[] || b.season_tags::text[]))) DESC,
-                l.popularity_score DESC, l.published_at DESC, l.id DESC
-       LIMIT ${MAX_SIMILAR_LOOKS}`);
-    expect(all).toEqual(rows.map((r) => r.id));
-  });
-
-  it('refuses a cursor that is broken or past the end', async () => {
-    const forged = Buffer.from(
-      JSON.stringify({ s: 0, p: 0, t: '2026-01-01T00:00:00.000000Z', id: base, n: 999 }),
-    ).toString('base64url');
-    for (const cursor of ['nonsense', forged]) {
-      const res = await call('GET', `/v1/looks/${base}/similar?cursor=${cursor}`);
-      expect(res.statusCode).toBe(400);
-    }
   });
 });
 

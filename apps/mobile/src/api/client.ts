@@ -6,6 +6,8 @@ import {
   boardItemStateSchema,
   boardListSchema,
   boardSchema,
+  type ClickBatch,
+  clickBatchResultSchema,
   type CreateUploadBody,
   type EventBatch,
   eventBatchResultSchema,
@@ -20,6 +22,8 @@ import {
   popularTagsSchema,
   profilePageSchema,
   saveStateSchema,
+  type SimilarPieceSort,
+  similarPiecesPageSchema,
   type Style,
   stylesParam,
   suggestionsSchema,
@@ -217,6 +221,19 @@ export function createApiClient(options: ApiClientOptions) {
       /** "More like this", 20 per page. */
       similar: (lookId: string, cursor?: string, signal?: AbortSignal) =>
         page(`/looks/${id(lookId)}/similar`, cursor, signal),
+      /** Products that look like one of a look's pieces, nearest or cheaper first, 20 per page. */
+      similarPieces: (
+        itemId: string,
+        sort: SimilarPieceSort,
+        cursor?: string,
+        signal?: AbortSignal,
+      ) => {
+        const query = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+        return request('GET', `/look-items/${id(itemId)}/similar?sort=${sort}${query}`, {
+          schema: similarPiecesPageSchema,
+          ...(signal ? { signal } : {}),
+        });
+      },
     },
     search: {
       /** Looks matching the words (typos too), 20 per page. Works logged out. */
@@ -324,6 +341,11 @@ export function createApiClient(options: ApiClientOptions) {
       /** Resending a batch is safe: the server skips event ids it already has. */
       send: (batch: EventBatch, idempotencyKey: string) =>
         request('POST', '/events', { schema: eventBatchResultSchema, body: batch, idempotencyKey }),
+    },
+    clicks: {
+      /** Resending a batch is safe: the server skips click ids it already has. */
+      send: (batch: ClickBatch, idempotencyKey: string) =>
+        request('POST', '/clicks', { schema: clickBatchResultSchema, body: batch, idempotencyKey }),
     },
   };
 }

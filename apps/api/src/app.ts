@@ -4,14 +4,19 @@ import type { Db } from '@outfitly/db';
 import { API_PREFIX } from '@outfitly/shared';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import type { JWTVerifyGetKey } from 'jose';
+import { EmbedderClient } from './ai/embedder.ts';
+import { WordFingerprints } from './ai/word-fingerprints.ts';
 import { registerAuth } from './auth.ts';
 import type { Config } from './config.ts';
 import { ApiError, notFoundHandler, registerErrorHandler } from './errors.ts';
 import { registerIdempotency } from './idempotency.ts';
 import type { JobQueue } from './jobs.ts';
+import type { NetworkPolicy } from './links/fetch.ts';
 import { boardsRoutes } from './routes/boards.ts';
+import { clicksRoutes } from './routes/clicks.ts';
 import { eventsRoutes } from './routes/events.ts';
 import { feedRoutes } from './routes/feed.ts';
+import { linksRoutes } from './routes/links.ts';
 import { looksRoutes } from './routes/looks.ts';
 import { profilesRoutes } from './routes/profiles.ts';
 import { tasteRoutes } from './routes/taste.ts';
@@ -31,6 +36,13 @@ export interface AppDeps {
   storage: PhotoStorage;
   queue: JobQueue;
   logger?: FastifyServerOptions['logger'];
+  /** Where pasted links may be fetched from (tests point names at a local shop). */
+  linkNetwork?: NetworkPolicy;
+  /**
+   * Fingerprints of searched words; by default from the fingerprint service's
+   * settings (off without them). Tests pass a fake, or null for off.
+   */
+  words?: WordFingerprints | null;
 }
 
 /** Builds the API without starting it, so tests can call it in-process. */
@@ -68,6 +80,19 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.setNotFoundHandler({ preHandler: app.rateLimit() }, notFoundHandler);
   const auth = { supabaseUrl: config.SUPABASE_URL, jwks };
   registerAuth(app, auth);
+  const words =
+    deps.words !== undefined
+      ? deps.words
+      : config.EMBEDDER_URL && config.EMBEDDER_SECRET
+        ? new WordFingerprints(
+            new EmbedderClient({ url: config.EMBEDDER_URL, secret: config.EMBEDDER_SECRET }),
+            {
+              onError: (error) => {
+                app.log.warn({ err: error }, 'search went on without the words fingerprint');
+              },
+            },
+          )
+        : null;
   registerIdempotency(app, { db });
 
   await app.register(
@@ -77,12 +102,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       mediaRoutes(v1, deps);
       feedRoutes(v1, deps);
       eventsRoutes(v1, deps);
+      clicksRoutes(v1, deps);
       savesRoutes(v1, deps);
       boardsRoutes(v1, deps);
       looksRoutes(v1, deps);
       tasteRoutes(v1, deps);
-      searchRoutes(v1, deps);
+      searchRoutes(v1, { ...deps, words });
       profilesRoutes(v1, deps);
+      linksRoutes(v1, { ...deps, network: deps.linkNetwork });
       done();
     },
     { prefix: API_PREFIX },

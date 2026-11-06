@@ -1,4 +1,5 @@
 import { createDb } from '@outfitly/db';
+import { photoAiClients } from './ai/clients.ts';
 import { buildApp } from './app.ts';
 import { supabaseJwks } from './auth.ts';
 import { loadConfig, r2Config } from './config.ts';
@@ -6,7 +7,16 @@ import { createJobQueue, QUEUES, startJobs } from './jobs.ts';
 import { R2Storage } from './storage.ts';
 
 const config = loadConfig();
-const db = createDb(config.DATABASE_URL, { caCert: config.DATABASE_CA_CERT });
+// The app's logger exists only once the app is built; a drop before that is printed.
+let logDroppedConnection = (error: Error): void => {
+  console.error(`Database connection dropped while idle: ${error.message}`);
+};
+const db = createDb(config.DATABASE_URL, {
+  caCert: config.DATABASE_CA_CERT,
+  onConnectionError: (error) => {
+    logDroppedConnection(error);
+  },
+});
 const storage = new R2Storage(r2Config(config));
 const boss = createJobQueue(config.DATABASE_URL, config.DATABASE_CA_CERT);
 const app = await buildApp({
@@ -16,7 +26,15 @@ const app = await buildApp({
   storage,
   queue: boss,
 });
-await startJobs(boss, { db, storage, log: app.log });
+logDroppedConnection = (err) => {
+  app.log.warn({ err }, 'database connection dropped while idle');
+};
+const ai = photoAiClients(config);
+app.log.info(
+  { spotting: ai.gemini?.model ?? 'off', fingerprints: ai.embedder ? 'on' : 'off' },
+  'photo AI',
+);
+await startJobs(boss, { db, storage, log: app.log, ai });
 await boss.send(QUEUES.ping, { reason: 'startup' });
 await boss.send(QUEUES.eventPartitions, {});
 await boss.send(QUEUES.searchTerms, {});

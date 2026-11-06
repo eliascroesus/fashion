@@ -1,4 +1,6 @@
 import '../i18n';
+// Starts the Shop click queue: clicks kept on the phone are sent at app start.
+import '../clicks';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import Constants from 'expo-constants';
 import { type ErrorBoundaryProps, Stack, ThemeProvider } from 'expo-router';
@@ -9,7 +11,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider } from '../auth/AuthProvider';
 import { CaptchaProvider } from '../auth/captcha';
 import { ToastHost } from '../components/toast';
-import { PERSIST_MAX_AGE, queryClient, queryPersister } from '../lib/query';
+import { CACHE_SHAPE, PERSIST_MAX_AGE, queryClient, queryPersister } from '../lib/query';
 import { initSentry, Sentry } from '../lib/sentry';
 import { usePickerDone } from '../taste';
 import { radii, Screen, spacing, ThemedText, useColors, useThemeName } from '../theme';
@@ -17,8 +19,11 @@ import { navigationTheme } from '../theme/navigation';
 
 initSentry();
 
-/** A new app version starts with a fresh cache, so old data shapes are never restored. */
-const CACHE_VERSION = Constants.expoConfig?.version ?? 'dev';
+/**
+ * A new app version, or a new cache shape, starts with a fresh cache, so old
+ * data shapes are never restored.
+ */
+const CACHE_VERSION = `${Constants.expoConfig?.version ?? 'dev'}-${String(CACHE_SHAPE)}`;
 
 /** Small sheets that rise from the bottom, as tall as what's in them. */
 const SHEET = {
@@ -71,6 +76,10 @@ function RootLayout() {
                   options={{ ...SHEET, sheetAllowedDetents: [0.6, 1] }}
                 />
                 <Stack.Screen name="board-name" options={SHEET} />
+                <Stack.Screen
+                  name="similar-pieces/[itemId]"
+                  options={{ ...SHEET, sheetAllowedDetents: [0.6, 1] }}
+                />
                 <Stack.Screen name="sign-up" options={{ presentation: 'modal' }} />
                 <Stack.Screen name="auth-callback" />
               </Stack>

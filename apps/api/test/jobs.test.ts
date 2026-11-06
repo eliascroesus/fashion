@@ -119,6 +119,22 @@ describe('background jobs (pg-boss)', () => {
     );
   });
 
+  it('check prices and stock every 10 minutes, one run at a time', async () => {
+    const id = await boss.send(QUEUES.priceRefresh, {});
+    if (!id) throw new Error('job was not created');
+    await waitForState(QUEUES.priceRefresh, id, 'completed');
+    // An empty catalogue: the run is logged and reads nothing.
+    const { rows } = await ctx.db.execute<{ reads: number }>(
+      sql`SELECT (reads_saved_or_popular + reads_others)::int AS reads FROM price_refresh_runs`,
+    );
+    expect(rows).toEqual([{ reads: 0 }]);
+    const schedules = await boss.getSchedules();
+    expect(schedules).toContainEqual(
+      expect.objectContaining({ name: QUEUES.priceRefresh, cron: '*/10 * * * *' }),
+    );
+    expect((await boss.getQueue(QUEUES.priceRefresh))?.policy).toBe('exclusive');
+  });
+
   it('keep their tables away from the public app key', async () => {
     const { rows } = await ctx.db.execute(
       sql`SELECT r AS role, has_schema_privilege(r, 'pgboss', 'USAGE') AS usage

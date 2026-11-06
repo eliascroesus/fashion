@@ -29,6 +29,8 @@
       "newBoard": "Ny tavla",
       "lookCount_one": "{{count}} look",
       "lookCount_other": "{{count}} looks",
+      "boardMeta_one": "{{count}} look · {{total}}",
+      "boardMeta_other": "{{count}} looks · {{total}}",
       "boardsLoadFailed": "Det gick inte att ladda dina tavlor.",
       "boardLabel_one": "{{name}}, {{count}} look",
       "boardLabel_other": "{{name}}, {{count}} looks"
@@ -67,10 +69,42 @@
     "followLabel": "Följ {{name}}",
     "authorLabel": "Upplagd av {{name}}",
     "shopTitle": "Shoppa looken",
-    "shopSoon": "Plaggen i den här looken visas här snart.",
+    "totalLook": "Hela looken {{total}}",
+    "selectedTotal_one": "{{count}} plagg valt: {{total}}",
+    "selectedTotal_other": "{{count}} plagg valda: {{total}}",
+    "clearSelection": "Rensa",
+    "notCountedSoldOut_one": "{{count}} slutsålt plagg räknas inte",
+    "notCountedSoldOut_other": "{{count}} slutsålda plagg räknas inte",
+    "notCountedUnpriced_one": "{{count}} plagg utan pris räknas inte",
+    "notCountedUnpriced_other": "{{count}} plagg utan pris räknas inte",
+    "noPrice": "Se priset i butiken",
+    "inStock": "I lager",
+    "soldOut": "Slutsåld",
+    "checkedToday": "Priset kollat i dag",
+    "checkedYesterday": "Priset kollat i går",
+    "checkedDaysAgo_one": "Priset kollat för {{count}} dag sedan",
+    "checkedDaysAgo_other": "Priset kollat för {{count}} dagar sedan",
+    "shop": "Handla",
+    "shopLabel": "Handla {{name}} hos {{shop}}",
+    "shopHint": "Öppnar {{shop}} i Outfitly",
+    "shopFailed": "Det gick inte att öppna butiken. Försök igen.",
+    "tickLabel": "Räkna med {{name}} i summan",
+    "dotLabel": "Visa {{name}}",
+    "similarPieces": "Liknande plagg",
+    "similarPiecesLabel": "Plagg som liknar {{name}}",
     "moreLikeThis": "Mer som det här",
     "noSimilar": "Inga liknande looks än.",
     "loadFailed": "Det gick inte att ladda resten av looken."
+  },
+  "similar": {
+    "title": "Liknande plagg",
+    "nearest": "Mest lika",
+    "cheaper": "Billigare",
+    "sortLabel": "Sortera liknande plagg",
+    "empty": "Inga liknande plagg än.",
+    "loadFailed": "Kunde inte ladda liknande plagg.",
+    "cheaperNote": "Priser i {{currency}} först, lägst först. Andra valutor efter.",
+    "pieceLabel": "{{name}}, {{price}}"
   },
   "errors": {
     "generic": "Något gick fel. Försök igen.",
@@ -126,7 +160,9 @@
     "deleteConfirm": "Ta bort",
     "emptyTitle": "Inga looks på den här tavlan än",
     "empty": "Tryck och håll på en look och välj \"Spara på tavla\".",
-    "failed": "Det gick inte. Kontrollera din anslutning och försök igen."
+    "failed": "Det gick inte. Kontrollera din anslutning och försök igen.",
+    "summary_one": "{{count}} look · {{total}}",
+    "summary_other": "{{count}} looks · {{total}}"
   },
   "boardName": {
     "createTitle": "Ny tavla",
@@ -216,5 +252,16 @@
     "ownNoLooks": "Looks du lägger upp visas här.",
     "notFound": "Den här profilen är inte tillgänglig.",
     "openLabel": "Öppna profilen för {{name}}"
+  },
+  "linkCheck": {
+    "sold_out": "Plagget är slutsålt, så det visas inte på din look.",
+    "not_similar": "Produkten ser inte ut som plagget på ditt foto. Kolla att länken går till rätt plagg.",
+    "ai_different": "Det här ser ut som ett annat plagg än det på ditt foto. Kolla att länken går till rätt plagg.",
+    "link_removed": "Butikslänken fungerar inte längre, så den visas inte på din look.",
+    "ai_unsure": "Vi kollar att det är samma plagg. Det visas på din look när det är bekräftat.",
+    "no_product_photo": "Butiken har ingen bild på plagget, så vi kollar det för hand.",
+    "no_garment": "Vi hittade inte plagget på ditt foto, så vi kollar det för hand.",
+    "dot_not_on_piece": "Vi hittade inget plagg där du satte pricken, så vi kollar det för hand.",
+    "check_failed": "Vi kunde inte kolla länken automatiskt, så vi kollar den för hand."
   }
 }

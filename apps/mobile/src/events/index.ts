@@ -11,10 +11,10 @@ const QUEUE_KEY = 'events.queue';
 const SESSION_KEY = 'events.sessionId';
 
 /**
- * A random id for this app install, sent with events so logged-out browsing
- * can be counted without an account. It identifies nothing but the install.
+ * A random id for this app install, sent with events and clicks so logged-out
+ * browsing can be counted without an account. It identifies nothing but the install.
  */
-function sessionId(): string {
+export function sessionId(): string {
   let id = storage.getString(SESSION_KEY);
   if (!id) {
     id = randomUUID();

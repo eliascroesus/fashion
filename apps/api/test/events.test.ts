@@ -139,13 +139,17 @@ describe('POST /v1/events', () => {
     expect(res.json()).toEqual({ accepted: 0 });
   });
 
-  it(`refuses more than ${String(MAX_EVENT_BATCH)} events and unknown event names`, async () => {
+  it(`refuses more than ${String(MAX_EVENT_BATCH)} events, and skips events it can't read one by one`, async () => {
     const tooMany = Array.from({ length: MAX_EVENT_BATCH + 1 }, () => impression(look(0)));
     expect((await send(batch(tooMany))).statusCode).toBe(400);
+    // An unknown name or source (e.g. from a newer app) is skipped; the rest of the batch counts.
     const click = { ...impression(look(0)), name: 'click' } as unknown as ClientEvent;
-    const res = await send(batch([click]));
-    expect(res.statusCode).toBe(400);
-    expect(res.json()).toMatchObject({ error: { code: 'validation_failed' } });
+    const elsewhere = { ...impression(look(1)), source: 'somewhere' } as unknown as ClientEvent;
+    const good = impression(look(2));
+    const res = await send(batch([click, elsewhere, good]));
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ accepted: 1 });
+    expect((await send(batch([click]))).json()).toEqual({ accepted: 0 });
   });
 
   it('logged in: stores the active profile and marks the looks seen', async () => {
