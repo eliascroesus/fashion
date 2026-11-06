@@ -20,6 +20,7 @@
     "search:speed": "pnpm --filter @outfitly/api search-speed",
     "dev:api": "pnpm --filter @outfitly/api dev",
     "media:try": "pnpm --filter @outfitly/api try-upload",
+    "ai:spot-check": "pnpm --filter @outfitly/api ai-spot-check",
     "embedder:test": "cd services/embedder && uv run pytest",
     "embedder:speed": "cd services/embedder && uv run --env-file ../../.env python scripts/speed.py",
     "dev:app": "pnpm --filter @outfitly/mobile start"

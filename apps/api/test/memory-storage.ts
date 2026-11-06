@@ -44,6 +44,13 @@ export class MemoryStorage implements PhotoStorage {
     return Promise.resolve();
   }
 
+  getPublic(key: string, maxBytes: number): Promise<Buffer> {
+    const object = this.publicObjects.get(key);
+    if (!object) return Promise.reject(new Error(`No public ${key}`));
+    if (object.body.length > maxBytes) return Promise.reject(new OriginalTooLargeError());
+    return Promise.resolve(object.body);
+  }
+
   putPublic(key: string, body: Buffer, contentType: string): Promise<void> {
     this.publicObjects.set(key, { body, contentType });
     return Promise.resolve();

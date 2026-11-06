@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { GEMINI_PRICES } from './ai/gemini.ts';
 
 const optional = z
   .string()
@@ -27,6 +28,23 @@ const envSchema = z.object({
   MEDIA_PUBLIC_BASE_URL: z.url(),
   // Set automatically on Fly.io machines; tells us to trust the Fly-Client-IP header.
   FLY_APP_NAME: optional,
+  // Gemini (garment spotting). Without a key, photos are published without it.
+  GEMINI_API_KEY: optional,
+  // Only models with a known price: the daily spend cap needs every call's cost.
+  GEMINI_MODEL: z
+    .enum(Object.keys(GEMINI_PRICES) as [keyof typeof GEMINI_PRICES])
+    .default('gemini-3.1-flash-lite'),
+  // How hard the model thinks; MODEL_DEFAULT leaves it to the model. Thinking is billed as output.
+  GEMINI_THINKING_LEVEL: z
+    .enum(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH', 'MODEL_DEFAULT'])
+    .default('MINIMAL'),
+  // Image detail Gemini reads (fewer tokens when lower); unset = the model's default.
+  GEMINI_MEDIA_RESOLUTION: optional.pipe(z.enum(['LOW', 'MEDIUM', 'HIGH']).optional()),
+  // AI spending stops for the day (UTC) once logged costs reach this.
+  AI_DAILY_CAP_USD: z.coerce.number().positive().default(5),
+  // The fingerprint service (services/embedder). Without it, nothing is fingerprinted.
+  EMBEDDER_URL: optional.pipe(z.url().optional()),
+  EMBEDDER_SECRET: optional.pipe(z.string().min(32).optional()),
 });
 
 export type Config = z.infer<typeof envSchema>;

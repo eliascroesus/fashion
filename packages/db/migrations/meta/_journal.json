@@ -85,6 +85,13 @@
       "when": 1793824058368,
       "tag": "0011_halfvec_and_link_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793836013142,
+      "tag": "0012_garment_spotting",
+      "breakpoints": true
     }
   ]
 }

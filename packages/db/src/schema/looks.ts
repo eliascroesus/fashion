@@ -55,17 +55,24 @@ export const looks = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'`),
+    /** From the cover photo's AI reading (Step 3.3). */
     aiDescription: text('ai_description'),
+    /** Search words the AI gave the look's photos (Step 3.3), lowercase, at most 20. */
+    aiTags: text('ai_tags')
+      .array()
+      .notNull()
+      .default(sql`'{}'`),
     popularityScore: doublePrecision('popularity_score').notNull().default(0),
     isSponsored: boolean('is_sponsored').notNull().default(false),
     /** When the look first went public; feeds sort on it. */
     publishedAt: timestamp('published_at', { withTimezone: true }),
     /**
-     * What search finds: the tags, caption and AI description as words
-     * (`look_search_vector`, migration 0009). Postgres keeps it up to date.
+     * What search finds: the tags, caption, AI description and AI search words
+     * as words (`look_search_vector`, migrations 0009 and 0012). Postgres keeps
+     * it up to date.
      */
     searchVector: tsvector('search_vector').generatedAlwaysAs(
-      sql`look_search_vector(caption, ai_description, occasion_tags, season_tags, style_tags)`,
+      sql`look_search_vector(caption, ai_description, ai_tags, occasion_tags, season_tags, style_tags)`,
     ),
     ...softDelete(),
   },
