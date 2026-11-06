@@ -16,12 +16,14 @@ import {
   fingerprintPhoto,
   nextUtcDay,
   type PhotoAiDeps,
+  readWithOlderInstructions,
   refreshLookAi,
   SpendCapReachedError,
   SpotAnswerError,
   spentTodayMicros,
   spotPhoto,
 } from '../src/ai/photos.ts';
+import { SPOT_PROMPT_VERSION } from '../src/ai/spot.ts';
 import { QUEUES, queuePhotoAi } from '../src/jobs.ts';
 import {
   COAT_AND_SNEAKERS,
@@ -139,7 +141,7 @@ describe('reading a look photo (garment spotting)', () => {
         purpose: 'spot_garments',
         model: 'gemini-3.1-flash-lite',
         modelVersion: 'gemini-3.1-flash-lite-001',
-        promptVersion: 'spot-v1',
+        promptVersion: 'spot-v3',
         status: 'ok',
         inputTokens: 1500,
         outputTokens: 300,
@@ -444,6 +446,59 @@ describe('reading a look photo (garment spotting)', () => {
       aiDescription: 'Second photo.',
       aiTags: ['coat', 'beige', 'boots'],
     });
+  });
+});
+
+describe('finding photos read with older instructions', () => {
+  it('goes by each photo’s last answered call, whatever came after it', async () => {
+    const old = crypto.randomUUID();
+    const current = crypto.randomUUID();
+    const oldThenFailed = crypto.randomUUID();
+    const newThenOld = crypto.randomUUID();
+    const blockedOld = crypto.randomUUID();
+    const linkOnly = crypto.randomUUID();
+    const never = crypto.randomUUID();
+    const at = (minute: number) => new Date(Date.UTC(2026, 10, 6, 3, minute));
+    const call = (
+      mediaId: string,
+      promptVersion: string,
+      minute: number,
+      status: 'ok' | 'blocked' | 'invalid' | 'failed' = 'ok',
+      purpose: 'spot_garments' | 'link_check' = 'spot_garments',
+    ) => ({
+      purpose,
+      model: 'gemini-test',
+      promptVersion,
+      status,
+      durationMs: 1,
+      mediaId,
+      createdAt: at(minute),
+    });
+    await ctx.db
+      .insert(aiCalls)
+      .values([
+        call(old, 'spot-v1', 1),
+        call(current, 'spot-v1', 1),
+        call(current, SPOT_PROMPT_VERSION, 2),
+        call(oldThenFailed, 'spot-v1', 1),
+        call(oldThenFailed, SPOT_PROMPT_VERSION, 2, 'failed'),
+        call(oldThenFailed, SPOT_PROMPT_VERSION, 3, 'invalid'),
+        call(newThenOld, SPOT_PROMPT_VERSION, 1),
+        call(newThenOld, 'spot-v1', 2),
+        call(blockedOld, 'spot-v1', 1, 'blocked'),
+        call(linkOnly, 'link-v1', 1, 'ok', 'link_check'),
+      ]);
+    const found = await readWithOlderInstructions(ctx.db, [
+      old,
+      current,
+      oldThenFailed,
+      newThenOld,
+      blockedOld,
+      linkOnly,
+      never,
+    ]);
+    expect([...found].sort()).toEqual([old, oldThenFailed, newThenOld, blockedOld].sort());
+    expect(await readWithOlderInstructions(ctx.db, [])).toEqual(new Set());
   });
 });
 

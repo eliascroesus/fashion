@@ -146,13 +146,21 @@ for (const [shop, s] of [...byShop.entries()].sort()) {
   console.log(`  ${shop.padEnd(20)} ${String(s.ok)}/${String(s.all)}`);
 }
 
+/** A link that survives a Markdown link and a table cell. */
+function mdUrl(url: string): string {
+  return url.replace(
+    /[()|\s]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`,
+  );
+}
+
 if (out) {
   const lines = [
     `# Link check — ${new Date().toISOString().slice(0, 10)}`,
     '',
     `${String(okCount)} of ${String(rows.length)} links gave a product with a price (${String(rate)}%).`,
     '',
-    'Fill in **Right?** by eye: yes only if the name, price and photo match the shop page.',
+    'Fill in **Right?** by eye: yes only if the name, price and photo match the shop page (the shop and photo cells are links).',
     '',
     '| # | Shop | Result | Name | Brand | Price | Stock | Photo | Source | Right? |',
     '| - | - | - | - | - | - | - | - | - | - |',
@@ -164,11 +172,11 @@ if (out) {
             p.brand ?? '—',
             money(p.priceMinor, p.currency),
             p.stock,
-            p.imageUrl ? 'yes' : 'no',
+            p.imageUrl ? `[photo](${mdUrl(p.imageUrl)})` : 'no',
             p.source,
           ]
         : [r.problem, '', '', '', '', ''];
-      return `| ${String(i + 1)} | ${r.shop} | ${r.ok ? 'OK' : 'FAIL'} | ${cells.map((c) => c.replace(/\|/g, '/')).join(' | ')} | |`;
+      return `| ${String(i + 1)} | [${r.shop}](${mdUrl(r.link)}) | ${r.ok ? 'OK' : 'FAIL'} | ${cells.map((c) => c.replace(/\|/g, '/')).join(' | ')} | |`;
     }),
   ];
   await writeFile(here(out), `${lines.join('\n')}\n`);

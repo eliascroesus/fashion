@@ -3,8 +3,10 @@ import {
   and,
   asc,
   type Db,
+  desc,
   eq,
   garments,
+  inArray,
   isNull,
   lookMedia,
   looks,
@@ -220,6 +222,36 @@ export async function spotPhoto(
     garments: result.garments.length,
     costMicros: cost,
   };
+}
+
+/**
+ * Of these photos, the ones whose reading came from older instructions than `SPOT_PROMPT_VERSION`,
+ * by their last answered call (a later failed or unusable try doesn't replace a reading). Photos
+ * never answered aren't in it. One rare miss: an answered call whose save then failed counts as
+ * read.
+ */
+export async function readWithOlderInstructions(
+  db: Db,
+  mediaIds: readonly string[],
+): Promise<Set<string>> {
+  if (mediaIds.length === 0) return new Set();
+  const rows = await db
+    .selectDistinctOn([aiCalls.mediaId], {
+      mediaId: aiCalls.mediaId,
+      promptVersion: aiCalls.promptVersion,
+    })
+    .from(aiCalls)
+    .where(
+      and(
+        inArray(aiCalls.mediaId, [...mediaIds]),
+        eq(aiCalls.purpose, 'spot_garments'),
+        inArray(aiCalls.status, ['ok', 'blocked']),
+      ),
+    )
+    .orderBy(aiCalls.mediaId, desc(aiCalls.createdAt), desc(aiCalls.id));
+  return new Set(
+    rows.flatMap((r) => (r.mediaId && r.promptVersion !== SPOT_PROMPT_VERSION ? [r.mediaId] : [])),
+  );
 }
 
 /** Cut-off answers for this photo with the current prompt since its last reading. */

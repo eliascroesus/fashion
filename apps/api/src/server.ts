@@ -7,7 +7,16 @@ import { createJobQueue, QUEUES, startJobs } from './jobs.ts';
 import { R2Storage } from './storage.ts';
 
 const config = loadConfig();
-const db = createDb(config.DATABASE_URL, { caCert: config.DATABASE_CA_CERT });
+// The app's logger exists only once the app is built; a drop before that is printed.
+let logDroppedConnection = (error: Error): void => {
+  console.error(`Database connection dropped while idle: ${error.message}`);
+};
+const db = createDb(config.DATABASE_URL, {
+  caCert: config.DATABASE_CA_CERT,
+  onConnectionError: (error) => {
+    logDroppedConnection(error);
+  },
+});
 const storage = new R2Storage(r2Config(config));
 const boss = createJobQueue(config.DATABASE_URL, config.DATABASE_CA_CERT);
 const app = await buildApp({
@@ -17,6 +26,9 @@ const app = await buildApp({
   storage,
   queue: boss,
 });
+logDroppedConnection = (err) => {
+  app.log.warn({ err }, 'database connection dropped while idle');
+};
 const ai = photoAiClients(config);
 app.log.info(
   { spotting: ai.gemini?.model ?? 'off', fingerprints: ai.embedder ? 'on' : 'off' },
