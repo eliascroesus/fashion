@@ -17,6 +17,7 @@ Things we've parked on purpose. None of them block building, but all of them mus
 - [ ] Until it's done, the app's "Continue with email" option doesn't work: hide it or finish this before testers.
 
 ## Shops and money
+- [ ] Price check obeys each shop's robots.txt: read it once a day per shop, skip pages it rules out (they show "couldn't check"), keep its crawl delay. Also put up the `https://<domain>/bot` page our reader's user agent points at: what the reader does and how a shop can ask us to stop. Parked on 2026-11-06 (Decisions in PROGRESS); a small job.
 - [ ] Revisit affiliate networks' product feeds (Adtraction first: Lindex's programme is there; Awin for others): free to join, each shop approves us once the app or site is live. They give price and stock for shops that turn our reader away, and commissions later (Phase 9). Not chosen for V1 (Elias, 2026-11-06), to decide at launch.
 
 ## Content
