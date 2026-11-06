@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { feedCardSchema } from './feed.ts';
+import { moneySchema } from './money.ts';
 
 /** A profile can have at most this many boards. */
 export const MAX_BOARDS_PER_PROFILE = 200;
@@ -46,6 +47,14 @@ export const boardSchema = z.object({
   lookCount: z.number().int().nonnegative(),
   /** The newest looks' cover photos, newest first (up to BOARD_COVERS). */
   covers: z.array(feedCardSchema.shape.photo).max(BOARD_COVERS),
+  /**
+   * What the board's pieces cost together, one total per currency (no
+   * exchange rates): each product once, even if it's in several of the
+   * board's looks (at its lowest price there in that currency); sold-out and
+   * unpriced pieces left out. Empty when none; left out with `?lookId=`
+   * (the "Save to board" sheet doesn't show it).
+   */
+  totals: z.array(moneySchema).optional(),
   /** Only with `?lookId=`: whether that look is on this board. */
   hasLook: z.boolean().optional(),
 });

@@ -44,7 +44,7 @@ export const feedCardSchema = z.object({
     dominantColor: z.string(),
     urls: z.object({ 1080: z.url(), 600: z.url(), 300: z.url() }),
   }),
-  /** Shoppable pieces in the look (0 until products exist, Phase 3). */
+  /** Shoppable pieces in the look (its verified shop links, at most MAX_LOOK_ITEMS). */
   itemCount: z.number().int().nonnegative(),
   /** Whether the profile asking has saved it (false when logged out). */
   saved: z.boolean(),

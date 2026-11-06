@@ -3,15 +3,16 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-**Phase 3 — Products and AI, in progress.** Steps 3.1–3.5 are built; 3.3's real-photo check waits for the Gemini key, 3.4's link check waits for Elias's 30 links (and a decision about shops that block link readers), and 3.5's 100-pair check waits for the key, the seed looks' product links and Elias's labels.
+**Phase 3 — Products and AI, in progress.** Steps 3.1–3.6 are built; 3.3's real-photo check waits for the Gemini key, 3.4's link check waits for Elias's 30 links (and a decision about shops that block link readers), 3.5's 100-pair check waits for the key, the seed looks' product links and Elias's labels, and 3.6's "seed looks show real items" waits for those same links.
 - Step 3.1 (Product tables): PR #16, waiting for Elias to merge.
 - Step 3.2 (The fingerprint service): PR #17, stacked on #16 (merge #16 first).
 - Step 3.3 (Garment spotting): PR #18, stacked on #17. Built and tested with a stand-in Gemini; the 50-photo check and the cost per 1,000 photos wait for the key (see Waiting on Elias).
 - Step 3.4 (Paste a link, get a product): PR #19, stacked on #18. "80% of 30 links": FAIL for now (15 of 30 provisional links, 50%): H&M, Arket and Lindex block automated readers and ASOS doesn't answer (see Open decisions). Elias's own 30 links are still to come.
 - Step 3.5 (Automatic link check): PR #20, stacked on #19. Built and tested with a stand-in Gemini and stand-in fingerprints; provisional thresholds from a first measurement (see Measured numbers). "100 labelled pairs, under 5% wrong items auto-verified": WAITING (see Waiting on Elias).
-- Claude isn't allowed to merge in this setup (see Waiting on Elias). Elias was asleep for Steps 3.3–3.5 (2026-11-05 night) and said to keep going, so their plans and decisions are in the PRs instead of a plan approval.
+- Step 3.6 (The shoppable look page): PR #21, stacked on #20. Dots, the piece list with prices and "Total look", ticks with a running total, and board totals work in the iPhone simulator with test pieces; "totals add up correctly in tests" PASS. "The seed looks show real items with prices": WAITING (the seed looks' product links, after the Gemini key).
+- Claude isn't allowed to merge in this setup (see Waiting on Elias). Elias was asleep for Steps 3.3–3.6 (2026-11-05 night) and said to keep going, so their plans and decisions are in the PRs instead of a plan approval.
 
-Next: Step 3.6 — The shoppable look page.
+Next: Step 3.7 — Shop clicks.
 
 - Phase 2 passed its gate on 2026-11-04 (PRs #8–#15). "Speed numbers recorded" PASS; "It feels like Pinterest" signed off by Elias. "Both phones" was done in the iPhone simulator only: the real-phone checks (and Step 2.3's mid-range Android check) wait for the hardware. 125 real outfits accepted instead of 300 for now.
 - Phase 1 gate: everything passed except "app on both phones with login", for the same reason.
@@ -244,8 +245,27 @@ Next: Step 3.6 — The shoppable look page.
     - `--set` with nothing after it set both thresholds to 0. Now refused, and the database value follows the same rules.
     - Also fixed: review items close when an item is checked again, decided or removed; the sweep rotates and long waits end with a person; a link that fails to read keeps its item and shops get one request a second; the calibration report needs the AI and enough pairs, and compares links with the piece the check would use; a refused shop photo goes to a person at once (and the hour's wait is from the read, not the last product change); the product's category comes only from a clear fingerprint match; unknown reason codes are refused; a piece replaced meanwhile or a look photo that's gone are handled; "not_similar" now says it was compared with the piece in the photo.
 
+- Step 3.6 — The shoppable look page (PR #21) — **done in the iPhone simulator with test pieces (2026-11-05); the seed looks get real pieces once their product links are in (after the Gemini key).**
+  - **Server:** `GET /v1/looks/:id` now lists the look's pieces: only links the check verified (Step 3.5) whose link and product still exist, at most 30. Each piece: our copy of the product photo (never the shop's own link), brand, name, kind, price (whole öre/cents + currency), stock, when the price was checked, the link as posted (affiliate tags kept, for Step 3.7's Shop button) and the shop's site, and a dot: the poster's own, else the middle of the piece the check matched, else of the poster's pick. Listed like the category list (outerwear first, accessories last), then top to bottom. Still 4 database queries per look, however many pieces (tested). Feed cards' "N pieces" counts the same pieces. Boards carry `totals`. No migration. Live on staging.
+  - **Money:** `packages/shared/src/money.ts`. Whole minor units only, never added across currencies ("1 299 kr + 45 €", no exchange rates). Sold-out pieces and pieces without a price are left out of every total, and the page says how many. One table of currency decimals for the API's price reading and the app, so a price is shown with the decimals it was stored with. Written with the phone's language and region, decimals only when needed ("1 299 kr", "399,50 kr").
+  - **App, look page:** a dot on each piece's place on the photo (correct on cropped photos; a dot just past the crop sits at the edge); tapping it scrolls to the piece and highlights it. "Shop the look" with "Total look …" and the not-counted note, then each piece: photo (fixed 64×80 frame with blurred preview), brand, name, price, In stock / Sold out, "Price checked today / yesterday / N days ago · shop". Tick pieces for a running total in a bar floating at the bottom ("2 pieces selected: 1 798,50 kr", Clear; read out by VoiceOver/TalkBack). Sold-out pieces are greyed and can't be ticked. The Shop button shows but is off until Step 3.7.
+  - **App, boards:** the board page and each board tile in Saved show the board's value ("12 looks · 4 299 kr"): each product once, even if it's in several looks (or through several links) on the board, at its lowest price there.
+  - **Try it:** `pnpm shop:test-look` puts 5 test pieces (brand "Outfitly test", links on example.com) on the newest @outfitly.picks look and prints its id; `pnpm shop:test-look --remove` deletes them again (only test data). Maestro `shop-the-look.yaml` (with that id) opens the look, taps a dot, checks the total and ticks pieces.
+  - **Tests:** money maths 31 (incl. on Node 22, as in CI), the app's dot/tick/date logic 14, API pieces and board totals 11 (visibility, dots, order, price 0, 4 queries, board value with the same product twice, the 30-piece cap, looks not out yet, the board picker without totals, the test-look script). Maestro on the iPhone 18 Pro simulator (Release build, staging): `shop-the-look.yaml` passes; `look-page.yaml` passes with `same-place.sh` and `photo-shown.sh`. Checked by eye in light and dark mode.
+  - **Review (step-reviewer):** two blocking issues, fixed.
+    - The app keeps answers on the phone for a day and only dropped them on a new app version, so a phone with boards cached from before would have crashed on Saved. The cache now also has a shape number (bumped), and board totals are read carefully.
+    - The Maestro flow's notes didn't match the test data, and the test data lived only on Claude's Mac: now `pnpm shop:test-look` makes it, and the flow says what it expects.
+    - Also fixed: dots sit beside the photo's button so VoiceOver can reach them, with 44 pt tap areas kept on the photo (Android); a piece that sold out after being ticked can be unticked and the bar says it isn't counted (tested); board value counts each product once at its lowest price, the same 30 pieces the look page shows, and only looks that are out; a price of 0 is "no price" everywhere; the "Save to board" sheet no longer works out values it doesn't show (33 → 7 ms on a big test account) and board covers skip piece counts; the selection bar leaves room under the page; tapping the same dot again restarts the highlight; tick tap areas are 44 pt.
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
+- 2026-11-05 — Shoppable look page (Step 3.6), decided while Elias slept:
+  - Only verified pieces show; the poster's own waiting or rejected pieces (with their reason) come with Phase 4's posting screens.
+  - Sold-out pieces are greyed, can't be ticked and never count; unknown stock counts; a piece without a price says "See price in shop" and doesn't count. Totals never mix currencies.
+  - A board's value counts each product once (lowest price on the board): it's what buying everything on it would cost.
+  - Pieces are listed like the category list (outerwear first), then top to bottom.
+  - The piece list is a plain list (at most 30, fixed photo frame with blurred preview, so nothing jumps) inside the look page's scrolling grid, not a FlashList: a deliberate exception to "every image list uses FlashList", since a list inside the grid's header can't be one.
+  - The running total floats at the bottom while pieces are ticked (under the list it was off-screen).
+  - The Shop button shows but is off until Step 3.7; each piece already carries its link so Step 3.7 can open the shop and queue clicks offline.
 - 2026-11-05 — Link reading uses no HTML library and no new package: Node's own http(s) with a guarded name lookup, and a small one-pass reader for JSON-LD and meta tags (that's all the product data lives in).
 - 2026-11-05 — Link reader identifies itself honestly (`OutfitlyBot/1.0`) and never pretends to be a browser. A shop that blocks it is a result, not something to get around; Microlink is never sent to such a shop either (Claude Code's safety check also refused testing that, as "bot check circumvention").
 - 2026-11-05 — Product photos copied from shops have no owner (they belong to the product, not to whoever pasted the link, so deleting an account can't break a product); `media.source_url` keeps where they came from, so the same photo isn't copied twice.
@@ -362,7 +382,7 @@ Next: Step 3.6 — The shoppable look page.
 - 2026-11-02 — Elias asked Claude to work through Phase 1 and Phase 2 overnight without stopping. Each step still gets its own branch + PR, stacked on the previous step's branch; nothing is merged into `main` without Elias.
 
 ## Waiting on Elias
-- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2), then PR #18 (Step 3.3), then PR #19 (Step 3.4), then PR #20 (Step 3.5), in that order.** Each is built on the one before. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub, or allow Claude to merge (add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings). On GitHub: open the PR → "Merge pull request" → "Confirm merge" → "Delete branch", then do the next one (GitHub then points it at `main` by itself).
+- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2), then PR #18 (Step 3.3), then PR #19 (Step 3.4), then PR #20 (Step 3.5), then PR #21 (Step 3.6), in that order.** Each is built on the one before. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub, or allow Claude to merge (add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings). On GitHub: open the PR → "Merge pull request" → "Confirm merge" → "Delete branch", then do the next one (GitHub then points it at `main` by itself).
 - **Gemini key for Step 3.3** (garment spotting is built and waits only for this):
   1. Go to https://aistudio.google.com → "Get API key" (left side) → "Create API key", on a Google Cloud project with billing on (the free tier isn't allowed for an app used in the EU).
   2. In the project folder's `.env`, fill in the line `GEMINI_API_KEY=` with the key (Claude can do this if you paste the key in the chat).
@@ -409,6 +429,11 @@ Next: Step 3.6 — The shoppable look page.
 - 18+ only or teens allowed (Step 5.5)
 
 ## Known issues
+- Shoppable look page (Step 3.6):
+  - Prices are written by the phone's own formatting: checked on the iPhone simulator and Node, not yet on Android.
+  - Feed cards now count each look's pieces (one small indexed count per card); the feed's speed wasn't measured again on 10,000 looks.
+  - Scrolling to a piece from its dot was tried on a look with one photo only.
+  - Boards' value is worked out each time the boards list loads (about 30 ms on a test account with 60 boards × 40 looks × 5 pieces); fine for now.
 - Link check (Step 3.5):
   - Nothing is checked on staging yet: it has no Gemini key and no fingerprint service settings (see Waiting on Elias). Waiting items are asked about again every hour (database only, at most 500 an hour).
   - A verified item isn't checked again when its product's photo changes (same product, new picture), or when its look's photo is read again (`--again`, which replaces the pieces): its matched piece then points at a removed one until the item is checked again.
@@ -449,6 +474,9 @@ Next: Step 3.6 — The shoppable look page.
 - `pnpm audit`: one moderate advisory in minimatch, pulled in only by ESLint (dev tool reading our own config) — not exploitable here; wait for upstream fix.
 
 ## Measured numbers
+- Shoppable look page (Step 3.6, 2026-11-05):
+  - Look with 5 pieces on staging: the server's own time 9–16 ms (one cold request 100 ms); over HTTP from the Mac 85–240 ms.
+  - Boards list on a local test database (60 boards × 40 looks × 5 pieces, 2,000 products): p50 35 ms / p95 38 ms with values; the "Save to board" sheet (no values) 7 ms (33 ms before the review fix).
 - Fingerprint service (Step 3.2, staging in Stockholm, performance-1x 2 GB, real photos from the staging feed at 1080 px, timed from the Mac, 2026-11-04):
   - Whole photo, 100 in a row: server's own time (download + model) p50 754 ms, p95 837 ms; over HTTP p50 798 ms, p95 902 ms. Model p50 638 ms, download + decode p50 118 ms. First 20 vs last 20: 740 / 764 ms, so no throttling. **Target "under 1.5 s once awake" holds.**
   - Photo with 5 boxes (30): p50 3.1 s (about 0.6 s per picture).
@@ -499,9 +527,14 @@ Next: Step 3.6 — The shoppable look page.
 - First EAS Android preview build (free plan): ~40 min in queue + ~15 min building; APK 107 MB (2026-11-02)
 
 ## Later (parked ideas, not in current scope)
+- Shoppable look page (Step 3.6):
+  - Phase 4: the poster sees their own waiting and rejected pieces on the look page, with the reason; posting caps pieces at 30 per look (`MAX_LOOK_ITEMS`, which totals assume).
+  - Keep a board's value up to date in the database (or cache it) if the boards list gets slow for big accounts.
+  - Bump `CACHE_SHAPE` (`apps/mobile/src/lib/query.ts`) whenever a cached answer gains a required field.
+  - A shorter "not counting" line when both kinds apply ("Not counting 1 sold-out piece and 1 without a price").
 - Link check (Step 3.5):
   - Check verified items again when their product's photo changes or their look's photo is read again.
-  - Phase 4: removing a look item must use `removeLookItems` (it closes the review item); the posting UI uses `addLookItem`; the look page (3.6) shows a dot from `coalesce(garment_id, matched_garment_id)`.
+  - Phase 4: removing a look item must use `removeLookItems` (it closes the review item); the posting UI uses `addLookItem`. (The look page shows a dot from the poster's dot, else `matched_garment_id`, else `garment_id`: done in 3.6.)
   - Phase 4 admin page: approve / reject link check items (set the item's status, close the review item).
   - Measure the compare prompt on real pairs (the first `--ai` run) and adjust it if Gemini is often unsure.
 - Link reader (Step 3.4):
@@ -527,7 +560,7 @@ Next: Step 3.6 — The shoppable look page.
 - Styles in "More like this" (today it matches occasion and season tags; AI similarity replaces both in Phase 3).
 - Brands in For You once looks have products (Phase 3): `taste_profiles.brands` is stored already.
 - The whole-photo fingerprint (Step 3.3 makes it, Step 3.8's "More like this" uses it) has no column yet: add `media.embedding vector(768)` with an HNSW index in Step 3.3 and keep the data-model table in sync.
-- Garment category labels (English + Swedish) go in the app's i18n files when categories first show (Step 3.6).
+- Garment category labels (English + Swedish) go in the app's i18n files when categories first show (the look page doesn't show them in 3.6; likely Step 3.8's "similar pieces").
 - "Similar pieces in the same category" (Step 3.8) filters an HNSW search, and that returns too few: the reviewer measured 5 rows for `LIMIT 20` (2,000 products in 10 categories, default settings). Turn on pgvector's iterative index scans (`hnsw.iterative_scan`, 0.8+) and measure; per-category partial indexes only if that's slow. Not optional.
 - From the Step 3.1 review, for the steps that write these tables:
   - Boxes and scores are checked to lie in 0–1 (scores −1…1), and `1.0000001` is refused: Step 3.3 clamps boxes to the photo and drops zero-size ones before a multi-row insert (one bad box fails them all); Step 3.5 computes similarity in SQL (`1 - (a <=> b)`, which pgvector keeps in range) or clamps it.
@@ -535,7 +568,7 @@ Next: Step 3.6 — The shoppable look page.
   - Step 3.4 / 3.9: add an index on `offers.page_url` (find the product when a second poster pastes another affiliate link to the same page; fetch each page once a day, not once per link) and update every offer of a page together, or their prices drift apart.
   - Soft-deleted rows keep their unique keys (`offers.url`, `products.gtin`, a look item's look + offer): revive the old row, don't insert a new one.
   - Step 3.5: record what was compared (garment id, offer id) in `link_checks.details`: a look item's garment can change when a photo is spotted again, and the 100-pair evaluation and audits need the original pair.
-  - Step 3.6 / Phase 4: the API checks that a look item's dot photo is one of the look's photos, and the garment's photo (the database doesn't; a composite foreign key would block the seed loader, which rewrites `look_media`).
+  - Phase 4: the API checks that a look item's dot photo is one of the look's photos, and the garment's photo (the database doesn't; a composite foreign key would block the seed loader, which rewrites `look_media`). Since 3.6 the look page already ignores a dot on any other photo.
   - Phase 4 web Shop (works with JavaScript off): make a session id when there's no cookie, since a click needs a profile or a session.
   - A guest's clicks stay on the guest profile after a merge (no foreign keys, like `events`).
 - The taste picker's looks (`GET /v1/taste/picker`) rank every styled look on each first open (fine at 300 looks, slow at 100,000): before launch, take the top two per style from the popularity index, or keep the answer in memory for a few minutes (it's the same for everyone).

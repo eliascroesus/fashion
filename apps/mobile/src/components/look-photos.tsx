@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import type { FeedCard } from '@outfitly/shared';
+import type { FeedCard, LookItem } from '@outfitly/shared';
 import { FlashList } from '@shopify/flash-list';
 import { Image } from 'expo-image';
 import { Link } from 'expo-router';
@@ -16,6 +16,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { photoHeight } from '../feed/layout';
 import { DOWNSCALE_PHOTOS } from '../lib/photos';
+import { dotPlacement, dotsOnPhoto, dotTarget, NO_ITEMS } from '../looks/shop';
 import { saveIfNot } from '../saves';
 import { radii, spacing, useColors } from '../theme';
 import { gridPhotoUrl } from './look-grid';
@@ -23,6 +24,9 @@ import { gridPhotoUrl } from './look-grid';
 type Photo = FeedCard['photo'];
 
 const POP_SIZE = 96;
+/** A piece's dot on the photo, and the bigger area that takes the tap. */
+const DOT_SIZE = 24;
+const DOT_HIT = 44;
 /** Two taps on a photo within this long are a double-tap (a single tap does nothing). */
 const DOUBLE_TAP_MS = 300;
 
@@ -34,14 +38,26 @@ interface LookPhotosProps {
   width: number;
   /** The cover photo is displayed (open-time measurement). */
   onCoverShown?: () => void;
+  /** The look's pieces: those with a dot get one on their photo. */
+  items?: readonly LookItem[];
+  /** A piece's dot was tapped. */
+  onDotPress?: (item: LookItem) => void;
 }
 
 /**
  * The look's photos, swiped sideways, all as tall as the cover (sizes known
  * up front, so nothing jumps). The cover is where the grid card zooms to.
- * Double-tap saves, with a bookmark that pops up in the middle.
+ * Double-tap saves, with a bookmark that pops up in the middle. Each piece
+ * with a known place gets a dot there; tapping it shows the piece.
  */
-export function LookPhotos({ card, photos, width, onCoverShown }: LookPhotosProps) {
+export function LookPhotos({
+  card,
+  photos,
+  width,
+  onCoverShown,
+  items = NO_ITEMS,
+  onDotPress,
+}: LookPhotosProps) {
   const { t } = useTranslation();
   const colors = useColors();
   const height = photoHeight(card.photo, width);
@@ -82,6 +98,39 @@ export function LookPhotos({ card, photos, width, onCoverShown }: LookPhotosProp
     />
   );
 
+  const dots = (photo: Photo, index: number) =>
+    dotsOnPhoto(items, index).flatMap(({ item, x, y }) => {
+      const frame = { width, height };
+      // A piece just past the crop still gets its dot, at the edge.
+      const place = dotPlacement(photo, frame, { x, y }, DOT_SIZE);
+      if (!place) return [];
+      const { hit, dot } = dotTarget(place, frame, DOT_SIZE, DOT_HIT);
+      return [
+        <Pressable
+          key={item.id}
+          testID="look-dot"
+          accessibilityRole="button"
+          accessibilityLabel={t('look.dotLabel', {
+            name: item.brand ? `${item.brand} ${item.name}` : item.name,
+          })}
+          onPress={() => {
+            onDotPress?.(item);
+          }}
+          style={[styles.dotHit, hit]}
+        >
+          <View
+            style={[
+              styles.pieceDot,
+              dot,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
+            <View style={[styles.pieceDotMiddle, { backgroundColor: colors.text }]} />
+          </View>
+        </Pressable>,
+      ];
+    });
+
   const renderPhoto = ({ item, index }: { item: Photo; index: number }) => {
     const frame = { width, height, backgroundColor: item.dominantColor };
     // The cover first shows the very copy the grid card loaded (in memory, so at once),
@@ -112,15 +161,20 @@ export function LookPhotos({ card, photos, width, onCoverShown }: LookPhotosProp
       ) : (
         <View style={frame}>{sharp(item, true)}</View>
       );
+    // The dots sit beside the photo's own button, not inside it: VoiceOver and tests can't reach
+    // what's inside an accessible element.
     return (
-      <Pressable
-        testID={`look-photo-${String(index)}`}
-        accessibilityLabel={t('look.photoOf', { index: index + 1, count: photos.length })}
-        accessibilityRole="image"
-        onPress={onPress}
-      >
-        {image}
-      </Pressable>
+      <View style={{ width, height }}>
+        <Pressable
+          testID={`look-photo-${String(index)}`}
+          accessibilityLabel={t('look.photoOf', { index: index + 1, count: photos.length })}
+          accessibilityRole="image"
+          onPress={onPress}
+        >
+          {image}
+        </Pressable>
+        {dots(item, index)}
+      </View>
     );
   };
 
@@ -133,6 +187,8 @@ export function LookPhotos({ card, photos, width, onCoverShown }: LookPhotosProp
         showsHorizontalScrollIndicator={false}
         keyExtractor={(_photo, index) => String(index)}
         renderItem={renderPhoto}
+        // The pieces (and their dots) arrive with the look, after the cover.
+        extraData={items}
         onMomentumScrollEnd={(e) => {
           setPage(Math.round(e.nativeEvent.contentOffset.x / width));
         }}
@@ -188,4 +244,15 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   dot: { width: 6, height: 6, borderRadius: radii.pill },
+  dotHit: { position: 'absolute', width: DOT_HIT, height: DOT_HIT },
+  pieceDot: {
+    position: 'absolute',
+    width: DOT_SIZE,
+    height: DOT_SIZE,
+    borderRadius: radii.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pieceDotMiddle: { width: 8, height: 8, borderRadius: radii.pill },
 });

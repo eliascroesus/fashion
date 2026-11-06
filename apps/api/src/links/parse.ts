@@ -1,4 +1,4 @@
-import type { OfferStock } from '@outfitly/shared';
+import { currencyDigits, type OfferStock } from '@outfitly/shared';
 
 /**
  * Reads a shop's product page without an HTML library: schema.org JSON-LD
@@ -91,17 +91,13 @@ function clean(value: unknown, maxLength = 300): string | null {
 
 const CURRENCIES = new Set(Intl.supportedValuesOf('currency'));
 
-/** Fraction digits of a currency (2 for SEK, 0 for ISK and JPY), or null if it isn't one. */
+/**
+ * Fraction digits of a currency (2 for SEK, 0 for ISK and JPY), or null if it
+ * isn't one. The digits come from the table the app reads prices back with.
+ */
 export function minorDigits(currency: string): number | null {
   if (!CURRENCIES.has(currency)) return null;
-  try {
-    return (
-      new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions()
-        .maximumFractionDigits ?? null
-    );
-  } catch {
-    return null;
-  }
+  return currencyDigits(currency);
 }
 
 /**
@@ -135,8 +131,9 @@ export function parsePrice(value: unknown, currency: string): number | null {
   const fraction = (exact[2] ?? '').padEnd(digits + 1, '0');
   let minor = Number(whole) * 10 ** digits + Number(fraction.slice(0, digits) || '0');
   if (Number(fraction[digits] ?? '0') >= 5) minor += 1; // round half up
-  // offers.price_minor is a 32-bit integer.
-  return Number.isSafeInteger(minor) && minor <= 2_000_000_000 ? minor : null;
+  // A price of 0 is a shop's placeholder, never a real price (it would add nothing to a
+  // look's total yet show as free). offers.price_minor is a 32-bit integer.
+  return Number.isSafeInteger(minor) && minor > 0 && minor <= 2_000_000_000 ? minor : null;
 }
 
 /** Digits with "." as the only (decimal) separator, or null when it's ambiguous. */

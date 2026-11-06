@@ -9,6 +9,7 @@ import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import {
   type ReactElement,
+  type RefObject,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -79,6 +80,10 @@ interface LookGridProps {
   endMessage?: string | null;
   /** Pull to refresh (off on the look page, where pulling down may close an iOS zoom). */
   refreshable?: boolean;
+  /** To scroll the grid from outside (e.g. to a piece in the header). */
+  scrollRef?: RefObject<FlashListRef<FeedCard> | null>;
+  /** Extra room under the last cards, for something floating over the bottom. */
+  bottomInset?: number;
 }
 
 /**
@@ -99,11 +104,14 @@ export function LookGrid({
   onScrollBeginDrag,
   endMessage,
   refreshable = true,
+  scrollRef,
+  bottomInset = 0,
 }: LookGridProps) {
   const { t } = useTranslation();
   const colors = useColors();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
-  const listRef = useRef<FlashListRef<FeedCard>>(null);
+  const ownRef = useRef<FlashListRef<FeedCard>>(null);
+  const listRef = scrollRef ?? ownRef;
   const viewport = useRef(screenHeight);
   const furthestVisible = useRef(-1);
   const prefetched = useRef(new Set<string>());
@@ -124,7 +132,7 @@ export function LookGrid({
     // Always: the list may have moved without a scroll event (e.g. while another tab showed).
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
     listRef.current?.recomputeViewableItems();
-  }, [resetKey]);
+  }, [resetKey, listRef]);
 
   const prefetchAhead = useCallback(() => {
     const urls = photosToPrefetch({
@@ -244,7 +252,11 @@ export function LookGrid({
       }
       // iOS: keeps the last cards clear of the floating tab bar.
       contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={styles.content}
+      contentContainerStyle={
+        bottomInset > 0
+          ? { ...styles.content, paddingBottom: styles.content.paddingBottom + bottomInset }
+          : styles.content
+      }
       ListHeaderComponent={header ?? null}
       ListEmptyComponent={
         <View style={[styles.empty, { minHeight: screenHeight / 2 }]}>{emptyState}</View>
