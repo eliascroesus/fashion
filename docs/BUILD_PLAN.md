@@ -221,12 +221,12 @@ This is the full list of tables the MVP needs, so Claude Code designs Phase 1 wi
 | `follows` | Which profile follows which | Following feed, stats | 2 |
 | `feed_snapshots` | The ranked list behind a For You scroll (up to 400 look ids): a profile's newest 5, or a few shared logged-out ones (per style choice picked on the phone: `taste_key`); deleted after a day | Pages never repeat or skip a look, even when scores change mid-scroll | 2 |
 | `search_terms` | Search's vocabulary: every word in the looks that can be shown, with how many looks have it, plus Swedish words for tags (e.g. sommar → summer); rebuilt from the looks every 15 minutes | Typo tolerance ("linnen" finds linen), suggestions while typing, popular tags | 2 |
-| `garments` | Each item the AI spotted in a photo: box, category, colour, attributes, fingerprint vector | Dots on garments, search words, "more like this" | 3 |
-| `products` | The item itself: brand, name, category, main image, fingerprint vector, owning business profile (if any) | "The same jacket" across shops; brands' Products tab | 3 |
-| `offers` | Which shop sells a product: URL (poster's affiliate tag kept), price, currency, stock, last checked, price history | Prices, link checks, later commissions and checkout | 3 |
-| `look_items` | Links a garment in a look to an offer: dot position, match score, status (pending / verified / rejected) | The "shop the look" list | 3 |
-| `link_checks` | Result of every automatic link check | Trust, review queue | 3 |
-| `clicks` | Every tap to a shop: random click ID, profile or session, look, offer, author, feed position, source (app / web) | Stats now, commissions later | 3 |
+| `garments` | Each item the AI spotted in a photo: box (fractions of the photo), category (fixed list, `GARMENT_CATEGORIES` in `packages/shared`), colour, attributes (pattern, material, brand text…), fingerprint vector (768 half-precision numbers, Marqo-FashionSigLIP; HNSW index, cosine) | Dots on garments, search words, "more like this" | 3 |
+| `products` | The item itself: brand, name, category, barcode (GTIN, unique), main image (the shop's link + our processed copy), fingerprint vector (768 half-precision, HNSW cosine), owning business profile (if any) | "The same jacket" across shops; brands' Products tab | 3 |
+| `offers` | Which shop sells a product: URL (the poster's link, affiliate tag kept; what Shop opens; up to 2 KB), the shop's product page it lands on (what price checks read, so a check is never an affiliate click), price in minor units (öre, cents), currency, stock (in stock / out of stock / unknown), last checked, price history | Prices, link checks, later commissions and checkout | 3 |
+| `look_items` | Links a garment in a look to an offer (one row per look and offer): dot position (on one of the look's photos), match score, status (pending / verified / rejected) | The "shop the look" list | 3 |
+| `link_checks` | Result of every automatic link check: similarity score, the AI's answer (yes / no / unsure) when asked, outcome (verified / review / rejected), reason code, thresholds used | Trust, review queue | 3 |
+| `clicks` | Every tap to a shop: random click ID, profile or session, look, offer, author, feed position, screen, platform (iPhone / Android / web); no foreign keys, like `events` | Stats now, commissions later | 3 |
 | `daily_stats` | Per-look and per-profile daily totals (views, opens, saves, clicks, visits) | Fast creator and business stats | 4 |
 | `reports`, `blocks`, `moderation_queue` | User reports, blocked profiles, items waiting for review | Safety from day one of posting | 4 |
 | `push_tokens`, `notifications` | Device tokens and every notification sent | Retention loop | 6 |

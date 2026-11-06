@@ -71,6 +71,20 @@
       "when": 1793810251310,
       "tag": "0009_search",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793823321115,
+      "tag": "0010_products",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793824058368,
+      "tag": "0011_halfvec_and_link_limits",
+      "breakpoints": true
     }
   ]
 }

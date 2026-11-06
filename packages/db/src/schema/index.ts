@@ -4,6 +4,7 @@ export * from './feed.ts';
 export * from './idempotency-keys.ts';
 export * from './looks.ts';
 export * from './media.ts';
+export * from './products.ts';
 export * from './profile-members.ts';
 export * from './profiles.ts';
 export * from './search.ts';
