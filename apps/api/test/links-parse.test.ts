@@ -124,6 +124,31 @@ describe('reading product pages', () => {
     });
   });
 
+  it('reads sizes told apart by the query as the whole product on the bare page', () => {
+    // Google's and Shopify's ProductGroup markup: XS sold out, M in stock.
+    const group = `<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"ProductGroup","name":"Wool coat","brand":"Filippa K",
+ "url":"https://shop.example/p/coat","variesBy":["https://schema.org/size"],"hasVariant":[
+  {"@type":"Product","name":"Wool coat XS","url":"https://shop.example/p/coat?size=xs",
+   "gtin":"7350000000016","offers":{"price":"1999","priceCurrency":"SEK",
+   "availability":"https://schema.org/OutOfStock"}},
+  {"@type":"Product","name":"Wool coat M","url":"https://shop.example/p/coat?size=m",
+   "gtin":"7350000000023","offers":{"price":"1999","priceCurrency":"SEK",
+   "availability":"https://schema.org/InStock"}}]}
+</script>`;
+    const bare = readProductPage(group, new URL('https://shop.example/p/coat'));
+    expect(bare.product).toMatchObject({ gtin: null, stock: 'in_stock', priceMinor: 199900 });
+    // A page for one size (tracking tags beside it don't matter) is that size.
+    const medium = readProductPage(group, new URL('https://shop.example/p/coat?size=m&aff=1'));
+    expect(medium.product).toMatchObject({ gtin: '07350000000023', stock: 'in_stock' });
+    const small = readProductPage(group, new URL('https://shop.example/p/coat?size=xs'));
+    expect(small.product).toMatchObject({ gtin: '07350000000016', stock: 'out_of_stock' });
+    // Every size on the same address: none of them is "this page".
+    const same = group.replaceAll('?size=xs', '').replaceAll('?size=m', '');
+    const shared = readProductPage(same, new URL('https://shop.example/p/coat'));
+    expect(shared.product).toMatchObject({ gtin: null, stock: 'in_stock' });
+  });
+
   it('reads an AggregateOffer and survives broken JSON-LD blocks', () => {
     const read = readProductPage(aggregateOfferPage, page);
     expect(read.product).toMatchObject({

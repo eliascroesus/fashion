@@ -370,6 +370,60 @@ describe('which product a link is', () => {
     expect(other.product.id).not.toBe(coat.product.id);
   });
 
+  it('keeps the product when the shop moved the page (same barcode and name)', async () => {
+    const coat = (path: string) => productPage(path, 'Moved coat', 'Acne', '7350000000085');
+    shop.route('/p/moved-old', page(coat('/p/moved-old')));
+    shop.route('/p/moved-new', page(coat('/p/moved-new')));
+    const first = await resolved(shop.url('/p/moved-old'));
+    shop.route('/p/moved-old', redirect(shop.url('/p/moved-new'), 301));
+    await age(first.offer.id);
+    ctx.queued.length = 0;
+    const again = await resolved(shop.url('/p/moved-old'));
+    expect(again.product.id).toBe(first.product.id);
+    expect(again.offer.pageUrl).toBe(shop.url('/p/moved-new'));
+    expect(ctx.queued.filter((j) => j.name === LINK_CHECK_QUEUES.linkCheck)).toEqual([]);
+  });
+
+  it('keeps it by barcode and photo when another link still points at the old page', async () => {
+    const html = (path: string, name: string) => `<link rel="canonical" href="${path}">
+<script type="application/ld+json">{"@type":"Product","name":"${name}","brand":"Acne",
+"gtin13":"7350000000092","image":"https://cdn.shop.test/knit.jpg?w=800",
+"offers":{"price":"100","priceCurrency":"SEK"}}</script>`;
+    shop.route('/p/knit-old', page(html('/p/knit-old', 'Knit')));
+    shop.route('/p/knit-new', page(html('/p/knit-new', 'Knit sweater')));
+    const one = await resolved(shop.url('/p/knit-old?aff=one'));
+    const two = await resolved(shop.url('/p/knit-old?aff=two'));
+    expect(two.product.id).toBe(one.product.id);
+    // The shop moves (and renames) the page; the photo is the same file.
+    shop.route('/p/knit-old', redirect(shop.url('/p/knit-new'), 301));
+    await age(one.offer.id);
+    const again = await resolved(shop.url('/p/knit-old?aff=one'));
+    expect(again.product.id).toBe(one.product.id);
+    expect(again.product.gtin).toBe('07350000000092');
+  });
+
+  it('makes another product when a moved link shows another item with the same barcode', async () => {
+    shop.route('/p/d-coat', page(productPage('/p/d-coat', 'Coat', 'Acne', '7350000000108')));
+    shop.route('/p/d-dress', page(productPage('/p/d-dress', 'Dress', 'Acne', '7350000000108')));
+    const first = await resolved(shop.url('/p/d-coat?aff=x'));
+    const lookId = await createLook(ctx.db, { authorId: await createAuthor(ctx.db, 'reuser') });
+    const [item] = await ctx.db
+      .insert(lookItems)
+      .values({ lookId, offerId: first.offer.id, status: 'verified' })
+      .returning({ id: lookItems.id });
+    shop.route('/p/d-coat', redirect(shop.url('/p/d-dress')));
+    await age(first.offer.id);
+    ctx.queued.length = 0;
+    const again = await resolved(shop.url('/p/d-coat?aff=x'));
+    expect(again.product.id).not.toBe(first.product.id);
+    expect(again.product.name).toBe('Dress');
+    expect((await product(first.product.id))?.name).toBe('Coat');
+    expect(ctx.queued).toContainEqual({
+      name: LINK_CHECK_QUEUES.linkCheck,
+      data: { lookItemId: item?.id },
+    });
+  });
+
   it('makes a new product instead of bringing back a removed one', async () => {
     shop.route(
       '/p/removed',

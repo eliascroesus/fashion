@@ -9,6 +9,7 @@ import {
   media,
   sql,
 } from '@outfitly/db';
+import * as Sentry from '@sentry/node';
 import type { FastifyBaseLogger } from 'fastify';
 import { PgBoss } from 'pg-boss';
 import type { PhotoAiClients } from './ai/clients.ts';
@@ -40,6 +41,7 @@ import {
   PRODUCT_QUEUES,
   type ProductPhotoDeps,
 } from './links/product-photos.ts';
+import { runPriceRefresh } from './links/refresh.ts';
 import { ImageRejectedError } from './media/image.ts';
 import { refreshSearchTerms } from './search.ts';
 import { markMediaFailed, processUploadedMedia } from './media/pipeline.ts';
@@ -69,6 +71,8 @@ export const QUEUES = {
   photoSpotFailed: 'photo-spot-failed',
   /** Fingerprints a photo and its garments (services/embedder). */
   photoFingerprint: 'photo-fingerprint',
+  /** Every 10 minutes: reads a few shop pages again for prices and stock (Step 3.9). */
+  priceRefresh: 'price-refresh',
   ...PRODUCT_QUEUES,
   ...LINK_CHECK_QUEUES,
 } as const;
@@ -250,6 +254,45 @@ export async function startJobs(boss: PgBoss, options: WorkerDeps): Promise<void
   await startPhotoAiJobs(boss, options);
   await startProductJobs(boss, options);
   await startLinkCheckJobs(boss, options);
+  await startPriceRefreshJobs(boss, options);
+}
+
+/** The price and stock check (Step 3.9): a short run every 10 minutes, caps spread over the day. */
+async function startPriceRefreshJobs(boss: PgBoss, options: WorkerDeps): Promise<void> {
+  const { db, log } = options;
+  await boss.createQueue(QUEUES.priceRefresh, {
+    // One run at a time and none piling up behind it: the next scheduled one comes anyway.
+    policy: 'exclusive',
+    retryLimit: 0,
+    // A run stops starting pages after 8 minutes; each read takes at most 10 s.
+    expireInSeconds: 900,
+  });
+  await boss.work(
+    QUEUES.priceRefresh,
+    { pollingIntervalSeconds: options.pollingIntervalSeconds ?? 2 },
+    async () => {
+      const summary = await runPriceRefresh({
+        db,
+        queue: boss,
+        network: options.linkNetwork,
+        onError: (error, pageUrl) => {
+          log.error({ err: error, pageUrl }, 'price check of a page failed');
+          Sentry.captureException(error, { tags: { job: QUEUES.priceRefresh } });
+        },
+        onSuspectSite: (site, gone, reads) => {
+          // Not sold out: most of a shop's pages "went" at once (new addresses, a consent wall).
+          log.error({ site, gone, reads }, 'price check: a shop needs a person to look');
+          Sentry.captureMessage(
+            `Price check: ${site} needs a look (${String(gone)} of ${String(reads)} pages gone at once)`,
+            'warning',
+          );
+        },
+      });
+      log.info(summary, 'prices and stock checked');
+      return summary;
+    },
+  );
+  await boss.schedule(QUEUES.priceRefresh, '*/10 * * * *');
 }
 
 /** The automatic link check (Step 3.5): is the linked product the piece in the photo? */

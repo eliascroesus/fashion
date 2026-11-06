@@ -20,7 +20,9 @@
     "links-try": "node --env-file-if-exists=../../.env scripts/links-try.ts",
     "seed-items": "node --env-file-if-exists=../../.env scripts/seed-items.ts",
     "links-calibrate": "node --env-file-if-exists=../../.env scripts/links-calibrate.ts",
-    "shop-test-look": "node --env-file-if-exists=../../.env scripts/shop-test-look.ts"
+    "shop-test-look": "node --env-file-if-exists=../../.env scripts/shop-test-look.ts",
+    "price-refresh": "node --env-file-if-exists=../../.env scripts/price-refresh.ts",
+    "refresh-demo": "node --env-file-if-exists=../../.env scripts/refresh-demo.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
