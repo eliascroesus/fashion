@@ -161,12 +161,23 @@ describe('reading product pages', () => {
     });
   });
 
-  it('takes the share photo when it is the same picture, bigger', () => {
+  it('takes the share photo when it is the same picture, bigger (not when it is smaller)', () => {
     const html = `<meta property="og:image" content="https://img.example/a/coat.jpg?imwidth=800">
 <meta property="og:image:secure_url" content="https://img.example/a/coat.jpg?imwidth=800">
 <script type="application/ld+json">{"@type":"Product","name":"Coat","image":"https://img.example/a/coat.jpg?imwidth=200"}</script>`;
     expect(readProductPage(html, page).product?.imageUrl).toBe(
       'https://img.example/a/coat.jpg?imwidth=800',
+    );
+    const smallShare = html.replaceAll('imwidth=800', 'imwidth=100');
+    expect(readProductPage(smallShare, page).product?.imageUrl).toBe(
+      'https://img.example/a/coat.jpg?imwidth=200',
+    );
+    // Boozt's form: the share photo asks for w400, JSON-LD for w1300.
+    const boozt = html
+      .replaceAll('?imwidth=800', '?has_webp=1&size=w400')
+      .replace('?imwidth=200', '?has_webp=1&size=w1300');
+    expect(readProductPage(boozt, page).product?.imageUrl).toBe(
+      'https://img.example/a/coat.jpg?has_webp=1&size=w1300',
     );
     const other = html.replaceAll('/a/coat.jpg?imwidth=800', '/banner.jpg');
     expect(readProductPage(other, page).product?.imageUrl).toBe(
@@ -195,6 +206,123 @@ describe('reading product pages', () => {
       source: 'meta',
     });
     expect(read.canonicalUrl).toBe('https://nelly.example/se/dress-123/');
+  });
+
+  it('reads the size whose offer is this page, with its group’s brand (Boozt)', () => {
+    const size = (label: string, id: string, price: number, gtin: string) => ({
+      '@context': 'https://schema.org',
+      '@type': 'Product',
+      name: `STRIPE PULLOVER (${label})`,
+      gtin13: gtin,
+      offers: {
+        '@type': 'Offer',
+        url: `https://shop.example/dk/brand/stripe-pullover_331/${id}`,
+        price,
+        priceCurrency: 'DKK',
+        availability: 'https://schema.org/InStock',
+      },
+      isVariantOf: { '@id': '#G1' },
+    });
+    const blocks = [
+      {
+        '@context': 'https://schema.org',
+        '@type': 'ProductGroup',
+        '@id': '#G1',
+        name: 'STRIPE PULLOVER',
+        url: 'https://shop.example/dk/brand/stripe-pullover_331',
+        brand: { '@type': 'Brand', name: 'Nümph' },
+      },
+      size('FIG - XS', '2321', 500, '5715338755328'),
+      size('FIG - S', '2322', 562, '5715338755335'),
+    ];
+    const html = `<link rel="canonical" href="https://shop.example/dk/brand/stripe-pullover_331">
+<script type="application/ld+json">${JSON.stringify(blocks)}</script>`;
+    const read = readProductPage(
+      html,
+      new URL('https://shop.example/dk/brand/stripe-pullover_331/2322'),
+    );
+    expect(read.product).toMatchObject({
+      name: 'STRIPE PULLOVER (FIG - S)',
+      brand: 'Nümph',
+      gtin: '05715338755335',
+      priceMinor: 56200,
+      currency: 'DKK',
+    });
+    // The canonical link is the whole group's page: the price check must read this size's page.
+    expect(read.canonicalUrl).toBeNull();
+    // The group's own page still has its canonical link.
+    const groupPage = readProductPage(
+      html,
+      new URL('https://shop.example/dk/brand/stripe-pullover_331'),
+    );
+    expect(groupPage.canonicalUrl).toBe('https://shop.example/dk/brand/stripe-pullover_331');
+  });
+
+  it('never takes a recommended product whose link is empty or only a #fragment', () => {
+    const main = {
+      '@type': 'Product',
+      name: 'Main coat',
+      '@id': '#main',
+      offers: { '@type': 'Offer', price: '999', priceCurrency: 'SEK' },
+    };
+    for (const link of ['', '#', '#rec1']) {
+      const other = {
+        '@type': 'Product',
+        name: 'Other coat',
+        '@id': link,
+        offers: { '@type': 'Offer', url: link, price: '199', priceCurrency: 'SEK' },
+      };
+      const blocks = [main, { '@type': 'ItemList', itemListElement: [{ item: other }] }];
+      const html = `<script type="application/ld+json">${JSON.stringify(blocks)}</script>`;
+      expect(readProductPage(html, new URL('https://shop.example/p/main')).product).toMatchObject({
+        name: 'Main coat',
+        priceMinor: 99900,
+      });
+    }
+  });
+
+  it('reads the product a page is about, next to a list of recommendations', () => {
+    const product = (name: string, price: string) => ({
+      '@type': 'Product',
+      name,
+      offers: { '@type': 'Offer', price, priceCurrency: 'SEK' },
+    });
+    const page = {
+      '@type': 'WebPage',
+      about: product('Main coat', '999'),
+      hasPart: { '@type': 'ItemList', itemListElement: [{ item: product('Other coat', '199') }] },
+    };
+    const html = `<script type="application/ld+json">${JSON.stringify(page)}</script>`;
+    expect(readProductPage(html, new URL('https://shop.example/p/main')).product?.name).toBe(
+      'Main coat',
+    );
+  });
+
+  it('finds no product on a category page listing several', () => {
+    const item = (name: string, slug: string) => ({
+      '@type': 'Product',
+      name,
+      url: `https://shop.example/p/${slug}`,
+      offers: { '@type': 'Offer', price: '2499.00', priceCurrency: 'SEK' },
+    });
+    const listing = {
+      '@context': 'https://schema.org',
+      '@type': 'CollectionPage',
+      name: 'Coats',
+      mainEntity: {
+        '@type': 'ItemList',
+        itemListElement: [
+          { '@type': 'ListItem', position: 1, item: item('Wool coat Erica', 'erica') },
+          { '@type': 'ListItem', position: 2, item: item('Wool coat Nova', 'nova') },
+        ],
+      },
+    };
+    const html = `<script type="application/ld+json">${JSON.stringify(listing)}</script>`;
+    expect(readProductPage(html, new URL('https://shop.example/women/coats')).product).toBeNull();
+    // The list's own item page still finds its product.
+    expect(readProductPage(html, new URL('https://shop.example/p/nova')).product?.name).toBe(
+      'Wool coat Nova',
+    );
   });
 
   it('finds no product on an article or an empty page', () => {

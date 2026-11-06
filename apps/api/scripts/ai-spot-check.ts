@@ -4,6 +4,8 @@
 //   pnpm ai:spot-check --all                    all of them (every seed look gets its garments)
 //   pnpm ai:spot-check --count 20 --author someone
 //   pnpm ai:spot-check --again                  read them again (costs again)
+//   pnpm ai:spot-check --all --outdated         read photos never read, and again those read with
+//                                               older instructions (SPOT_PROMPT_VERSION changed)
 //   pnpm ai:spot-check --out ./somewhere        page folder (default ~/Downloads/outfitly-spot-check)
 // Photos already read are not sent again, so running it twice only redraws the page. The sample
 // stays the same: oldest looks first, including looks hidden because their photo was flagged.
@@ -34,6 +36,7 @@ import { GeminiError } from '../src/ai/gemini.ts';
 import {
   fingerprintPhoto,
   type PhotoAiDeps,
+  readWithOlderInstructions,
   SpendCapReachedError,
   SpotAnswerError,
   spotPhoto,
@@ -52,11 +55,16 @@ const all = args.includes('--all');
 const count = all ? Number.MAX_SAFE_INTEGER : Number(option('count') ?? 50);
 const handle = (option('author') ?? 'outfitly.picks').replace(/^@/, '');
 const again = args.includes('--again');
+const outdated = args.includes('--outdated');
 const outDir = option('out')
   ? resolve(process.env['INIT_CWD'] ?? process.cwd(), option('out') ?? '')
   : join(homedir(), 'Downloads', 'outfitly-spot-check');
 if (!Number.isInteger(count) || count < 1) {
   console.error('--count must be a whole number of photos.');
+  process.exit(1);
+}
+if (again && outdated) {
+  console.error('Use --again (every photo) or --outdated (only older readings), not both.');
   process.exit(1);
 }
 
@@ -123,6 +131,15 @@ try {
   } else {
     console.log(`Reading ${String(photos.length)} photos by @${handle}${again ? ' (again)' : ''}…`);
   }
+  const reread = outdated
+    ? await readWithOlderInstructions(
+        db,
+        photos.map((p) => p.mediaId),
+      )
+    : new Set<string>();
+  if (outdated) {
+    console.log(`${String(reread.size)} read with older instructions than ${SPOT_PROMPT_VERSION}.`);
+  }
   let next = 0;
   let done = 0;
   // Three at a time: well within Gemini's limits, and the page is ready in a few minutes.
@@ -132,7 +149,9 @@ try {
       next += 1;
       if (!photo) break;
       try {
-        const read = await withRetries(() => spotPhoto(deps, photo.mediaId, { again }));
+        const read = await withRetries(() =>
+          spotPhoto(deps, photo.mediaId, { again: again || reread.has(photo.mediaId) }),
+        );
         const fp = ai.embedder
           ? await withRetries(() => fingerprintPhoto(deps, photo.mediaId))
           : null;

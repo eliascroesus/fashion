@@ -21,7 +21,10 @@ export interface PageProduct {
 
 export interface PageRead {
   product: PageProduct | null;
-  /** `<link rel="canonical">`, resolved against the page. */
+  /**
+   * `<link rel="canonical">`, resolved against the page; null when there's none, or when the
+   * product is a size found by this page's own link (the canonical page is its group's).
+   */
   canonicalUrl: string | null;
 }
 
@@ -346,7 +349,7 @@ interface Found {
 }
 
 /** Keys that lead to the page's own item rather than to some other one. */
-const OWN_KEYS = new Set(['@graph', 'mainEntity', 'mainentity']);
+const OWN_KEYS = new Set(['@graph', 'mainEntity', 'mainentity', 'about']);
 
 /** Product nodes anywhere in the blocks (in @graph, lists, a WebPage's mainEntity…). */
 function productNodes(blocks: unknown[]): Found[] {
@@ -474,10 +477,18 @@ function bestPrice(all: PriceRead[]): PriceRead | null {
   return { priceMinor: lowest.priceMinor, currency, stock };
 }
 
+/** A link that names a page: an empty one or a bare `#fragment` would match any page. */
+function pageLink(a: unknown): string | null {
+  if (typeof a !== 'string') return null;
+  const link = a.trim();
+  return link === '' || link.startsWith('#') ? null : link;
+}
+
 function samePage(a: unknown, page: URL): boolean {
-  if (typeof a !== 'string') return false;
+  const link = pageLink(a);
+  if (link === null) return false;
   try {
-    const url = new URL(a, page);
+    const url = new URL(link, page);
     return url.hostname === page.hostname && url.pathname === page.pathname;
   } catch {
     return false;
@@ -491,9 +502,10 @@ function samePage(a: unknown, page: URL): boolean {
  * product page, so one sold-out size can't stand for the whole product.
  */
 function variantOnPage(a: unknown, page: URL): boolean {
-  if (typeof a !== 'string') return false;
+  const link = pageLink(a);
+  if (link === null) return false;
   try {
-    const url = new URL(a, page);
+    const url = new URL(link, page);
     if (url.hostname !== page.hostname || url.pathname !== page.pathname) return false;
     return [...url.searchParams].every(([key, value]) =>
       page.searchParams.getAll(key).includes(value),
@@ -503,19 +515,34 @@ function variantOnPage(a: unknown, page: URL): boolean {
   }
 }
 
-function fromJsonLd(blocks: unknown[], page: URL): PageProduct | null {
+/**
+ * The page's product from its JSON-LD. `variantPage` is true when the product
+ * is one size or colour written as a product of its own, found by its offer's
+ * link to this page: the shop's canonical link is then the whole group's page
+ * (Boozt), so this page, not the canonical one, is where it can be read again.
+ */
+function fromJsonLd(
+  blocks: unknown[],
+  page: URL,
+): { product: PageProduct; variantPage: boolean } | null {
   const found = productNodes(blocks).filter((f) => text(f.node.name));
   const sellable = (n: Node) => pricesOf(n).length > 0 || list(n.hasVariant).length > 0;
   // The page's own product, not a "you may also like" one: same URL, else one that isn't
-  // inside a list or another item, preferably with a price.
+  // inside a list or another item, preferably with a price. Products found only inside other
+  // things count when they're all one product: several are a category or search page's list.
   const own = found.filter((f) => !f.nested).map((f) => f.node);
   const all = found.map((f) => f.node);
+  const oneProduct = new Set(all.map((n) => text(n.name))).size === 1;
+  // Sizes or colours as products of their own, each naming its page only in its offer (Boozt).
+  const sizeOnPage = own.find((n) =>
+    list(n.offers).some((o) => isNode(o) && variantOnPage(o.url, page)),
+  );
   const node =
     all.find((n) => samePage(n.url ?? n['@id'], page)) ??
+    sizeOnPage ??
     own.find(sellable) ??
     own[0] ??
-    all.find(sellable) ??
-    all[0];
+    (oneProduct ? (all.find(sellable) ?? all[0]) : undefined);
   if (!node) return null;
 
   const variants = list(node.hasVariant).filter(isNode);
@@ -527,13 +554,21 @@ function fromJsonLd(blocks: unknown[], page: URL): PageProduct | null {
   if (prices.length === 0) prices = variants.flatMap(pricesOf);
   const best = bestPrice(prices);
 
+  // A variant written as a product of its own names its group (inline or by @id); the brand
+  // often sits only there.
+  const groupRef = isNode(node.isVariantOf) ? node.isVariantOf : null;
+  const group =
+    groupRef && typeof groupRef['@id'] === 'string'
+      ? (all.find((n) => n !== node && n['@id'] === groupRef['@id']) ?? groupRef)
+      : groupRef;
   const brand =
     text(node.brand) ??
     text(isNode(node.manufacturer) ? node.manufacturer.name : null) ??
-    (variant ? text(variant.brand) : null);
+    (variant ? text(variant.brand) : null) ??
+    (group ? text(group.brand) : null);
   // A group's barcodes are per size, so only one variant's (or a plain product's) is kept.
   const gtin = variant ? gtinOf(variant) : variants.length > 0 ? null : gtinOf(node);
-  return {
+  const product: PageProduct = {
     name: text(node.name) ?? '',
     brand,
     gtin,
@@ -543,6 +578,7 @@ function fromJsonLd(blocks: unknown[], page: URL): PageProduct | null {
     stock: best?.stock ?? stockOf(null),
     source: 'json-ld',
   };
+  return { product, variantPage: node === sizeOnPage };
 }
 
 function fromMeta(meta: Map<string, string>, page: URL): PageProduct | null {
@@ -600,17 +636,32 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** The width a photo address asks its image server for (`?imwidth=800`, `?size=w1300`), if any. */
+function askedWidth(url: URL): number | null {
+  let widest: number | null = null;
+  for (const [key, value] of url.searchParams) {
+    if (!/^(w|wid|width|imwidth|size|sw)$/i.test(key)) continue;
+    const digits = /^w?(\d{2,5})$/i.exec(value)?.[1];
+    if (digits) widest = Math.max(widest ?? 0, Number(digits));
+  }
+  return widest;
+}
+
 /**
  * JSON-LD's photo, unless the share photo (og:image) is the same picture at
  * another size: shops size share photos for big screens, while some (Zalando)
- * give a 200 px thumbnail in JSON-LD.
+ * give a 200 px thumbnail in JSON-LD. When both addresses name a width, the
+ * wider one wins (Boozt's share photo is the 400 px one).
  */
 function biggerPhoto(jsonLd: string | null, share: string | null): string | null {
   if (!jsonLd || !share) return jsonLd ?? share;
   try {
     const a = new URL(jsonLd);
     const b = new URL(share);
-    return a.hostname === b.hostname && a.pathname === b.pathname ? share : jsonLd;
+    if (a.hostname !== b.hostname || a.pathname !== b.pathname) return jsonLd;
+    const widthA = askedWidth(a);
+    const widthB = askedWidth(b);
+    return widthA !== null && widthB !== null && widthA > widthB ? jsonLd : share;
   } catch {
     return jsonLd;
   }
@@ -619,15 +670,16 @@ function biggerPhoto(jsonLd: string | null, share: string | null): string | null
 /** The product a shop page describes, or null if it has no product data. */
 export function readProductPage(html: string, page: URL): PageRead {
   const meta = metaTags(html);
-  const fromLd = fromJsonLd(jsonLdBlocks(html), page);
+  const ld = fromJsonLd(jsonLdBlocks(html), page);
   const fromTags = fromMeta(meta, page);
-  const canonicalUrl = canonicalOf(html, page);
-  if (!fromLd) return { product: fromTags, canonicalUrl };
+  if (!ld) return { product: fromTags, canonicalUrl: canonicalOf(html, page) };
+  // A size or colour found by its own page keeps that page: the canonical one is the group's.
+  const canonicalUrl = ld.variantPage ? null : canonicalOf(html, page);
   const share = absolute(
     clean(meta.get('og:image:secure_url')) ?? clean(meta.get('og:image')),
     page,
   );
-  const product = { ...fromLd, imageUrl: biggerPhoto(fromLd.imageUrl, share) };
+  const product = { ...ld.product, imageUrl: biggerPhoto(ld.product.imageUrl, share) };
   if (!fromTags) return { product, canonicalUrl };
   // JSON-LD first; the meta tags fill its gaps.
   const usePrice = product.priceMinor === null && fromTags.priceMinor !== null;
