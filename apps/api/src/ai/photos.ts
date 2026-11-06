@@ -149,7 +149,7 @@ export async function spotPhoto(
   try {
     answer = await gemini.generateJson({
       prompt: SPOT_PROMPT,
-      image: { mimeType: 'image/webp', data: image },
+      images: [{ mimeType: 'image/webp', data: image }],
       schema: SPOT_SCHEMA,
       maxOutputTokens: SPOT_MAX_OUTPUT_TOKENS,
     });

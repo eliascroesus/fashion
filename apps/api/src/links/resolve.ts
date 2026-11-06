@@ -13,6 +13,7 @@ import {
   PUBLIC_INTERNET,
   safeFetch,
 } from './fetch.ts';
+import { queueLinkCheck, recheckLookItems } from './check.ts';
 import { MICROLINK_FLAG, readWithMicrolink } from './microlink.ts';
 import { type PageProduct, pageText, readProductPage } from './parse.ts';
 import { PRODUCT_QUEUES } from './product-photos.ts';
@@ -118,6 +119,8 @@ interface Saved {
   productId: string;
   outcome: 'created' | 'updated';
   copyPhoto: boolean;
+  /** Look items whose link now shows another item: back to pending, to be checked again. */
+  recheck: string[];
 }
 
 /** Waits for (and holds until the transaction ends) a lock on one key of a kind. */
@@ -251,14 +254,17 @@ export async function saveLinkRead(db: Db, read: LinkRead, now = new Date()): Pr
         .update(offers)
         .set({ ...values, priceHistory: withPrice(history, found, now) })
         .where(eq(offers.id, sameLink.id));
-      return { offerId: sameLink.id, productId, outcome: 'updated', copyPhoto };
+      // Looks showing this link were checked against the other item: check them again.
+      const recheck =
+        sameLink.productId === productId ? [] : await recheckLookItems(tx, [sameLink.id]);
+      return { offerId: sameLink.id, productId, outcome: 'updated', copyPhoto, recheck };
     }
     const [created] = await tx
       .insert(offers)
       .values({ ...values, url: read.url, priceHistory: withPrice([], found, now) })
       .returning({ id: offers.id });
     if (!created) throw new Error('Offer not saved.');
-    return { offerId: created.id, productId, outcome: 'created', copyPhoto };
+    return { offerId: created.id, productId, outcome: 'created', copyPhoto, recheck: [] };
   });
 }
 
@@ -327,7 +333,8 @@ async function updateProduct(
       };
   await tx
     .update(products)
-    .set({ ...next, gtin })
+    // A new shop photo gets a new try at being copied in.
+    .set({ ...next, gtin, ...(next.imageUrl !== current.imageUrl ? { imageFailedAt: null } : {}) })
     .where(eq(products.id, current.id));
   return (
     next.imageUrl !== null && (next.imageUrl !== current.imageUrl || current.imageMediaId === null)
@@ -445,6 +452,7 @@ export async function resolveLink(
   }
   const saved = await saveLinkRead(db, read);
   await queueProductWork(queue, db, saved.productId, saved.copyPhoto);
+  for (const lookItemId of saved.recheck) await queueLinkCheck(queue, lookItemId);
   return resolvedLinkAnswer(db, storage, saved.offerId, saved.outcome);
 }
 

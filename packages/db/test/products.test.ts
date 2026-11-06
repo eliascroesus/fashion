@@ -1,4 +1,4 @@
-import { FINGERPRINT_DIMENSIONS } from '@outfitly/shared';
+import { FINGERPRINT_DIMENSIONS, LINK_CHECK_REASONS } from '@outfitly/shared';
 import { cosineDistance, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/client.ts';
@@ -354,6 +354,19 @@ describe('look items and link checks', () => {
       await db.delete(looks).where(eq(looks.id, lookId));
       expect(await db.$count(lookItems, eq(lookItems.lookId, lookId))).toBe(0);
       expect(await db.$count(linkChecks, eq(linkChecks.lookItemId, lookItemId))).toBe(0);
+    });
+  });
+});
+
+describe('link check reasons (Step 3.5)', () => {
+  it('the database knows exactly the reasons the app has messages for', async () => {
+    await withDb(testDb.url, async (db) => {
+      const { rows } = await db.execute<{ def: string }>(
+        sql`SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
+             WHERE conname = 'link_checks_reason_known'`,
+      );
+      const known = [...(rows[0]?.def ?? '').matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]);
+      expect(known.sort()).toEqual([...LINK_CHECK_REASONS].sort());
     });
   });
 });

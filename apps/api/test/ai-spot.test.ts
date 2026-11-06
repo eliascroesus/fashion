@@ -113,7 +113,7 @@ describe('the Gemini client', () => {
   const image = { mimeType: 'image/webp', data: Buffer.from('photo') };
   const request = {
     prompt: 'Find the pieces.',
-    image,
+    images: [image],
     schema: { type: 'object' },
     maxOutputTokens: 100,
   };
@@ -152,6 +152,25 @@ describe('the Gemini client', () => {
       usage: { inputTokens: 1500, outputTokens: 300, thinkingTokens: 20 },
       modelVersion: 'gemini-3.1-flash-lite-001',
     });
+  });
+
+  it('sends several photos in order, each after its label', async () => {
+    const { client, calls } = fakeGemini(() => geminiResponse({ ok: true }));
+    await client.generateJson({
+      ...request,
+      images: [
+        { ...image, label: 'Photo A:' },
+        { mimeType: 'image/webp', data: Buffer.from('other'), label: 'Photo B:' },
+      ],
+    });
+    const body = calls[0]?.body as { contents: { parts: unknown[] }[] };
+    expect(body.contents[0]?.parts).toEqual([
+      { text: 'Photo A:' },
+      { inlineData: { mimeType: 'image/webp', data: Buffer.from('photo').toString('base64') } },
+      { text: 'Photo B:' },
+      { inlineData: { mimeType: 'image/webp', data: Buffer.from('other').toString('base64') } },
+      { text: 'Find the pieces.' },
+    ]);
   });
 
   it('leaves thinking to the model and sets the image detail when asked', async () => {

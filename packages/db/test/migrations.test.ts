@@ -30,6 +30,7 @@ const EXPECTED_TABLES = [
   'saves',
   'search_terms',
   'seen',
+  'settings',
   'swipes',
   'taste_profiles',
 ];

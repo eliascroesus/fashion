@@ -23,6 +23,15 @@ import {
 } from './ai/photos.ts';
 import { deleteOldSeen } from './events.ts';
 import { deleteOldFeedSnapshots, recomputePopularity } from './feed/popularity.ts';
+import {
+  CompareAnswerError,
+  checkLookItem,
+  LINK_CHECK_QUEUES,
+  type LinkCheckDeps,
+  queueChecksForPhoto,
+  queueChecksForProduct,
+  sweepPendingChecks,
+} from './links/check.ts';
 import type { NetworkPolicy } from './links/fetch.ts';
 import {
   copyProductPhoto,
@@ -60,6 +69,7 @@ export const QUEUES = {
   /** Fingerprints a photo and its garments (services/embedder). */
   photoFingerprint: 'photo-fingerprint',
   ...PRODUCT_QUEUES,
+  ...LINK_CHECK_QUEUES,
 } as const;
 
 /** What routes need to enqueue work. */
@@ -115,6 +125,19 @@ export async function queuePhotoAi(
       singletonKey: mediaId,
     },
   );
+}
+
+/** Queues link checks that were waiting for a photo or product; a hiccup here never fails the job. */
+async function queueWaitingChecks(
+  log: FastifyBaseLogger,
+  queueing: () => Promise<number>,
+  about: Record<string, string>,
+): Promise<void> {
+  try {
+    await queueing();
+  } catch (error) {
+    log.error({ err: error, ...about }, 'could not queue link checks');
+  }
 }
 
 /** Starts the queue and every worker. */
@@ -224,6 +247,66 @@ export async function startJobs(boss: PgBoss, options: WorkerDeps): Promise<void
 
   await startPhotoAiJobs(boss, options);
   await startProductJobs(boss, options);
+  await startLinkCheckJobs(boss, options);
+}
+
+/** The automatic link check (Step 3.5): is the linked product the piece in the photo? */
+async function startLinkCheckJobs(boss: PgBoss, options: WorkerDeps): Promise<void> {
+  const { db, log } = options;
+  const workOptions = { pollingIntervalSeconds: options.pollingIntervalSeconds ?? 2 };
+  const deps: LinkCheckDeps = {
+    db,
+    storage: options.storage,
+    gemini: options.ai?.gemini ?? null,
+    dailyCapMicros: options.ai?.dailyCapMicros ?? 0,
+  };
+  let capReportedFor = '';
+
+  await boss.createQueue(QUEUES.linkCheck, {
+    // One queued and one running per item: a job paused by the spend cap can queue its own rerun.
+    policy: 'stately',
+    retryLimit: 3,
+    retryDelay: options.aiRetryDelaySeconds ?? 30,
+    retryBackoff: true,
+    expireInSeconds: 180,
+  });
+  await boss.work<{ lookItemId: string }>(QUEUES.linkCheck, workOptions, async (jobs) => {
+    for (const { data } of jobs) {
+      try {
+        const result = await checkLookItem(deps, data.lookItemId);
+        log.info({ lookItemId: data.lookItemId, ...result }, 'link checked');
+      } catch (error) {
+        if (error instanceof SpendCapReachedError) {
+          const today = new Date().toISOString().slice(0, 10);
+          if (capReportedFor !== today) {
+            capReportedFor = today;
+            log.error(
+              { spentMicros: error.spentMicros, capMicros: error.capMicros },
+              'daily AI spend cap reached: link checks paused until 00:00 UTC',
+            );
+          }
+          await boss.send(QUEUES.linkCheck, data, {
+            singletonKey: data.lookItemId,
+            startAfter: nextUtcDay(),
+          });
+          continue;
+        }
+        log.error({ err: error, lookItemId: data.lookItemId }, 'link check failed');
+        // An unusable paid answer isn't retried now (cost): the hourly sweep asks again, and
+        // the second one sends the item to a person. Everything else is retried.
+        if (error instanceof CompareAnswerError) continue;
+        throw error;
+      }
+    }
+  });
+
+  await boss.createQueue(QUEUES.linkCheckSweep);
+  await boss.work(QUEUES.linkCheckSweep, workOptions, async () => {
+    const queued = await sweepPendingChecks(boss, db);
+    if (queued > 0) log.info({ queued }, 'pending link checks queued again');
+    return { queued };
+  });
+  await boss.schedule(QUEUES.linkCheckSweep, '23 * * * *');
 }
 
 /** Shop photos of products from pasted links: copied in, then fingerprinted (Step 3.4). */
@@ -252,6 +335,12 @@ async function startProductJobs(boss: PgBoss, options: WorkerDeps): Promise<void
         log.info({ productId: data.productId, ...result }, 'product photo');
         if (result.outcome === 'copied' && deps.embedder) {
           await boss.send(QUEUES.productFingerprint, data, { singletonKey: data.productId });
+        } else {
+          await queueWaitingChecks(
+            log,
+            () => queueChecksForProduct(boss, deps.db, data.productId),
+            data,
+          );
         }
       } catch (error) {
         log.error({ err: error, productId: data.productId }, 'product photo failed');
@@ -272,6 +361,11 @@ async function startProductJobs(boss: PgBoss, options: WorkerDeps): Promise<void
       try {
         const result = await fingerprintProduct(deps, data.productId);
         log.info({ productId: data.productId, ...result }, 'product fingerprinted');
+        await queueWaitingChecks(
+          log,
+          () => queueChecksForProduct(boss, deps.db, data.productId),
+          data,
+        );
       } catch (error) {
         log.error({ err: error, productId: data.productId }, 'product fingerprinting failed');
         if (error instanceof EmbedderError && !error.retryable) continue;
@@ -331,6 +425,10 @@ async function startPhotoAiJobs(boss: PgBoss, options: WorkerDeps): Promise<void
           result.outcome === 'skipped' &&
           (result.reason === 'photo not ready' || result.reason === 'not in a look');
         if (!gone) await queueFingerprint(data.mediaId);
+        // Without the fingerprint service, link checks waiting for this reading go now.
+        if (!gone && !deps.embedder) {
+          await queueWaitingChecks(log, () => queueChecksForPhoto(boss, db, data.mediaId), data);
+        }
       } catch (error) {
         if (error instanceof SpendCapReachedError) {
           const today = new Date().toISOString().slice(0, 10);
@@ -366,6 +464,7 @@ async function startPhotoAiJobs(boss: PgBoss, options: WorkerDeps): Promise<void
       try {
         const result = await fingerprintPhoto(deps, data.mediaId);
         log.info({ mediaId: data.mediaId, ...result }, 'photo fingerprinted');
+        await queueWaitingChecks(log, () => queueChecksForPhoto(boss, db, data.mediaId), data);
       } catch (error) {
         log.error({ err: error, mediaId: data.mediaId }, 'fingerprinting failed');
         // A refused photo or bad answer won't change by retrying.

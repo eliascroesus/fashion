@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm';
 import { check, index, integer, pgEnum, pgTable, text, uuid } from 'drizzle-orm/pg-core';
 import { baseColumns } from './columns.ts';
 
-export const aiCallPurpose = pgEnum('ai_call_purpose', ['spot_garments']);
+export const aiCallPurpose = pgEnum('ai_call_purpose', ['spot_garments', 'link_check']);
 /** ok = a usable answer; blocked = refused for safety; invalid = unusable answer; failed = no answer. */
 export const aiCallStatus = pgEnum('ai_call_status', ['ok', 'blocked', 'invalid', 'failed']);
 
@@ -33,10 +33,15 @@ export const aiCalls = pgTable(
     error: text('error'),
     mediaId: uuid('media_id'),
     lookId: uuid('look_id'),
+    /** The look item a link check call was about (Step 3.5). */
+    lookItemId: uuid('look_item_id'),
   },
   (t) => [
     index('ai_calls_created_at_idx').on(t.createdAt),
     index('ai_calls_media_id_idx').on(t.mediaId),
+    index('ai_calls_look_item_id_idx')
+      .on(t.lookItemId)
+      .where(sql`${t.lookItemId} is not null`),
     check(
       'ai_calls_counts_not_negative',
       sql`${t.inputTokens} >= 0 and ${t.outputTokens} >= 0 and ${t.thinkingTokens} >= 0 and ${t.costMicros} >= 0 and ${t.durationMs} >= 0`,

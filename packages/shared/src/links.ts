@@ -87,3 +87,29 @@ export const resolvedLinkSchema = z.object({
   }),
 });
 export type ResolvedLink = z.infer<typeof resolvedLinkSchema>;
+
+/**
+ * Why the automatic link check (Step 3.5) didn't verify a look item: stored
+ * in `link_checks.reason` (the database refuses other values), and the app
+ * shows the poster a message per reason (`linkCheck.*` in the app's
+ * translations). Adding one needs a migration for that check too.
+ * - rejected: `sold_out`, `not_similar` (the photos clearly differ),
+ *   `ai_different` (the AI looked and said it's another piece), `link_removed`.
+ * - review (a person decides): `ai_unsure` (the AI wasn't sure, or couldn't
+ *   answer twice), `no_product_photo` (the shop gave no usable photo),
+ *   `no_garment` (the AI found no piece in the look's photos),
+ *   `dot_not_on_piece` (the poster's dot isn't on any piece the AI found),
+ *   `check_failed` (something needed never came: a fingerprint, the AI).
+ */
+export const LINK_CHECK_REASONS = [
+  'sold_out',
+  'not_similar',
+  'ai_different',
+  'link_removed',
+  'ai_unsure',
+  'no_product_photo',
+  'no_garment',
+  'dot_not_on_piece',
+  'check_failed',
+] as const;
+export type LinkCheckReason = (typeof LINK_CHECK_REASONS)[number];

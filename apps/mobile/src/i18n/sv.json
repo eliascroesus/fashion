@@ -216,5 +216,16 @@
     "ownNoLooks": "Looks du lägger upp visas här.",
     "notFound": "Den här profilen är inte tillgänglig.",
     "openLabel": "Öppna profilen för {{name}}"
+  },
+  "linkCheck": {
+    "sold_out": "Plagget är slutsålt, så det visas inte på din look.",
+    "not_similar": "Produkten ser inte ut som plagget på ditt foto. Kolla att länken går till rätt plagg.",
+    "ai_different": "Det här ser ut som ett annat plagg än det på ditt foto. Kolla att länken går till rätt plagg.",
+    "link_removed": "Butikslänken fungerar inte längre, så den visas inte på din look.",
+    "ai_unsure": "Vi kollar att det är samma plagg. Det visas på din look när det är bekräftat.",
+    "no_product_photo": "Butiken har ingen bild på plagget, så vi kollar det för hand.",
+    "no_garment": "Vi hittade inte plagget på ditt foto, så vi kollar det för hand.",
+    "dot_not_on_piece": "Vi hittade inget plagg där du satte pricken, så vi kollar det för hand.",
+    "check_failed": "Vi kunde inte kolla länken automatiskt, så vi kollar den för hand."
   }
 }

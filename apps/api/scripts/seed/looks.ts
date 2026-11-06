@@ -4,7 +4,13 @@ import { existsSync, statSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { and, type Db, eq, inArray, isNull, lookMedia, looks, notInArray, sql } from '@outfitly/db';
-import { LOOK_TAGS, lookSlug, MAX_LOOK_PHOTOS, splitLookTags } from '@outfitly/shared';
+import {
+  LOOK_TAGS,
+  lookSlug,
+  MAX_LINK_BYTES,
+  MAX_LOOK_PHOTOS,
+  splitLookTags,
+} from '@outfitly/shared';
 import { z } from 'zod';
 import type { PhotoStorage } from '../../src/storage.ts';
 import {
@@ -19,6 +25,8 @@ import {
 export const SEED_FILE = 'looks.json';
 /** Who posts the looks in a fresh template; change it per look in looks.json. */
 export const DEFAULT_AUTHOR = 'outfitly.edit';
+/** Shop links per seed look: more pieces than any outfit has. */
+export const MAX_LOOK_ITEMS = 20;
 
 const photoFile = z
   .string()
@@ -43,6 +51,12 @@ const entrySchema = z.strictObject({
     error: '3–30 lowercase letters, digits, dots or underscores',
   }),
   authorName: z.string().trim().min(1).max(60).optional(),
+  /**
+   * Shop links of the look's pieces (`pnpm seed:items` adds them and checks
+   * them; `seed:looks` ignores them). Left out = the look's items are left
+   * alone; an empty list removes them.
+   */
+  links: z.array(z.string().trim().min(1).max(MAX_LINK_BYTES)).max(MAX_LOOK_ITEMS).optional(),
 });
 export type SeedEntry = z.infer<typeof entrySchema>;
 
@@ -66,6 +80,19 @@ const seedFileSchema = z
       }
     });
   });
+
+/** A seed photo's media id: from its file's contents, so renaming it keeps it the same photo. */
+export async function seedPhotoId(folder: string, file: string): Promise<string> {
+  const hash = createHash('sha256')
+    .update(await readFile(join(folder, file)))
+    .digest('hex');
+  return fixedUuid('seed-photo', hash);
+}
+
+/** A seed look's id: from its first photo. */
+export function seedLookId(firstPhotoId: string): string {
+  return fixedUuid('seed-look', firstPhotoId);
+}
 
 export class SeedFileError extends Error {
   constructor(message: string) {
@@ -239,7 +266,7 @@ export async function seedLooks(options: SeedOptions): Promise<SeedResult> {
   let updated = 0;
   const startedAt = Date.now();
   const fileLookIds = entries.map((entry) =>
-    fixedUuid('seed-look', mediaIdOf.get(entry.photos[0] ?? '') ?? ''),
+    seedLookId(mediaIdOf.get(entry.photos[0] ?? '') ?? ''),
   );
   for (const [index, entry] of entries.entries()) {
     if (!entry.photos.every((file) => ready.has(file))) continue; // A photo failed; reported above.
