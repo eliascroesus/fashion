@@ -21,6 +21,7 @@ import { SelectionBar, ShopTheLook } from '../../components/shop-the-look';
 import { showToast } from '../../components/toast';
 import { openShop, originFromParams, prepareShop } from '../../clicks';
 import type { CardList } from '../../feed/card-list';
+import { useImpressions } from '../../feed/use-impressions';
 import { markLookShown } from '../../looks/open-timing';
 import { NO_ITEMS, selection } from '../../looks/shop';
 import { useLookDetail, useSimilarLooks } from '../../looks/queries';
@@ -148,6 +149,8 @@ export default function LookScreen() {
   // "More like this" (below the screen at first) is fetched at once but only built after the
   // zoom, which then has the main thread to itself.
   const opened = useOpened();
+  // Its cards count as seen like a feed's (half on screen for a second), with their place.
+  const impressions = useImpressions('more_like_this', opened);
   // The card from the grid shows at once; the look's own data fills in the rest.
   const card = findCard(id) ?? (detail.data ? cardOf(detail.data) : undefined);
   // Removed or hidden since (404), versus no connection or a server problem (worth a retry).
@@ -166,6 +169,16 @@ export default function LookScreen() {
       controls: colors.text,
     }).then((result) => {
       if (result === 'failed') showToast(t('look.shopFailed'));
+    });
+  };
+  const similarPieces = (item: LookItem) => {
+    router.push({
+      pathname: '/similar-pieces/[itemId]',
+      params: {
+        itemId: item.id,
+        name: item.brand ? `${item.brand} ${item.name}` : item.name,
+        ...(item.price ? { currency: item.price.currency } : {}),
+      },
     });
   };
   const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
@@ -197,6 +210,7 @@ export default function LookScreen() {
               onTick={tick}
               highlighted={pieces.highlighted}
               onShop={shop}
+              onSimilar={similarPieces}
               onItemLayout={pieces.onPieceY}
             />
           </View>
@@ -242,6 +256,7 @@ export default function LookScreen() {
           bottomInset={selection(items, ticked).count > 0 ? insets.bottom + SELECTION_BAR_SPACE : 0}
           list={opened ? similar : NOT_BUILT_YET}
           origin="more_like_this"
+          onVisibleChange={impressions.onVisibleChange}
           testID="look-page"
           cardTestID="similar-card"
           header={header}

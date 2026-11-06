@@ -76,6 +76,10 @@ function RootLayout() {
                   options={{ ...SHEET, sheetAllowedDetents: [0.6, 1] }}
                 />
                 <Stack.Screen name="board-name" options={SHEET} />
+                <Stack.Screen
+                  name="similar-pieces/[itemId]"
+                  options={{ ...SHEET, sheetAllowedDetents: [0.6, 1] }}
+                />
                 <Stack.Screen name="sign-up" options={{ presentation: 'modal' }} />
                 <Stack.Screen name="auth-callback" />
               </Stack>

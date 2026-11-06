@@ -56,7 +56,13 @@ appId: ${APP_ID || 'com.outfitly.app'}
 - assertVisible:
     id: shop-selected-total
     text: '2 pieces selected: .+'
-# The sold-out piece (the 4th) can't be ticked.
+# The sold-out piece (the 4th) can't be ticked. It's below the screen (each piece also has a
+# "Similar pieces" link since Step 3.8).
+- swipe:
+    start: 50%, 70%
+    end: 50%, 40%
+    duration: 400
+- waitForAnimationToEnd
 - tapOn:
     id: shop-item-tick
     index: 3

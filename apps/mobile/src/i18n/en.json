@@ -90,9 +90,21 @@
     "shopFailed": "Couldn't open the shop. Try again.",
     "tickLabel": "Count {{name}} in your total",
     "dotLabel": "Show {{name}}",
+    "similarPieces": "Similar pieces",
+    "similarPiecesLabel": "Pieces that look like {{name}}",
     "moreLikeThis": "More like this",
     "noSimilar": "No similar looks yet.",
     "loadFailed": "Couldn't load the rest of this look."
+  },
+  "similar": {
+    "title": "Similar pieces",
+    "nearest": "Most alike",
+    "cheaper": "Cheaper",
+    "sortLabel": "Sort similar pieces",
+    "empty": "No similar pieces yet.",
+    "loadFailed": "Couldn't load similar pieces.",
+    "cheaperNote": "Prices in {{currency}} first, lowest first. Other currencies after.",
+    "pieceLabel": "{{name}}, {{price}}"
   },
   "errors": {
     "generic": "Something went wrong. Please try again.",

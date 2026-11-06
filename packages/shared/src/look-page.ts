@@ -5,7 +5,11 @@ import { MAX_LOOK_PHOTOS } from './looks.ts';
 import { moneySchema } from './money.ts';
 import { GARMENT_CATEGORIES } from './products.ts';
 
-/** "More like this" under a look goes on for at most this many looks. */
+/**
+ * "More like this" under a look goes on for at most this many looks (10
+ * pages: practically endless on a phone, and half the storage of a For You
+ * list, since every logged-in look page saves one).
+ */
 export const MAX_SIMILAR_LOOKS = 200;
 
 const photoSchema = feedCardSchema.shape.photo;
@@ -85,3 +89,51 @@ export type LookDetail = z.infer<typeof lookDetailSchema>;
 /** `PUT` / `DELETE /v1/follows/:profileId`. */
 export const followStateSchema = z.object({ profileId: z.uuid(), following: z.boolean() });
 export type FollowState = z.infer<typeof followStateSchema>;
+
+/**
+ * "Similar pieces" for a piece of a look: `nearest` first, or `cheaper`
+ * (lowest price first among the nearest few; prices in the piece's own
+ * currency come first, other currencies after, never mixed).
+ */
+export const SIMILAR_PIECE_SORTS = ['nearest', 'cheaper'] as const;
+export type SimilarPieceSort = (typeof SIMILAR_PIECE_SORTS)[number];
+
+/** `GET /v1/look-items/:itemId/similar?sort=&cursor=`. */
+export const similarPiecesQuerySchema = z.object({
+  sort: z.enum(SIMILAR_PIECE_SORTS).default('nearest'),
+  cursor: z.string().min(1).max(300).optional(),
+});
+export type SimilarPiecesQuery = z.infer<typeof similarPiecesQuerySchema>;
+
+/**
+ * A product that looks like the piece, with one of its shop links: the one
+ * on look `lookId` (a Shop tap is credited to that look, whose poster's
+ * affiliate tags `url` keeps).
+ */
+export const similarPieceSchema = lookItemSchema
+  .pick({
+    offerId: true,
+    productId: true,
+    brand: true,
+    name: true,
+    category: true,
+    price: true,
+    stock: true,
+    priceCheckedAt: true,
+    url: true,
+    shop: true,
+  })
+  .extend({
+    /** Always our ready copy: products without one aren't shown. */
+    image: photoSchema,
+    /** The look this shop link is a piece of. */
+    lookId: z.uuid(),
+  });
+export type SimilarPiece = z.infer<typeof similarPieceSchema>;
+
+/** A page of similar pieces (20). `nextCursor` is null at the end. */
+export const similarPiecesPageSchema = z.object({
+  items: z.array(similarPieceSchema),
+  nextCursor: z.string().nullable(),
+});
+export type SimilarPiecesPage = z.infer<typeof similarPiecesPageSchema>;

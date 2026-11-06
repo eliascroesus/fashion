@@ -24,12 +24,14 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { lookDetail } from '../src/looks.ts';
 import { listBoards } from '../src/saves.ts';
 import {
+  addLookalikeCoats,
   addShopTestLook,
   pickTestLook,
   removeShopTestPieces,
 } from '../scripts/seed/shop-test-look.ts';
 import { createAuthor, createLogin, createLook } from './feed-fixtures.ts';
 import { buildTestApp, createTestContext, type TestContext } from './helpers.ts';
+import { angled, vectorText } from './vectors.ts';
 
 let ctx: TestContext;
 let app: FastifyInstance;
@@ -475,5 +477,37 @@ describe('the shop test look (pnpm shop:test-look)', () => {
       .from(clicks)
       .where(sql`${clicks.lookId} = ${look}`);
     expect(left).toEqual([{ offerId: realOffer }]);
+  });
+});
+
+describe('look-alike test coats (pnpm shop:test-look, Step 3.8)', () => {
+  it('fingerprint the test coat and put look-alike coats on the nearest looks; removed with the rest', async () => {
+    const look = await createLook(ctx.db, { authorId: author });
+    const near = await createLook(ctx.db, { authorId: author });
+    const setCover = (lookId: string, vector: number[]) =>
+      ctx.db.execute(sql`
+        UPDATE media SET embedding = ${vectorText(vector)}::extensions.halfvec,
+                         embedding_model = 'test-model'
+         WHERE id = (SELECT media_id FROM look_media WHERE look_id = ${lookId} AND position = 0)`);
+    await addShopTestLook(ctx.db, look);
+    // No fingerprints yet: nothing to compare, nothing added.
+    expect(await addLookalikeCoats(ctx.db, look)).toBe(0);
+
+    await setCover(look, angled(0, 40, 41));
+    await setCover(near, angled(10, 40, 41));
+    const added = await addLookalikeCoats(ctx.db, look);
+    expect(added).toBeGreaterThanOrEqual(1);
+    const nearDetail = await detailOf(near);
+    expect(nearDetail.items.map((i) => [i.name, i.category])).toContainEqual([
+      'Test look-alike coat 1',
+      'coat',
+    ]);
+    const { rows } = await ctx.db.execute<{ fingerprinted: boolean }>(sql`
+      SELECT embedding IS NOT NULL AS fingerprinted FROM products
+       WHERE brand = 'Outfitly test' AND name = 'Test coat'`);
+    expect(rows).toEqual([{ fingerprinted: true }]);
+
+    expect(await removeShopTestPieces(ctx.db)).toBe(5 + added);
+    expect((await detailOf(near)).items).toEqual([]);
   });
 });

@@ -120,3 +120,56 @@ export async function removeShopTestPieces(db: Db): Promise<number> {
     return items.rowCount ?? 0;
   });
 }
+
+/** Look-alike test coats `addLookalikeCoats` puts on other looks, priced apart for "Cheaper". */
+const LOOKALIKE_PRICES = [99900, 59900, 149900, 79900] as const;
+
+/**
+ * For trying "similar pieces" (Step 3.8) after `addShopTestLook`: the test
+ * coat gets the look's cover fingerprint as its shop photo's, and a test coat
+ * goes on each of the looks whose covers look most like it (that cover as
+ * its photo and fingerprint). Needs fingerprinted covers (`pnpm
+ * ai:fingerprint`); without them nothing is added. Returns how many coats.
+ */
+export async function addLookalikeCoats(db: Db, lookId: string): Promise<number> {
+  return db.transaction(async (tx) => {
+    const cover = sql`(SELECT m.embedding FROM look_media lm JOIN media m ON m.id = lm.media_id
+                        WHERE lm.look_id = ${lookId} AND lm.position = 0)`;
+    const { rows: coat } = await tx.execute<{ id: string }>(sql`
+      UPDATE products p
+         SET embedding = ${cover},
+             embedding_model = (SELECT m.embedding_model FROM look_media lm
+                                  JOIN media m ON m.id = lm.media_id
+                                 WHERE lm.look_id = ${lookId} AND lm.position = 0)
+       WHERE p.brand = ${TEST_BRAND} AND p.name = 'Test coat' AND ${cover} IS NOT NULL
+         AND EXISTS (SELECT 1 FROM offers o JOIN look_items li ON li.offer_id = o.id
+                      WHERE o.product_id = p.id AND li.look_id = ${lookId})
+      RETURNING p.id`);
+    if (coat.length === 0) return 0;
+    const { rows: near } = await tx.execute<{ look_id: string; media_id: string }>(sql`
+      SELECT lm.look_id, m.id AS media_id
+        FROM media m JOIN look_media lm ON lm.media_id = m.id AND lm.position = 0
+        JOIN looks l ON l.id = lm.look_id
+       WHERE m.embedding IS NOT NULL AND m.status = 'ready' AND l.id <> ${lookId}
+         AND l.status = 'published' AND l.deleted_at IS NULL
+       ORDER BY m.embedding OPERATOR(extensions.<=>) ${cover}, l.id
+       LIMIT ${LOOKALIKE_PRICES.length}`);
+    for (const [n, other] of near.entries()) {
+      const link = `${TEST_LINK}lookalike-${String(n + 1)}`;
+      await tx.execute(sql`
+        WITH product AS (
+          INSERT INTO products (name, brand, category, image_media_id, embedding, embedding_model)
+          SELECT ${`Test look-alike coat ${String(n + 1)}`}, ${TEST_BRAND}, 'coat', m.id,
+                 m.embedding, m.embedding_model
+            FROM media m WHERE m.id = ${other.media_id} RETURNING id),
+        offer AS (
+          INSERT INTO offers (product_id, url, page_url, price_minor, currency, stock, last_checked_at)
+          SELECT id, ${`${link}?aff=test`}, ${link}, ${LOOKALIKE_PRICES[n] ?? null}::int, 'SEK',
+                 'in_stock', now()
+            FROM product RETURNING id)
+        INSERT INTO look_items (look_id, offer_id, status)
+        SELECT ${other.look_id}, id, 'verified' FROM offer`);
+    }
+    return near.length;
+  });
+}

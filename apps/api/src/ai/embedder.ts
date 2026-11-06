@@ -23,6 +23,11 @@ const answerShape = z.object({
   embeddings: z.array(z.array(z.number()).length(FINGERPRINT_DIMENSIONS)),
 });
 
+const textAnswerShape = z.object({
+  model: z.string().min(1),
+  embedding: z.array(z.number()).length(FINGERPRINT_DIMENSIONS),
+});
+
 export interface EmbedderOptions {
   url: string;
   secret: string;
@@ -45,20 +50,18 @@ export class EmbedderClient {
     this.#fetch = options.fetch ?? fetch;
   }
 
-  async embedImage(
-    imageUrl: string,
-    boxes: readonly Box[],
-  ): Promise<{ model: string; embeddings: number[][] }> {
+  /** POSTs `body` to `path`; throws `EmbedderError` unless the answer is 2xx. */
+  async #post(path: string, body: object, timeoutMs: number): Promise<unknown> {
     let response: Response;
     try {
-      response = await this.#fetch(new URL('/embed-image', this.#options.url), {
+      response = await this.#fetch(new URL(path, this.#options.url), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${this.#options.secret}`,
         },
-        body: JSON.stringify({ url: imageUrl, boxes }),
-        signal: AbortSignal.timeout(this.#options.timeoutMs ?? 45_000),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
       const reason = error instanceof Error ? error.name : 'unknown';
@@ -74,8 +77,38 @@ export class EmbedderClient {
         retryable,
       );
     }
-    const answer = answerShape.safeParse(await response.json());
+    try {
+      return await response.json();
+    } catch (error) {
+      // Cut off while reading (the time ran out) is worth another try; a broken answer isn't.
+      const cutOff = error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name);
+      throw new EmbedderError('Fingerprint service gave an unexpected answer.', 200, cutOff);
+    }
+  }
+
+  async embedImage(
+    imageUrl: string,
+    boxes: readonly Box[],
+  ): Promise<{ model: string; embeddings: number[][] }> {
+    const body = await this.#post(
+      '/embed-image',
+      { url: imageUrl, boxes },
+      this.#options.timeoutMs ?? 45_000,
+    );
+    const answer = answerShape.safeParse(body);
     if (!answer.success || answer.data.embeddings.length !== boxes.length) {
+      throw new EmbedderError('Fingerprint service gave an unexpected answer.', 200, false);
+    }
+    return answer.data;
+  }
+
+  /** Words (1–200 characters) in, one fingerprint out, comparable with photos' ones. */
+  async embedText(
+    text: string,
+    timeoutMs: number,
+  ): Promise<{ model: string; embedding: number[] }> {
+    const answer = textAnswerShape.safeParse(await this.#post('/embed-text', { text }, timeoutMs));
+    if (!answer.success) {
       throw new EmbedderError('Fingerprint service gave an unexpected answer.', 200, false);
     }
     return answer.data;

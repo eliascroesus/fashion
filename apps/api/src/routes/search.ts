@@ -6,13 +6,15 @@ import {
   suggestQuerySchema,
 } from '@outfitly/shared';
 import type { FastifyInstance } from 'fastify';
-import type { FeedDeps } from '../feed/cards.ts';
 import { findActiveProfile } from '../profiles.ts';
-import { popularTags, searchLooks, suggest } from '../search.ts';
+import { popularTags, type SearchDeps, searchLooks, suggest } from '../search.ts';
 import type { ZodTypeProvider } from '../zod.ts';
 
-/** Search (public, like For You): results, suggestions while typing, popular tags. */
-export function searchRoutes(app: FastifyInstance, deps: FeedDeps): void {
+/**
+ * Search (public, like For You): results (by words and, when the fingerprint
+ * service answers, by how the words look), suggestions while typing, popular tags.
+ */
+export function searchRoutes(app: FastifyInstance, deps: SearchDeps): void {
   const routes = app.withTypeProvider<ZodTypeProvider>();
 
   routes.get(

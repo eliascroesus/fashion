@@ -90,9 +90,21 @@
     "shopFailed": "Det gick inte att öppna butiken. Försök igen.",
     "tickLabel": "Räkna med {{name}} i summan",
     "dotLabel": "Visa {{name}}",
+    "similarPieces": "Liknande plagg",
+    "similarPiecesLabel": "Plagg som liknar {{name}}",
     "moreLikeThis": "Mer som det här",
     "noSimilar": "Inga liknande looks än.",
     "loadFailed": "Det gick inte att ladda resten av looken."
+  },
+  "similar": {
+    "title": "Liknande plagg",
+    "nearest": "Mest lika",
+    "cheaper": "Billigare",
+    "sortLabel": "Sortera liknande plagg",
+    "empty": "Inga liknande plagg än.",
+    "loadFailed": "Kunde inte ladda liknande plagg.",
+    "cheaperNote": "Priser i {{currency}} först, lägst först. Andra valutor efter.",
+    "pieceLabel": "{{name}}, {{price}}"
   },
   "errors": {
     "generic": "Något gick fel. Försök igen.",

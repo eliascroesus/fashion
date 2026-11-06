@@ -42,6 +42,8 @@ interface ItemRowProps {
   onTick: (id: string) => void;
   /** Opens the piece's shop (logs the click first); without it the button shows but can't be pressed. */
   onShop: ((item: LookItem) => void) | undefined;
+  /** Opens "similar pieces" for it; without it there's no link. */
+  onSimilar: ((item: LookItem) => void) | undefined;
   onLayout: (id: string, event: LayoutChangeEvent) => void;
 }
 
@@ -53,6 +55,7 @@ function ItemRow({
   highlighted,
   onTick,
   onShop,
+  onSimilar,
   onLayout,
 }: ItemRowProps) {
   const { t } = useTranslation();
@@ -126,6 +129,23 @@ function ItemRow({
         <ThemedText variant="caption" tone="muted" numberOfLines={1}>
           {[checked, item.shop].filter(Boolean).join(SEPARATOR)}
         </ThemedText>
+        {onSimilar ? (
+          <Pressable
+            testID="shop-item-similar"
+            accessibilityRole="button"
+            accessibilityLabel={t('look.similarPiecesLabel', { name: title })}
+            hitSlop={{ top: spacing.xs, bottom: spacing.sm, left: spacing.sm, right: spacing.sm }}
+            onPress={() => {
+              onSimilar(item);
+            }}
+            style={(state) => [styles.similar, { opacity: state.pressed ? 0.6 : 1 }]}
+          >
+            <Ionicons name="albums-outline" size={14} color={colors.accent} />
+            <ThemedText variant="caption" style={[styles.similarText, { color: colors.accent }]}>
+              {t('look.similarPieces')}
+            </ThemedText>
+          </Pressable>
+        ) : null}
       </View>
       <View style={styles.side}>
         <Pressable
@@ -189,6 +209,8 @@ interface ShopTheLookProps {
   /** The piece whose dot was just tapped, shown highlighted for a moment. */
   highlighted: string | null;
   onShop?: (item: LookItem) => void;
+  /** Opens "similar pieces" for a piece (a link under each one). */
+  onSimilar?: (item: LookItem) => void;
   /** Where each piece sits inside this list (for scrolling to it). */
   onItemLayout: (id: string, y: number) => void;
 }
@@ -204,6 +226,7 @@ export function ShopTheLook({
   onTick,
   highlighted,
   onShop,
+  onSimilar,
   onItemLayout,
 }: ShopTheLookProps) {
   const { t } = useTranslation();
@@ -238,6 +261,7 @@ export function ShopTheLook({
           highlighted={highlighted === item.id}
           onTick={onTick}
           onShop={onShop}
+          onSimilar={onSimilar}
           onLayout={(id, event) => {
             onItemLayout(id, event.nativeEvent.layout.y);
           }}
@@ -354,6 +378,14 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   shopText: { fontWeight: fontWeights.semibold },
+  similar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xxs,
+    alignSelf: 'flex-start',
+    marginTop: spacing.xxs,
+  },
+  similarText: { fontWeight: fontWeights.semibold },
   soldOut: { opacity: SOLD_OUT_OPACITY },
   selected: {
     position: 'absolute',

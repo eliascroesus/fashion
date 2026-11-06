@@ -1,7 +1,13 @@
 import { z } from 'zod';
 
 /** Where in the app an event happened (`events.source`). */
-export const EVENT_SOURCES = ['feed_for_you', 'feed_following', 'search', 'profile'] as const;
+export const EVENT_SOURCES = [
+  'feed_for_you',
+  'feed_following',
+  'search',
+  'profile',
+  'more_like_this',
+] as const;
 export type EventSource = (typeof EVENT_SOURCES)[number];
 
 export const CLIENT_PLATFORMS = ['ios', 'android', 'web'] as const;
@@ -36,6 +42,16 @@ export const eventBatchSchema = z.object({
   events: z.array(clientEventSchema).min(1).max(MAX_EVENT_BATCH),
 });
 export type EventBatch = z.infer<typeof eventBatchSchema>;
+
+/**
+ * What the server accepts: the same batch, but each event is checked on its
+ * own, so one it can't read (e.g. a newer app's source sent to an older
+ * server) is skipped instead of refusing (and the app then dropping) the
+ * whole batch.
+ */
+export const eventBatchInputSchema = eventBatchSchema.extend({
+  events: z.array(z.unknown()).min(1).max(MAX_EVENT_BATCH),
+});
 
 /** How many of the batch's events were new and stored (repeats and unknown looks are skipped). */
 export const eventBatchResultSchema = z.object({ accepted: z.number().int().nonnegative() });

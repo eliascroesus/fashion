@@ -120,6 +120,20 @@
       "when": 1793845267865,
       "tag": "0016_link_check_review",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793853183995,
+      "tag": "0017_look_lists",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793856646300,
+      "tag": "0018_look_lists_profile_index",
+      "breakpoints": true
     }
   ]
 }
