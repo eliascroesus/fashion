@@ -13,7 +13,17 @@ const COLOR_PROPS =
 const TEXT_PROPS = '^(?:accessibilityLabel|accessibilityHint|placeholder|title|label|alt)$';
 
 export default defineConfig(
-  globalIgnores(['**/dist/', '**/build/', '**/.next/', '**/.expo/', '**/.turbo/', '**/coverage/']),
+  globalIgnores([
+    '**/dist/',
+    '**/build/',
+    '**/.next/',
+    '**/.expo/',
+    '**/.turbo/',
+    '**/coverage/',
+    // Python's packages (torch ships some JavaScript) and the model files.
+    '**/.venv/',
+    'services/embedder/models/',
+  ]),
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   {

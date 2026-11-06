@@ -3,9 +3,11 @@
 Claude Code updates this file at the end of every session.
 
 ## Current step
-**Phase 3 — Products and AI, in progress.** Step 3.1 (Product tables) is done: PR #16, waiting for Elias to merge.
+**Phase 3 — Products and AI, in progress.** Steps 3.1 and 3.2 are done.
+- Step 3.1 (Product tables): PR #16, waiting for Elias to merge.
+- Step 3.2 (The fingerprint service): PR #17, stacked on #16 (merge #16 first). Claude isn't allowed to merge in this setup (see Waiting on Elias).
 
-Next: Step 3.2 — The fingerprint service.
+Next: Step 3.3 — Garment spotting (needs the Gemini API key).
 
 - Phase 2 passed its gate on 2026-11-04 (PRs #8–#15). "Speed numbers recorded" PASS; "It feels like Pinterest" signed off by Elias. "Both phones" was done in the iPhone simulator only: the real-phone checks (and Step 2.3's mid-range Android check) wait for the hardware. 125 real outfits accepted instead of 300 for now.
 - Phase 1 gate: everything passed except "app on both phones with login", for the same reason.
@@ -127,9 +129,47 @@ Next: Step 3.2 — The fingerprint service.
   - **Tests:** `packages/db/test/products.test.ts`: the nearest products and garments come back in the right order by cosine distance, and `EXPLAIN` shows the HNSW index answering; both columns are `halfvec(768)` and another length is refused; every rule above (incl. the 2 KB link cap). The migration test covers the six tables (RLS on, no client access).
   - **Review (step-reviewer):** passed, nothing blocking. Acted on in migration 0011, while the tables were still empty: fingerprints half-size (`halfvec`: half the disk and index memory, the same ranking in practice); indexes on `look_items.media_id` and `products.image_media_id` so deleting photos (e.g. `seed:fake-looks --remove`) doesn't read those tables in full; offer links capped at 2 KB by name (a 3,000-character link failed with the unique index's size error, which would have been a 500). 0010 was already on `outfitly-dev`, so the changes are a new migration rather than an edit. The rest is under Later.
   - **Live (`outfitly-dev`, shared with staging):** both migrations applied (12 in total); the columns are `halfvec(768)` and all four new indexes are there; live lock test 23/23; three test products inserted and searched in a transaction that was rolled back: nearest first (distances 0.006 / 0.293 / 1.000) through `Index Scan using products_embedding_idx` (pgvector 0.8.2), none left afterwards. Staging redeployed (release step: nothing new to apply), `/v1/health` 200 and For You serves the looks as before.
+- Step 3.2 — The fingerprint service (PR #17) — **done, live on Fly staging (2026-11-04).**
+  - **What it is:** `services/embedder`, a small Python (3.12, FastAPI) server that turns a photo, parts of a photo, or words into fingerprints: 768 numbers of length 1 from Marqo-FashionSigLIP (Apache-2.0), on CPU. Live at https://outfitly-embedder-staging.fly.dev (Stockholm).
+    - `POST /embed-image` takes `{ url, boxes? }` and gives one fingerprint per box (up to 20, in fractions like `garments`), or one for the whole photo. Several boxes per call, so Step 3.3 downloads each photo once.
+    - `POST /embed-text` takes `{ text }` (1–200 characters).
+    - `GET /health` is the only route without the secret.
+  - **Model:** pinned to commit `c56244c` and built into the server image (1.1 GB), with downloads turned off when it runs. Its own tokenizer files give exactly the same tokens as the `timm/ViT-B-16-SigLIP` tokenizer the model card's loading path uses (checked on 7 texts, Swedish, emoji and over-long ones included), so only one repo is pinned. Libraries at exact versions with `uv` (`uv.lock`): torch 2.15.0 (CPU-only build on Linux), open-clip-torch 3.3.0.
+  - **Safety:**
+    - A shared secret (`Authorization: Bearer`, at least 32 characters, compared in constant time, checked before the request is read).
+    - Photos only over https from our R2 photo address, and only if every address it resolves to is public: private networks, localhost, cloud metadata, carrier-grade NAT, Fly's internal network and IPv4 hidden in IPv6 are refused.
+    - No redirects; 3 s to connect, 10 s in total, 15 MB, JPEG/PNG/WebP only, 25 megapixels at most (checked before decoding), at most two pictures decoded at once.
+    - Errors use the API's format and codes (400 `validation_failed` with dotted field paths, 403, 404, 413, 415, 502 `service_unavailable` when a photo can't be downloaded, 500), plus an `x-request-id` header.
+    - Sentry (the API's project, tagged `embedder`) gets server errors only: no headers, bodies, links, variable values or breadcrumbs. The server runs as a non-root user.
+  - **Fly:** `outfitly-embedder-staging`, performance-1x with 2 GB, `auto_stop_machines = "suspend"`: it sleeps about 2 minutes after the last request and wakes with the model still in memory. A deploy or a full stop means loading the model again (20 s). Secrets `EMBEDDER_SECRET` and `SENTRY_DSN` were piped in from `.env`, never shown. The same secret plus `EMBEDDER_URL` are in the root `.env` for the API (Step 3.3).
+  - **Machine choice, measured:** shared-cpu-2x 2 GB was faster in short bursts (model 0.39 s per picture) and passed 100 photos in a row. But the very next run, 30 photos with 5 boxes each, had used up its CPU allowance: 22 s per photo instead of about 3 s (Fly throttles shared CPUs to about 6% of a core). performance-1x (one dedicated core) takes 0.64 s per picture, steadily.
+  - **Tests:** 87 with `pnpm embedder:test`.
+    - 81 fast ones with a fake model: the secret, every input check, each refused address and photo above, crop maths, see-through parts becoming white.
+    - 1 Sentry test: a real crash report, captured, holds neither the secret nor the photo link (it fails if the stack's variable values are switched back on).
+    - 5 with the real model: 768 numbers of length 1; the same photo gives the same fingerprint; a red picture is nearer "a red dress" than "a blue dress" (and the reverse); the left-half crop of a half-red, half-blue picture matches the red picture; text fingerprints.
+    - CI: a new `Embedder` workflow, run only when `services/embedder` changes. It runs ruff and the tests including the real model (the model files are cached), and fails if those are skipped. It also builds the image and checks: health, 401 without the secret, a 768-number text fingerprint, not running as root.
+  - **Also:** ESLint and Prettier skip `**/.venv/` (torch ships JavaScript files) and the model files.
+  - **Review (step-reviewer):** two blocking issues, both fixed and redeployed.
+    - The secret reached Sentry: a crash report carried the values of the stack's variables (the secret, the request headers), 36 copies in one test event. Now the stack's variables, request data and breadcrumbs are off, the settings never print the secret, and `tests/test_sentry.py` proves it.
+    - The CI workflow named `astral-sh/setup-uv@v10`, a tag that doesn't exist (that action stopped publishing major-version tags); it's now pinned to v10.3.3's commit.
+    - Also fixed:
+      - a link with a newline or tab gave a 500 (now 400);
+      - error codes and statuses now match the API's, for Step 3.3 to read;
+      - three old IPv6 address forms counted as public: now only `2000::/3` does;
+      - the pixel limit is lower (25 MP) and decoding is limited to two at once (memory);
+      - the tokenizer runs inside the model's lock;
+      - text or `true` where a box needs a number is refused;
+      - refusals carry the request id header;
+      - the model's image layer comes first (code changes don't re-send 813 MB);
+      - `.env*` is kept out of the image.
+    - Rechecked live after the redeploy: the 400 / 403 / 502 / 401 answers, and 30 photos at p50 718 ms, p95 790 ms (server's own time), p95 886 ms over HTTP.
+    - The rest is under Later.
+
 
 ## Decisions made
 <!-- - YYYY-MM-DD — decision — why -->
+- 2026-11-04 — Fingerprint service on Fly performance-1x with 2 GB, suspended when idle: a dedicated core is never throttled (shared CPUs were ~10× slower once their allowance ran out, which bulk work like Step 3.3's backlog would hit), it's billed only while awake, and 2 GB is the most a machine can have and still suspend (wakes in ~1 s with the model in memory, instead of ~20 s). Production may split it (a cheap always-on machine for search words, this one for photos): decide in Phase 5 with real traffic.
+- 2026-11-04 — Photos reach the fingerprint service as links to our own R2 photos only (an allow-list, plus a public-address check): shop images get copied into our photo pipeline first (Step 3.4), which also strips their metadata. `/embed-image` takes several boxes so a photo is downloaded once for all its garments.
 - 2026-11-04 — Garment categories (Step 3.1, OK'd by Elias): 28, in the order a look's item list reads: coat, jacket, blazer, knitwear, sweatshirt, shirt, t_shirt, top, dress, jumpsuit, trousers, jeans, skirt, shorts, swimwear, sneakers, boots, heels, flats, sandals, bag, hat, sunglasses, scarf, jewelry, watch, belt, accessory. Permanent ids (database enum): add new ones, never rename. "Similar pieces" (Step 3.8) compares within one category.
 - 2026-11-04 — Fingerprints are 768 numbers (from the model's config, not guessed) compared by cosine distance, stored as `halfvec(768)` (half-precision: half the disk and HNSW memory, running cost; cosine ranking is the same in practice) with HNSW indexes. Migrations name `extensions.halfvec` and `extensions.halfvec_cosine_ops` with their schema.
 - 2026-11-04 — An offer keeps two links: the poster's link exactly as given (affiliate tags kept, what Shop opens) and the shop's product page (what price and stock checks read), so a daily check never registers as a click on someone's affiliate link. Prices are whole öre/cents, never decimals.
@@ -221,6 +261,7 @@ Next: Step 3.2 — The fingerprint service.
 - 2026-11-02 — Elias asked Claude to work through Phase 1 and Phase 2 overnight without stopping. Each step still gets its own branch + PR, stacked on the previous step's branch; nothing is merged into `main` without Elias.
 
 ## Waiting on Elias
+- **Merge PR #16 (Step 3.1), then PR #17 (Step 3.2).** Both have green checks. In this session Claude's merge was blocked by Claude Code's safety check ("merge without review"). Either merge them on GitHub (each PR → "Merge pull request" → "Confirm merge"), or allow Claude to: add a permission rule for `gh api -X PUT repos/eliascroesus/fashion/pulls/*/merge` in Claude Code's settings.
 - **For Phase 3 (BUILD_PLAN "You provide"):**
   - A Gemini API key from Google AI Studio, with billing on: needed for Step 3.3 (garment spotting).
   - 30 real product links from Nordic shops you want to support (Zalando, H&M, Boozt, NA-KD, Nelly, ASOS…): needed for Step 3.4.
@@ -271,6 +312,14 @@ Next: Step 3.2 — The fingerprint service.
 - `pnpm audit`: one moderate advisory in minimatch, pulled in only by ESLint (dev tool reading our own config) — not exploitable here; wait for upstream fix.
 
 ## Measured numbers
+- Fingerprint service (Step 3.2, staging in Stockholm, performance-1x 2 GB, real photos from the staging feed at 1080 px, timed from the Mac, 2026-11-04):
+  - Whole photo, 100 in a row: server's own time (download + model) p50 754 ms, p95 837 ms; over HTTP p50 798 ms, p95 902 ms. Model p50 638 ms, download + decode p50 118 ms. First 20 vs last 20: 740 / 764 ms, so no throttling. **Target "under 1.5 s once awake" holds.**
+  - Photo with 5 boxes (30): p50 3.1 s (about 0.6 s per picture).
+  - Waking from suspend (after ~2 minutes idle): the first call, a text fingerprint, took 1.1 s in total; the photos right after it p50 748 ms, p95 1.2 s over HTTP.
+  - Full start after a deploy: model loaded in 20 s (53 s on shared-cpu-2x).
+  - Memory: 1.35 GB in use, peak 1.82 GB while loading, of 2 GB.
+  - Compared with shared-cpu-2x 2 GB: model 0.39 s per picture while it had CPU allowance (whole photo p95 0.70–0.76 s, 100 in a row); after that, a photo with 5 boxes took 22 s.
+  - On the Mac (M4 Max): model 45 ms per photo, text 26 ms.
 - Search (Step 2.7, staging, logged out, over HTTP from the Mac, `pnpm search:speed`: a suggestion request per typed letter, then 3 pages of results; network ≈ 75 ms of each, 2026-11-04):
   - 125 real looks: suggestions p50 35 ms, p95 70 ms (280 requests); search page 1 p50 41 ms, p95 69 ms; next pages p95 52 ms.
   - With 10,000 fake looks added (then removed), broad searches matching thousands ("trousers", "black coat", "sneakers"): suggestions p50 34 ms, p95 59 ms (225 requests); search page 1 p50 70 ms, p95 91 ms; next pages p50 71 ms, p95 99 ms. Target "suggestions in under 300 ms" holds.
@@ -294,7 +343,11 @@ Next: Step 3.2 — The fingerprint service.
 - AI cost per 1,000 photos: —
 - Link-resolve success rate: —
 - Popularity recompute on 10,000 looks (dev DB, from the Mac): 0.8 s first run (every score written), 39 ms when nothing changed (2026-11-03)
-- Monthly running cost estimate: —
+- Monthly running cost estimate (fingerprint service, from Fly's prices × 1.038 for Stockholm; 2026-11-04):
+  - Staging: asleep almost all the time. Stored files (~1.1 GB at $0.15/GB) ≈ $0.20–0.40, plus $0.0475 per hour awake (≈ $0.25 for 5 hours of testing). **≈ $0.50–1/month.**
+  - Fingerprinting itself: a photo with 5 garments ≈ 3.8 s → **≈ $0.05 per 1,000 photos**.
+  - Production, photos only: awake only around uploads, so a few dollars a month at 100s of photos a day; at most **$34.27/month** if uploads keep it awake all day (performance-1x 2 GB always on).
+  - Production with search by words (Step 3.8) on every search: effectively always on: $34.27/month on performance-1x, or ≈ $13.90 on shared-cpu-2x 2 GB (text fingerprints are light). Decide in Phase 5.
 - 10,000 fake looks on staging, from the Mac: 15.6 s including making and uploading 30 placeholder pictures; re-run 3.8 s (2026-11-02)
 - Seed loader, 4 photos incl. 12 MP HEIC → R2 + Supabase, from the Mac: 2.5 s; re-run 0.6 s (2026-11-02)
 - CI run time (typecheck + lint + test): ~20 s (Step 1.1)
@@ -361,4 +414,18 @@ Next: Step 3.2 — The fingerprint service.
 - Delete leftover guest logins (anonymous auth users with no profile) with a scheduled job (needs the Supabase admin key).
 - Clean up abandoned uploads: `pending` media rows and originals older than a day.
 - Measure photo processing on the real Fly machine (target < 10 s; 1.7 s on GitHub's runner, 0.6 s on a Mac).
+- Fingerprint service:
+  - Memory peaks at 1.82 of 2 GB while the model loads (the weights are briefly held twice). If a start ever runs out of memory: set `MALLOC_ARENA_MAX=2`, or load the weights memory-mapped.
+  - Faster or cheaper later: the model repo also has ONNX versions (int8 / fp16) that could run 2–3× faster on CPU; measure against the same red/blue and real-photo checks before switching (a switch changes the fingerprints, so everything stored must be redone).
+  - When the domain exists, add `img.<domain>` to `EMBEDDER_IMAGE_HOSTS` (fly.toml) next to the r2.dev address.
+  - Step 3.3: give the API `EMBEDDER_URL` and `EMBEDDER_SECRET` as Fly secrets, allow ~25 s for a call that hits a full start (after a deploy), and send a photo's whole-photo box plus its garments in one call.
+  - Consider reaching it only over Fly's private network (Flycast) instead of the public address, once only the API calls it.
+  - From the Step 3.2 review, for Step 3.3:
+    - Send `{0, 0, 1, 1}` as an extra box to get the whole-photo fingerprint in the same call.
+    - Convert Gemini's 0–1000 `[ymin, xmin, ymax, xmax]` boxes and drop empty ones first: one bad box refuses the whole request.
+    - Allow 30–45 s per call (20 boxes ≈ 13 s, plus up to 20 s for a full start after a deploy), and retry on 502 / 503.
+    - Store the returned `model` with each fingerprint (the 3.1 tables have no column for it yet), so a model change can be found and redone.
+  - CI's image check downloads torch and the model on every run that touches the service (~5 min): add a Docker build cache (buildx + GitHub Actions cache) if that gets slow. It also doesn't cut the network off, so "works offline" rests on `HF_HUB_OFFLINE=1` (which makes any download fail).
+  - Pin `python:3.12-slim` to a digest (with the action-pinning work above).
+  - Accept the API's request id in a header and log it, to follow one photo across both services.
 - Pin GitHub Actions to commit SHAs (with Dependabot to keep them current); consider moving to `pnpm/setup` and pnpm 12.

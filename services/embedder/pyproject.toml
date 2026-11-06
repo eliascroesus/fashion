@@ -1,0 +1,60 @@
+[project]
+name = "outfitly-embedder"
+version = "0.1.0"
+description = "Fashion fingerprints: an image or words in, 768 numbers out (Marqo-FashionSigLIP on CPU)."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi>=0.120",
+  "uvicorn>=0.38",
+  "open-clip-torch==3.3.0",
+  "torch==2.15.0",
+  "torchvision",
+  "timm",
+  "transformers",
+  "huggingface-hub",
+  "safetensors",
+  "pillow",
+  "httpx",
+  "sentry-sdk",
+]
+
+[build-system]
+requires = ["uv_build>=0.13,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "embedder"
+
+[dependency-groups]
+dev = ["pytest", "ruff"]
+
+[tool.uv]
+# Only the platforms we run on: the Mac for development, Linux for CI and Fly.
+environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
+
+# On Linux, torch comes from PyTorch's CPU-only index: the default wheels pull
+# in ~2 GB of graphics-card (CUDA) libraries we never use.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["model: needs the real model files in MODEL_DIR (python -m embedder.download_model)"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+# Prose uses en dashes and × on purpose, like the rest of the project.
+ignore = ["RUF001", "RUF002", "RUF003"]
+# assert is how pytest checks things.
+per-file-ignores = { "tests/**" = ["S101"] }

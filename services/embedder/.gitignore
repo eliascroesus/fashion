@@ -1,0 +1,4 @@
+# Model files from python -m embedder.download_model
+models/
+.pytest_cache/
+.ruff_cache/

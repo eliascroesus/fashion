@@ -1,0 +1,42 @@
+# Staging fingerprint service in Stockholm. Deploy from the repo root:
+#   fly deploy services/embedder --ha=false
+# Secrets (set once with `fly secrets import -a outfitly-embedder-staging`, from stdin):
+#   EMBEDDER_SECRET (also in the root .env for the API and the speed script), SENTRY_DSN
+app = "outfitly-embedder-staging"
+primary_region = "arn"
+kill_timeout = "10s"
+
+[env]
+  SENTRY_ENVIRONMENT = "staging"
+  # Our photo CDN (R2 public dev address until there's a domain; see BEFORE_LAUNCH.md).
+  EMBEDDER_IMAGE_HOSTS = "pub-1514e98ed2f342bab500fd03c2ab3052.r2.dev"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Sleeps when idle and wakes in a few hundred ms with the model still in memory.
+  # Suspend needs a machine with at most 2 GB (Fly docs).
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  # One inference at a time per machine; a few more can wait or download meanwhile.
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 4
+    hard_limit = 8
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+# One dedicated core: about 0.65 s of model time per picture, never throttled. A
+# shared-cpu-2x was faster in short bursts (0.39 s) but, once its burst allowance ran
+# out, ~10× slower (a photo with 5 boxes: 22 s instead of 3 s). Step 3.2 numbers in
+# docs/PROGRESS.md. 2 GB is the most a machine can have and still suspend.
+[[vm]]
+  size = "performance-1x"
+  memory = "2gb"
