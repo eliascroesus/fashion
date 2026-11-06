@@ -26,14 +26,15 @@ export const safetyFlag = pgEnum('safety_flag', SAFETY_FLAGS);
  * A look's photos are read by the AI once (Step 3.3): its garments are in
  * `garments`, its sentence, search words and safety flags here, and the whole
  * photo's fingerprint in `embedding`.
+ * A shop's product photo, copied in when a link is resolved (Step 3.4), has no
+ * owner (it belongs to the product, not to whoever pasted the link) and keeps
+ * the shop's link in `source_url`, so the same photo isn't copied twice.
  */
 export const media = pgTable(
   'media',
   {
     ...baseColumns(),
-    ownerProfileId: uuid('owner_profile_id')
-      .notNull()
-      .references((): AnyPgColumn => profiles.id),
+    ownerProfileId: uuid('owner_profile_id').references((): AnyPgColumn => profiles.id),
     status: mediaStatus('status').notNull().default('pending'),
     originalKey: text('original_key').notNull(),
     contentType: text('content_type'),
@@ -46,6 +47,7 @@ export const media = pgTable(
     thumbhash: text('thumbhash'),
     dominantColor: text('dominant_color'),
     error: text('error'),
+    sourceUrl: text('source_url'),
     spotStatus: mediaSpotStatus('spot_status'),
     spottedAt: timestamp('spotted_at', { withTimezone: true }),
     aiDescription: text('ai_description'),
@@ -69,5 +71,10 @@ export const media = pgTable(
       sql`${t.status} <> 'ready' or (${t.key1080} is not null and ${t.key600} is not null and ${t.key300} is not null and ${t.width} > 0 and ${t.height} > 0 and ${t.thumbhash} is not null and ${t.dominantColor} is not null)`,
     ),
     check('media_dominant_color_format', sql`${t.dominantColor} ~ '^#[0-9a-f]{6}$'`),
+    // An upload has an owner; only a photo copied from a shop (with its link) may have none.
+    check(
+      'media_owner_or_source',
+      sql`${t.ownerProfileId} is not null or ${t.sourceUrl} is not null`,
+    ),
   ],
 ).enableRLS();

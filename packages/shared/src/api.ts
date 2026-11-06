@@ -24,6 +24,8 @@ export const API_ERROR_CODES = [
   'rate_limited',
   'internal_error',
   'service_unavailable',
+  /** A shop link gave no product; `details.problem` says why (`LINK_PROBLEMS`). */
+  'link_unreadable',
 ] as const;
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 

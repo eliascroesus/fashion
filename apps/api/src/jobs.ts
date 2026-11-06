@@ -23,6 +23,13 @@ import {
 } from './ai/photos.ts';
 import { deleteOldSeen } from './events.ts';
 import { deleteOldFeedSnapshots, recomputePopularity } from './feed/popularity.ts';
+import type { NetworkPolicy } from './links/fetch.ts';
+import {
+  copyProductPhoto,
+  fingerprintProduct,
+  PRODUCT_QUEUES,
+  type ProductPhotoDeps,
+} from './links/product-photos.ts';
 import { ImageRejectedError } from './media/image.ts';
 import { refreshSearchTerms } from './search.ts';
 import { markMediaFailed, processUploadedMedia } from './media/pipeline.ts';
@@ -52,6 +59,7 @@ export const QUEUES = {
   photoSpotFailed: 'photo-spot-failed',
   /** Fingerprints a photo and its garments (services/embedder). */
   photoFingerprint: 'photo-fingerprint',
+  ...PRODUCT_QUEUES,
 } as const;
 
 /** What routes need to enqueue work. */
@@ -83,6 +91,8 @@ export interface WorkerDeps {
   ai?: PhotoAiClients;
   /** Seconds before the first AI retry; later ones wait longer (tests use 0). */
   aiRetryDelaySeconds?: number;
+  /** Who shop photos may be fetched from (tests point names at a local server). */
+  linkNetwork?: NetworkPolicy;
 }
 
 /**
@@ -213,6 +223,62 @@ export async function startJobs(boss: PgBoss, options: WorkerDeps): Promise<void
   });
 
   await startPhotoAiJobs(boss, options);
+  await startProductJobs(boss, options);
+}
+
+/** Shop photos of products from pasted links: copied in, then fingerprinted (Step 3.4). */
+async function startProductJobs(boss: PgBoss, options: WorkerDeps): Promise<void> {
+  const { log } = options;
+  const workOptions = { pollingIntervalSeconds: options.pollingIntervalSeconds ?? 2 };
+  const deps: ProductPhotoDeps = {
+    db: options.db,
+    storage: options.storage,
+    embedder: options.ai?.embedder ?? null,
+    network: options.linkNetwork,
+  };
+  const retryDelay = options.aiRetryDelaySeconds;
+
+  await boss.createQueue(QUEUES.productPhoto, {
+    policy: 'stately',
+    retryLimit: 3,
+    retryDelay: retryDelay ?? 30,
+    retryBackoff: true,
+    expireInSeconds: 180,
+  });
+  await boss.work<{ productId: string }>(QUEUES.productPhoto, workOptions, async (jobs) => {
+    for (const { data } of jobs) {
+      try {
+        const result = await copyProductPhoto(deps, data.productId);
+        log.info({ productId: data.productId, ...result }, 'product photo');
+        if (result.outcome === 'copied' && deps.embedder) {
+          await boss.send(QUEUES.productFingerprint, data, { singletonKey: data.productId });
+        }
+      } catch (error) {
+        log.error({ err: error, productId: data.productId }, 'product photo failed');
+        throw error;
+      }
+    }
+  });
+
+  await boss.createQueue(QUEUES.productFingerprint, {
+    policy: 'stately',
+    retryLimit: 4,
+    retryDelay: retryDelay ?? 20,
+    retryBackoff: true,
+    expireInSeconds: 300,
+  });
+  await boss.work<{ productId: string }>(QUEUES.productFingerprint, workOptions, async (jobs) => {
+    for (const { data } of jobs) {
+      try {
+        const result = await fingerprintProduct(deps, data.productId);
+        log.info({ productId: data.productId, ...result }, 'product fingerprinted');
+      } catch (error) {
+        log.error({ err: error, productId: data.productId }, 'product fingerprinting failed');
+        if (error instanceof EmbedderError && !error.retryable) continue;
+        throw error;
+      }
+    }
+  });
 }
 
 /** Garment spotting and fingerprints (Step 3.3). */

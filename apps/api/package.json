@@ -12,7 +12,8 @@
     "fake-looks": "node --env-file-if-exists=../../.env scripts/fake-looks.ts",
     "feed-speed": "node --env-file-if-exists=../../.env scripts/feed-speed.ts",
     "search-speed": "node scripts/search-speed.ts",
-    "ai-spot-check": "node --env-file-if-exists=../../.env scripts/ai-spot-check.ts"
+    "ai-spot-check": "node --env-file-if-exists=../../.env scripts/ai-spot-check.ts",
+    "links-try": "node --env-file-if-exists=../../.env scripts/links-try.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
