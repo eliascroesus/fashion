@@ -24,12 +24,14 @@ import {
   saveLinkRead,
   type ShopPage,
 } from './resolve.ts';
+import { inSalePeriod } from './sale-periods.ts';
 import { siteOf } from './urls.ts';
 
 /**
  * The price and stock check (Step 3.9). Every 10 minutes a run reads a few
- * shop pages again: daily the pages of links on saved or popular looks, weekly
- * every other link on a shown look; links on no shown look aren't checked.
+ * shop pages again: every 3 days the pages of links on saved or popular looks,
+ * weekly every other link on a shown look, and daily / every 3 days in big sale
+ * periods (`inSalePeriod`); links on no shown look aren't checked.
  * Each page is read once (at its `page_url`, never the poster's affiliate
  * link) and every link to it is saved from that one read through
  * `saveLinkRead`, so the paste flow's rules apply: a page that now shows
@@ -45,9 +47,9 @@ import { siteOf } from './urls.ts';
 export const PRICE_REFRESH_SETTING = 'price_refresh';
 
 export const priceRefreshSettingsSchema = z.strictObject({
-  /** Pages read per UTC day for links on saved or popular looks (checked daily). */
+  /** Pages read per UTC day for links on saved or popular looks (checked every 3 days; daily in sales). */
   savedOrPopularPerDay: z.number().int().min(0).max(100_000),
-  /** Pages read per UTC day for the other links on shown looks (checked weekly). */
+  /** Pages read per UTC day for the other links on shown looks (weekly; every 3 days in sales). */
   othersPerDay: z.number().int().min(0).max(100_000),
   /** This many most popular looks count as popular. */
   popularLooks: z.number().int().min(0).max(10_000),
@@ -72,6 +74,8 @@ export const RUN_EVERY_MS = 10 * 60 * 1000;
 const RUN_TIME_LIMIT_MS = 8 * 60 * 1000;
 /** "Daily": read again once this long has passed (a little under a day, so runs can drift). */
 const DAILY_MS = 20 * HOUR_MS;
+/** "Every 3 days", a little under for the same reason. */
+const EVERY_3_DAYS_MS = 3 * DAY_MS - 4 * HOUR_MS;
 const WEEKLY_MS = 7 * DAY_MS;
 /** Not read successfully for this long: "in stock" is no longer claimed (stock unknown). */
 const STALE_MS = 14 * DAY_MS;
@@ -122,6 +126,8 @@ export interface RefreshDeps {
   sleep?: (ms: number) => Promise<void>;
   /** A page whose check crashed (it's marked unreadable and the run goes on). */
   onError?: (error: unknown, pageUrl: string) => void;
+  /** Whether a time is in a big sale period (`inSalePeriod`; tests pick one). */
+  inSale?: (at: Date) => boolean;
   /** Most of a shop's pages "went" in one run: left as they were, for a person to look at. */
   onSuspectSite?: (site: string, gone: number, reads: number) => void;
 }
@@ -145,7 +151,7 @@ const realSleep = (ms: number) =>
 /** A page waiting for its check, most important first. */
 export interface DuePage {
   pageUrl: string;
-  /** On a saved or popular look: checked daily, from the first cap. */
+  /** On a saved or popular look: checked more often, from the first cap. */
   important: boolean;
   savers: number;
 }
@@ -156,10 +162,11 @@ const PAGE_SITE = sql`regexp_replace(lower(substring(po.page_url from '^[A-Za-z]
 /**
  * Pages due for a check in one group, most important first (saved by more
  * people, then popular, then least recently checked): `important` = on a
- * saved or popular look, read over 20 hours ago; `others` = the rest, read
- * over a week ago. Pages found gone but not yet sold out come back daily in
- * either group, to settle it sooner. Only pages with a link on a shown look,
- * none in a failure's back-off (`refresh_due_at`), none of a resting shop.
+ * saved or popular look, read over 3 days ago (20 hours in a sale);
+ * `others` = the rest, read over a week ago (3 days in a sale). Pages found
+ * gone but not yet sold out come back daily in either group, to settle it
+ * sooner. Only pages with a link on a shown look, none in a failure's
+ * back-off (`refresh_due_at`), none of a resting shop.
  */
 export async function duePages(
   db: Db,
@@ -167,17 +174,20 @@ export async function duePages(
   now: Date,
   group: 'important' | 'others',
   limit: number,
+  sale: boolean = inSalePeriod(now),
 ): Promise<DuePage[]> {
   if (limit <= 0) return [];
   const at = sql`${now.toISOString()}::timestamptz`;
-  const daily = sql`${new Date(now.getTime() - DAILY_MS).toISOString()}::timestamptz`;
-  const weekly = sql`${new Date(now.getTime() - WEEKLY_MS).toISOString()}::timestamptz`;
+  const before = (ms: number) => sql`${new Date(now.getTime() - ms).toISOString()}::timestamptz`;
+  const daily = before(DAILY_MS);
+  const importantAge = before(sale ? DAILY_MS : EVERY_3_DAYS_MS);
+  const othersAge = before(sale ? EVERY_3_DAYS_MS : WEEKLY_MS);
   const important = sql`(pw.savers > 0 OR pw.popular)`;
   const settling = sql`(po.gone BETWEEN 1 AND ${settings.goneAfter - 1} AND po.touched < ${daily})`;
   const inGroup =
     group === 'important'
-      ? sql`${important} AND (po.touched < ${daily} OR ${settling})`
-      : sql`NOT ${important} AND (po.touched < ${weekly} OR ${settling})`;
+      ? sql`${important} AND (po.touched < ${importantAge} OR ${settling})`
+      : sql`NOT ${important} AND (po.touched < ${othersAge} OR ${settling})`;
   const { rows } = await db.execute<{ page_url: string; important: boolean; savers: number }>(sql`
     WITH shown AS (
       SELECT DISTINCT li.offer_id, li.look_id
@@ -333,17 +343,18 @@ async function runLocked(deps: RefreshDeps, options: { pageUrl?: string }): Prom
     picked = [{ pageUrl: options.pageUrl, important: true, savers: 0 }];
   } else {
     const used = await readsToday(db, started);
+    const sale = (deps.inSale ?? inSalePeriod)(started);
     const importantShare = runShare(
       settings.savedOrPopularPerDay - used.important,
       started,
       settings.maxPerRun,
     );
-    const important = await duePages(db, settings, started, 'important', importantShare);
+    const important = await duePages(db, settings, started, 'important', importantShare, sale);
     const othersShare = Math.min(
       runShare(settings.othersPerDay - used.others, started, settings.maxPerRun),
       settings.maxPerRun - important.length,
     );
-    const others = await duePages(db, settings, started, 'others', othersShare);
+    const others = await duePages(db, settings, started, 'others', othersShare, sale);
     picked = [...important, ...others];
   }
 
